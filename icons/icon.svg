@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<!-- Lightomate のアイコン（電球の中に稲妻）。32px 以上の PNG の元画像です。 -->
+<rect x="4" y="4" width="120" height="120" rx="28" fill="#f59e0b"/>
+<path d="M64 16 A37 37 0 0 1 87 82 L85 90 L43 90 L41 82 A37 37 0 0 1 64 16 Z" fill="#fff"/>
+<rect x="46" y="96" width="36" height="8" rx="4" fill="#fff"/>
+<rect x="52" y="108" width="24" height="7" rx="3.5" fill="#fff"/>
+<path d="M70 26 L48 60 L62 60 L56 84 L80 48 L66 48 L74 26 Z" fill="#f59e0b" stroke="#f59e0b" stroke-width="3" stroke-linejoin="round"/>
+</svg>

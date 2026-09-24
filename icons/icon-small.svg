@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<!-- 16px 用に細部を省いた版です。電球と稲妻を大きくし、口金を 1 本にしています。 -->
+<rect x="4" y="4" width="120" height="120" rx="28" fill="#f59e0b"/>
+<path d="M64 12 A40 40 0 0 1 89 84 L87 94 L41 94 L39 84 A40 40 0 0 1 64 12 Z" fill="#fff"/>
+<rect x="45" y="100" width="38" height="16" rx="6" fill="#fff"/>
+<path d="M72 20 L42 64 L60 64 L52 92 L86 46 L68 46 L78 20 Z" fill="#f59e0b" stroke="#f59e0b" stroke-width="4" stroke-linejoin="round"/>
+</svg>
