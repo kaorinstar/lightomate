@@ -1,0 +1,56 @@
+# 構文チェック、整形の確認、型検査、テストを実行します。
+#
+# ビルド工程はありません。拡張機能は extension/ をそのまま Chrome に読み込みます。
+# 検証は読み取り専用の権限で実行します。書き込み権限（issues: write）は、失敗を報告する
+# ジョブにだけ付与します。
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 依存パッケージの導入
+        run: npm ci
+
+      - name: 構文チェック（ESLint）
+        run: npm run lint
+
+      - name: 整形の確認（Prettier）
+        run: npm run format:check
+
+      - name: 型検査（TypeScript）
+        run: npm run typecheck
+
+      - name: テスト
+        run: npm test
+
+      - name: main の確認処理のテスト
+        run: sh .claude/hooks/check-main.test.sh
+
+  report:
+    needs: build
+    # build が失敗しても実行します。報告するのは push の場合だけです。
+    if: always() && github.event_name == 'push'
+    permissions:
+      issues: write
+      actions: read
+    uses: ./.github/workflows/report-build-status.yml
+    with:
+      outcome: ${{ needs.build.result }}

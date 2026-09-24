@@ -1,8 +1,8 @@
 # Dependabot は、このリポジトリが依存するものに新しいバージョンが出たときにプルリクエストを作成します。
 #
-# 現時点で対象とするのは GitHub Actions のみです。ワークフローが使うアクションはコミット SHA で
-# 固定しているため、この設定がなければ古いまま更新されません。
-# npm のパッケージを導入した時点で、npm をここに追加します。
+# 対象は GitHub Actions と npm です。ワークフローが使うアクションはコミット SHA で固定しているため、
+# この設定がなければ古いまま更新されません。npm のパッケージは開発用（ESLint、Prettier、TypeScript
+# など）のみで、拡張機能の本体には含まれません。
 #
 # Dependabot は独自の名前でブランチを作成します（dependabot/...）。これは CLAUDE.md のブランチ名の
 # 規約の対象外で、変更できません。
@@ -10,6 +10,12 @@ version: 2
 
 updates:
   - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly

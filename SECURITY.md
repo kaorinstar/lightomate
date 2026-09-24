@@ -21,12 +21,48 @@ https://github.com/kaorinstar/lightomate/security/advisories/new
 ## 拡張機能が行うこと
 
 報告を判断する基準となるため、ソースコードから読み取らせるのではなく、ここに明記します。
-拡張機能の機能が決まった時点で記載します。記載する項目は次のとおりです。
+機能を追加して権限や動作が変わるたびに、この節を更新します。以下は現在の版の内容です。
 
-- `manifest.json` で要求する権限（`permissions`、`host_permissions`）と、それぞれが必要な理由
-- `chrome.debugger` を使う場面と、使用中に Chrome が表示する警告
-- ネットワーク接続の有無と接続先（拡張機能自体が外部のサーバーへ送信するか）
-- 読み取る情報（閲覧中のページ、入力内容）と、保存する場所（`chrome.storage`、ダウンロード先）
+### 要求する権限
+
+| 権限 | 種類 | 理由 |
+|---|---|---|
+| `sidePanel` | 常に要求 | 操作画面をサイドパネルに表示するため |
+| `https://*/*`、`http://*/*` | 任意（`optional_host_permissions`） | フローを実行するサイトを操作するため |
+
+サイトを操作する権限は、インストールした時点では 1 つも許可されていません。サイトごとに、利用者が
+Chrome の許可画面で許可したときだけ、そのサイトを操作できます。許可は chrome://extensions の
+拡張機能の詳細画面から取り消せます。
+
+`chrome.debugger` は現在使っていません。領収書などの PDF 化の機能を追加する時点で、任意の権限として
+追加し、使う場面と Chrome が表示する警告をここに記載します。
+
+### 外部への送信
+
+拡張機能は、外部のサーバーへ何も送信しません。
+
+- 拡張機能の画面と Service Worker は、`manifest.json` の Content Security Policy で、外部への通信と
+  外部のスクリプト・画像・フォントの読み込みを禁止しています。
+- content script（ページ内で動くスクリプト）には、この CSP が適用されません。そのため ESLint の規則で、
+  content script から外部へ送信する機能（`fetch`、`XMLHttpRequest`、`WebSocket`、`EventSource`、
+  `navigator.sendBeacon`）の使用を禁止しています。
+- `chrome.storage.sync`（Google アカウントを通じた同期）は使いません。
+
+### ページや他の拡張機能との関係
+
+- `externally_connectable` と `web_accessible_resources` を宣言していません。Web ページと他の拡張機能は、
+  この拡張機能に接続できず、ページから拡張機能の有無を検出することもできません。
+- 文字列をコードとして実行する機能（`eval`、`new Function` など）は、ESLint の規則で禁止しています。
+
+### 読み取る情報と保存する場所
+
+現在の版は、ページの内容を読み取りません。操作の記録の機能を追加する時点で、読み取る情報と保存する
+場所（`chrome.storage.local`、ダウンロード先）をここに記載します。
+
+### 拡張機能の ID
+
+`manifest.json` の `key`（公開鍵）で、拡張機能の ID を `jlpfeijpfkllnmcfcfoepaokkeejbgil` に固定して
+います。対になる秘密鍵は保管していません。デベロッパーモードで読み込む場合、秘密鍵は不要です。
 
 ## 既知の事項
 

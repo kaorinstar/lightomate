@@ -1,0 +1,7 @@
+# Prettier で整形するのは、拡張機能とテストのコードと、開発用の設定ファイルです。
+# 文書（Markdown）と GitHub の設定（YAML）は、書式を手作業で整えているため対象外とします。
+node_modules/
+package-lock.json
+*.md
+.github/
+.claude/
