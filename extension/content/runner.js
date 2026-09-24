@@ -16,8 +16,15 @@
 
   const overlay = showStatusOverlay('▶ 実行中（Lightomate）', '#1a73e8');
 
+  /** 実行中の手順で要素を待つ処理を止めるためのものです。停止を指示されたときに使います。 */
+  let currentStep = new AbortController();
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) {
+      return false;
+    }
+    if (message?.kind === 'runner/abort') {
+      currentStep.abort();
       return false;
     }
     if (message?.kind === 'runner/finish') {
@@ -42,7 +49,11 @@
    * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
    */
   async function runStep(step, timeoutMs) {
-    const element = await waitForTarget(step.target, timeoutMs);
+    currentStep = new AbortController();
+    const element = await waitForTarget(step.target, timeoutMs, currentStep.signal);
+    if (currentStep.signal.aborted) {
+      return { ok: false, error: '停止を指示されました。' };
+    }
     if (!element) {
       return {
         ok: false,

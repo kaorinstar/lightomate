@@ -20,7 +20,8 @@ import { renderTemplate, resolveParams } from '../shared/params.js';
  * @property {string} flowId
  * @property {string} flowName
  * @property {number} tabId 実行しているタブ
- * @property {number} stepIndex 実行中（終了後は最後に実行した）手順の番号（0 から数えます）
+ * @property {number} stepIndex 実行中の手順の番号（0 から数えます）。完了後は最後の手順の番号、
+ *   失敗後は失敗した手順の番号、停止後は停止した時点で完了していた手順の数です。
  * @property {number} total 手順の数
  * @property {'running' | 'stopping' | 'done' | 'failed' | 'stopped'} status
  * @property {string} [error] 失敗した理由
@@ -40,6 +41,12 @@ const STEP_INTERVAL_MS = 500;
 
 /** 実行中のページへ読み込むスクリプトです。overlay.js と finder.js の関数を runner.js が使います。 */
 const CONTENT_FILES = ['content/overlay.js', 'content/finder.js', 'content/runner.js'];
+
+/** 停止の指示を確かめる間隔です。要素やページの読み込みを待っている間も、この間隔で確かめます。 */
+const STOP_CHECK_INTERVAL_MS = 250;
+
+/** サイドパネルから停止を指示されたことを示す誤りです。失敗ではなく停止として扱います。 */
+class StopRequested extends Error {}
 
 /** この Service Worker で実行中かどうかです。停止すると失われるため、中断の判定に使います。 */
 let activeRun = false;
@@ -236,11 +243,7 @@ async function runSteps(flow, steps, tabId) {
   let index = 0;
   try {
     while (index < steps.length) {
-      const state = await getRunState();
-      if (!state || state.status === 'stopping') {
-        await updateRunState({ status: 'stopped', stepIndex: Math.max(index - 1, 0) });
-        return;
-      }
+      await throwIfStopRequested();
       await updateRunState({ stepIndex: index });
 
       const step = steps[index];
@@ -263,6 +266,11 @@ async function runSteps(flow, steps, tabId) {
     }
     await updateRunState({ status: 'done', stepIndex: steps.length - 1 });
   } catch (error) {
+    if (error instanceof StopRequested) {
+      // stepIndex は、停止した時点で完了していた手順の数と同じです。
+      await updateRunState({ status: 'stopped', stepIndex: index });
+      return;
+    }
     await updateRunState({
       status: 'failed',
       stepIndex: index,
@@ -290,16 +298,35 @@ async function runInPage(flow, tabId, step) {
 
   await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
 
-  let response;
-  try {
-    response = await chrome.tabs.sendMessage(
+  // 要素を待っている間（最大 10 秒）も停止の指示に応じられるよう、応答を待ちながら指示を確かめます。
+  const reply = chrome.tabs
+    .sendMessage(
       tabId,
       { kind: 'runner/step', step, timeoutMs: ELEMENT_TIMEOUT_MS },
       { frameId: 0 },
+    )
+    .then(
+      (response) => ({ response, error: undefined }),
+      (error) => ({ response: undefined, error }),
     );
-  } catch (error) {
-    throw new Error(`ページと通信できませんでした（${String(error)}）。`, { cause: error });
+  let result;
+  while (!(result = await Promise.race([reply, sleep(STOP_CHECK_INTERVAL_MS).then(() => null)]))) {
+    try {
+      await throwIfStopRequested();
+    } catch (error) {
+      // ページで要素を待つ処理も止めます。
+      await chrome.tabs
+        .sendMessage(tabId, { kind: 'runner/abort' }, { frameId: 0 })
+        .catch(() => {});
+      throw error;
+    }
   }
+  if (result.error !== undefined) {
+    throw new Error(`ページと通信できませんでした（${String(result.error)}）。`, {
+      cause: result.error,
+    });
+  }
+  const { response } = result;
   if (!response?.ok) {
     throw new Error(response?.error ?? 'ページから応答がありませんでした。');
   }
@@ -360,7 +387,8 @@ async function waitForLoad(tabId, isExpected, description) {
     if (tab.status === 'complete' && lastUrl && isExpected(lastUrl)) {
       return;
     }
-    await sleep(250);
+    await throwIfStopRequested();
+    await sleep(STOP_CHECK_INTERVAL_MS);
   }
   throw new Error(
     description
@@ -383,6 +411,17 @@ export function samePage(a, b) {
     return left.origin === right.origin && left.pathname === right.pathname;
   } catch {
     return false;
+  }
+}
+
+/**
+ * サイドパネルから停止を指示されている場合に、StopRequested を投げます。
+ * サイドパネルの［閉じる］などで実行の状態が消えている場合も、停止として扱います。
+ */
+async function throwIfStopRequested() {
+  const state = await getRunState();
+  if (!state || state.status === 'stopping') {
+    throw new StopRequested('停止を指示されました。');
   }
 }
 

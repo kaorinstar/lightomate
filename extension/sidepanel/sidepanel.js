@@ -361,7 +361,7 @@ async function renderRun(run) {
       elements.runStatus.textContent = `「${run.flowName}」の実行が完了しました。`;
       break;
     case 'stopped':
-      elements.runStatus.textContent = `「${run.flowName}」の実行を停止しました。${where} まで実行しました。`;
+      elements.runStatus.textContent = `「${run.flowName}」の実行を停止しました。完了した手順は ${run.total} 件中 ${run.stepIndex} 件です。`;
       break;
     case 'failed':
       elements.runStatus.textContent = `「${run.flowName}」の実行は ${where} で止まりました。${run.error ?? ''}`;

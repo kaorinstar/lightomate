@@ -13,11 +13,12 @@
  * 一定の間隔でも探し直します。
  * @param {{ selectors: string[], tag: string, text?: string }} target
  * @param {number} timeoutMs 待つ上限（ミリ秒）
+ * @param {AbortSignal} signal 停止を指示されたときに、待つのをやめるためのもの
  * @returns {Promise<Element | null>}
  */
-function waitForTarget(target, timeoutMs) {
+function waitForTarget(target, timeoutMs, signal) {
   const found = findTarget(target);
-  if (found) {
+  if (found || signal.aborted) {
     return Promise.resolve(found);
   }
 
@@ -27,8 +28,10 @@ function waitForTarget(target, timeoutMs) {
       observer.disconnect();
       clearInterval(interval);
       clearTimeout(timeout);
+      signal.removeEventListener('abort', onAbort);
       resolve(element);
     };
+    const onAbort = () => finish(null);
     const retry = () => {
       const element = findTarget(target);
       if (element) {
@@ -39,6 +42,7 @@ function waitForTarget(target, timeoutMs) {
     observer.observe(document.documentElement, { childList: true, subtree: true });
     const interval = setInterval(retry, 250);
     const timeout = setTimeout(() => finish(null), timeoutMs);
+    signal.addEventListener('abort', onAbort);
   });
 }
 
