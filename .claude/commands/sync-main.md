@@ -30,8 +30,9 @@ allowed-tools: Bash(git:*), Bash(sh:*), Read, Edit, Grep, Glob
 7. マージ後の状態をビルドし、テストします。それぞれ正しい 2 つの変更が、組み合わせると誤りになる
    ことがあるためです。
 
-   ビルドとテストの手順は、ビルド工程が決まった時点で `CLAUDE.md` に記載し、ここにも追記します。
-   それまでは `sh .claude/hooks/check-main.test.sh` のみ実行します。
+   `npm install` の後、`npm run check` と `sh .claude/hooks/check-main.test.sh` を実行します
+   （`CLAUDE.md` の「ビルドとテスト」）。`package-lock.json` が競合した場合は手作業で直さず、
+   `package.json` の競合を解決してから `npm install` で作り直します。
 8. 次の順で報告します：取り込んだコミット数、競合したファイルとそれぞれの解決方法、ビルドとテストの
    結果。マージしたコミットが画面表示や操作の動作を変更している場合は、Chrome 上で人が確認すべき
    項目も記載します。

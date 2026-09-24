@@ -26,15 +26,58 @@ Power Automate for desktop の動作の重さと制限を解消するため、�
 
 ## ビルドとテスト
 
-開発言語は JavaScript です。TypeScript とビルド工程を採用するかどうかは、`manifest.json` と
-基本構造を定義する Issue で決めます。決まった時点で、ここにビルドとテストのコマンドを記載します。
-記載するまでの間、実行できる確認は次のとおりです。
+開発言語は JavaScript（ES モジュール）で、ビルド工程はありません。`extension/` をそのまま Chrome に
+読み込みます。型は JSDoc のコメントで記述し、TypeScript で検査だけを行います。`.ts` ファイルは
+作りません。Chrome は `.ts` を直接実行できず、ビルドが必要になるためです。
+
+初回だけ依存パッケージを導入します。Node.js 22 以降が必要です。
 
 ```
+npm install
+```
+
+作業を完了とする前に、次をすべて実行します。
+
+```
+npm run check
 sh .claude/hooks/check-main.test.sh
 ```
 
+`npm run check` は次の 4 つを順に実行します。個別にも実行できます。
+
+| コマンド | 内容 |
+|---|---|
+| `npm run lint` | ESLint による構文チェック |
+| `npm run format:check` | Prettier による整形の確認。`npm run format` で整形します |
+| `npm run typecheck` | TypeScript による型検査（`jsconfig.json`） |
+| `npm test` | `node --test` による単体テスト（`test/`） |
+
+Prettier の対象はコードと設定ファイルだけです。Markdown と `.github/`、`.claude/` は、書式を手作業で
+整えているため対象外です（`.prettierignore`）。
+
 警告は誤りとして扱います。警告が残っている間は、作業を完了としません。
+
+### 構成
+
+| 場所 | 役割 |
+|---|---|
+| `extension/manifest.json` | 拡張機能の定義 |
+| `extension/background/` | バックグラウンド処理（Service Worker）：フローの実行管理、タブの制御、ダウンロード |
+| `extension/sidepanel/` | サイドパネル：記録の開始・停止、フローの一覧と実行 |
+| `extension/options/` | 設定・編集画面：ビジュアルエディタを置く場所 |
+| `extension/shared/` | 共通モジュール：フロー定義の型と検証など |
+| `extension/content/` | content script（ページ内で動くスクリプト）：操作の記録と実行 |
+| `test/` | 単体テスト |
+
+- **content script は ES モジュールとして読み込めません。** `extension/shared/` を `import` することも
+  できません。読み込むには `web_accessible_resources` の宣言が必要になり、ページから拡張機能の有無を
+  検出できるようになるためです。検証などの共通処理は Service Worker で行い、content script とは
+  `chrome.runtime` のメッセージでやり取りします。
+- `extension/shared/` では `chrome.*` を使いません。Node.js のテストから読み込むためです。
+- `manifest.json` の権限、CSP、`key` を変更する場合は、`test/manifest.test.js` と `SECURITY.md` の
+  「拡張機能が行うこと」を同時に変更します。
+- `manifest.json` の `key` は拡張機能の ID を決める公開鍵です。変更すると ID が変わり、利用者が保存した
+  フローが見えなくなります。変更しないでください。
 
 ## 動作確認
 
@@ -137,9 +180,10 @@ https://github.com/kaorinstar/lightomate/issues
 
 ## 継続的インテグレーション（CI）
 
-ビルド用とリリース用のワークフローは、開発言語が決まった時点で追加します。現時点で存在するのは
-次の 1 つです。
+リリース用のワークフローは、最初のリリースの準備で追加します。現時点で存在するのは次の 2 つです。
 
+- `.github/workflows/build.yml`：push（`main`）とプルリクエストで、`npm run check` と同じ検査と、
+  `.claude/hooks/check-main.test.sh` を実行します。権限は `contents: read` です。
 - `.github/workflows/report-build-status.yml`：ビルド用・リリース用のワークフローから、ビルド
   ジョブの終了後に push の場合のみ呼び出されます。失敗時は `ci-failure` ラベルの Issue を作成し、
   すでに開いている場合は 2 件目を作らずにコメントします。次に成功したときも同じ Issue に
@@ -153,7 +197,7 @@ https://github.com/kaorinstar/lightomate/issues
 - 検証用のビルドは `contents: read` で実行し、書き込み権限はリリース用のワークフローにだけ付与します。
 - アクションはすべてコミット SHA で固定し、横にバージョンをコメントで記載します。タグは所有者が
   付け替えられる参照だからです。`.github/dependabot.yml` がアクションを毎週確認するため、固定しても
-  古いまま放置されることはありません。開発言語のパッケージ管理も同じファイルに追加します。
+  古いまま放置されることはありません。npm のパッケージも同じファイルで毎週確認します。
 - Dependabot は独自の名前でブランチを作成します（`dependabot/...`）。これはブランチ名の規約の
   対象外で、変更できません。
 
