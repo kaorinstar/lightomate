@@ -41,6 +41,11 @@ export default [
     languageOptions: { globals: { ...globals.browser, chrome: 'readonly' } },
   },
   {
+    // Service Worker と拡張機能の画面の両方から読み込むモジュールです。画面（document）は使いません。
+    files: ['extension/common/**/*.js'],
+    languageOptions: { globals: { ...globals['shared-node-browser'], chrome: 'readonly' } },
+  },
+  {
     // Service Worker には画面（document、window）がありません。
     files: ['extension/background/**/*.js'],
     languageOptions: { globals: { ...globals.serviceworker, chrome: 'readonly' } },

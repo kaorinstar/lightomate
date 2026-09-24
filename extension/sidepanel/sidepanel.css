@@ -29,7 +29,7 @@ button:disabled {
   cursor: default;
 }
 
-#stop {
+button.danger {
   border: 1px solid #d93025;
   background: #d93025;
   color: #fff;
@@ -62,4 +62,75 @@ textarea {
   font:
     0.8rem/1.4 ui-monospace,
     monospace;
+}
+
+.note {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+
+.field input,
+.field select {
+  padding: 4px 6px;
+  font: inherit;
+}
+
+.fields {
+  margin-bottom: 8px;
+}
+
+#run-section,
+#form-section {
+  padding: 12px;
+  border: 1px solid #1a73e8;
+  border-radius: 6px;
+}
+
+.run-status {
+  margin: 0;
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+
+.run-status.error {
+  color: #d93025;
+}
+
+.flows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flows li {
+  padding: 8px 0;
+  border-bottom: 1px solid rgb(128 128 128 / 30%);
+}
+
+.flow-name {
+  display: block;
+  font-weight: bold;
+}
+
+.flow-origin {
+  display: block;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  word-break: break-all;
+}
+
+.flows .buttons {
+  align-items: center;
+}
+
+details {
+  margin-top: 12px;
 }

@@ -4,6 +4,8 @@
 // 読み込めません。content script から ES モジュールを読み込むには web_accessible_resources の宣言が
 // 必要になり、ページから拡張機能の有無を検出できるようになるためです。検証は Service Worker で行います。
 
+import { validateParams, validateReferences, withPlaceholders } from './params.js';
+
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
 export const SCHEMA_VERSION = 1;
 
@@ -58,6 +60,8 @@ export const MAX_TEXT_LENGTH = 2000;
 
 /** @typedef {NavigateStep | ClickStep | InputStep | SelectStep} Step */
 
+/** @typedef {import('./params.js').Param} Param */
+
 /**
  * フロー定義です。
  * @typedef {object} Flow
@@ -65,6 +69,7 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string} name フロー名
  * @property {string} origin 記録したサイトのオリジン（例：https://www.amazon.co.jp）。
  *   実行時は、このオリジンのページでだけ手順を実行します。
+ * @property {Param[]} [params] パラメータ（実行のたびに入力する値）の定義
  * @property {Step[]} steps 手順の一覧
  */
 
@@ -74,11 +79,21 @@ export const MAX_TEXT_LENGTH = 2000;
  * @param {Flow} flow
  * @returns {Flow}
  */
-export function orderFlow({ schemaVersion, name, origin, steps, ...rest }) {
+export function orderFlow({ schemaVersion, name, origin, params, steps, ...rest }) {
   return {
     schemaVersion,
     name,
     origin,
+    ...(params
+      ? {
+          params: params.map(({ name, label, type, ...paramRest }) => ({
+            name,
+            label,
+            type,
+            ...paramRest,
+          })),
+        }
+      : {}),
     ...rest,
     steps: steps.map(({ type, ...stepRest }) => /** @type {Step} */ ({ type, ...stepRest })),
   };
@@ -110,6 +125,9 @@ export function validateFlow(value) {
     errors.push('origin が https:// または http:// で始まるオリジンではありません。');
   }
 
+  const paramErrors = validateParams(value.params);
+  errors.push(...paramErrors);
+
   if (!Array.isArray(value.steps)) {
     errors.push('steps が配列ではありません。');
   } else if (value.steps.length > MAX_STEPS) {
@@ -118,6 +136,15 @@ export function validateFlow(value) {
     value.steps.forEach((step, index) => {
       for (const error of validateStep(step)) {
         errors.push(`steps[${index}]: ${error}`);
+      }
+      // パラメータの定義に誤りがある場合、参照の検証は定義を直してから行います。
+      if (paramErrors.length === 0) {
+        const params = /** @type {Param[]} */ (value.params ?? []);
+        for (const text of templateTexts(step)) {
+          for (const error of validateReferences(text, params)) {
+            errors.push(`steps[${index}]: ${error}`);
+          }
+        }
       }
     });
   }
@@ -139,7 +166,7 @@ export function validateStep(step) {
     case 'navigate': {
       /** @type {string[]} */
       const errors = [];
-      if (!isText(step.url) || !isWebUrl(step.url)) {
+      if (!isText(step.url) || !isWebUrl(withPlaceholders(step.url))) {
         errors.push('url が https:// または http:// で始まる URL ではありません。');
       }
       if (step.cause !== 'user' && step.cause !== 'page') {
@@ -178,6 +205,30 @@ export function validateStep(step) {
 
     default:
       return ['手順の種類（type）が navigate、click、input、select のいずれでもありません。'];
+  }
+}
+
+/**
+ * 手順のうち、パラメータの参照（{{名前}}）を書ける値を返します。
+ * 入力の値、選択肢の value、移動先の URL です。
+ * @param {unknown} step
+ * @returns {string[]}
+ */
+export function templateTexts(step) {
+  if (!isRecord(step)) {
+    return [];
+  }
+  switch (step.type) {
+    case 'navigate':
+      return typeof step.url === 'string' ? [step.url] : [];
+    case 'input':
+      return typeof step.value === 'string' ? [step.value] : [];
+    case 'select':
+      return Array.isArray(step.values)
+        ? step.values.filter((value) => typeof value === 'string')
+        : [];
+    default:
+      return [];
   }
 }
 

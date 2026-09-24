@@ -1,11 +1,12 @@
 // 記録中のタブのページで、利用者の操作を記録します。
 //
+// 読み込む順序は selector.js、overlay.js、recorder.js です（background/recording.js）。
 // Service Worker が、記録を始めたときと、記録中にページを移動したときに、このスクリプトを
 // ページへ読み込みます（chrome.scripting.executeScript）。読み込まれた時点で記録を始め、
 // Service Worker から停止の連絡を受けると終了します。
 // 記録した手順は Service Worker へ送り、ここでは保存しません。
 
-/* global buildTarget */
+/* global buildTarget, showStatusOverlay */
 
 (() => {
   /** 同じページに 2 回読み込まれた場合に、記録が二重にならないようにする目印です。 */
@@ -37,7 +38,7 @@
     'a, button, input, label, summary, [role="button"], [role="link"], [role="menuitem"], ' +
     '[role="tab"], [role="checkbox"], [role="radio"], [onclick]';
 
-  const overlay = showOverlay();
+  const overlay = showStatusOverlay('● 記録中（Lightomate）', '#d93025');
 
   /** @param {MouseEvent} event */
   const onClick = (event) => {
@@ -134,44 +135,5 @@
     }
     const autocomplete = (element.getAttribute('autocomplete') ?? '').toLowerCase();
     return /(^|\s)(cc-|one-time-code)/.test(autocomplete);
-  }
-
-  /**
-   * 記録中であることを示す赤い枠と「記録中」の表示を、ページの最前面に置きます（#13）。
-   * ページの CSS やスクリプトの影響を受けないよう、閉じた Shadow DOM の中に置きます。
-   * クリックは枠を通り抜けるため、ページの操作を妨げず、枠への操作が記録されることもありません。
-   * 印刷用の表示では非表示にし、PDF に写り込まないようにします。
-   * @returns {HTMLElement}
-   */
-  function showOverlay() {
-    const host = document.createElement('lightomate-recording');
-    host.style.cssText =
-      'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';
-    const shadow = host.attachShadow({ mode: 'closed' });
-
-    const style = document.createElement('style');
-    style.textContent = `
-      :host { pointer-events: none; }
-      .frame {
-        position: fixed; inset: 0; box-sizing: border-box;
-        border: 4px solid #d93025; pointer-events: none;
-      }
-      .badge {
-        position: fixed; top: 8px; left: 8px; padding: 4px 10px; border-radius: 4px;
-        background: #d93025; color: #fff; pointer-events: none;
-        font: bold 13px/1.4 system-ui, sans-serif;
-      }
-      /* 要素に直接指定したスタイル（all: initial）より優先させるため、!important を付けます。 */
-      @media print { :host { display: none !important; } }
-    `;
-    const frame = document.createElement('div');
-    frame.className = 'frame';
-    const badge = document.createElement('div');
-    badge.className = 'badge';
-    badge.textContent = '● 記録中（Lightomate）';
-
-    shadow.append(style, frame, badge);
-    document.documentElement.append(host);
-    return host;
   }
 })();

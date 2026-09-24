@@ -14,14 +14,38 @@
     </header>
 
     <main>
+      <p id="message" class="message" role="status"></p>
+
+      <section id="run-section" aria-labelledby="run-heading" hidden>
+        <h2 id="run-heading">フローの実行</h2>
+        <p id="run-status" class="run-status"></p>
+        <div class="buttons">
+          <button type="button" id="run-stop" class="danger">実行停止</button>
+          <button type="button" id="run-close">閉じる</button>
+        </div>
+      </section>
+
+      <section id="form-section" aria-labelledby="form-heading" hidden>
+        <h2 id="form-heading">実行する値の入力</h2>
+        <p class="note">
+          <span id="form-flow-name"></span> を実行します。入力した値は保存しません。
+        </p>
+        <form id="run-form">
+          <div id="form-fields" class="fields"></div>
+          <div class="buttons">
+            <button type="submit">この値で実行</button>
+            <button type="button" id="form-cancel">キャンセル</button>
+          </div>
+        </form>
+      </section>
+
       <section aria-labelledby="record-heading">
         <h2 id="record-heading">操作の記録</h2>
         <p class="page">記録するページ：<span id="page-origin">確認中です</span></p>
         <div class="buttons">
           <button type="button" id="start" disabled>記録開始</button>
-          <button type="button" id="stop" hidden>記録停止</button>
+          <button type="button" id="stop" class="danger" hidden>記録停止</button>
         </div>
-        <p id="message" class="message" role="status"></p>
       </section>
 
       <section id="steps-section" aria-labelledby="steps-heading" hidden>
@@ -30,12 +54,32 @@
       </section>
 
       <section id="result-section" aria-labelledby="result-heading" hidden>
-        <h2 id="result-heading">記録した内容（JSON）</h2>
-        <textarea id="result" readonly rows="12" spellcheck="false"></textarea>
+        <h2 id="result-heading">記録したフローの保存</h2>
+        <label class="field">
+          フロー名
+          <input type="text" id="flow-name" maxlength="200" />
+        </label>
         <div class="buttons">
-          <button type="button" id="copy">コピー</button>
-          <button type="button" id="save">ファイルに保存</button>
+          <button type="button" id="save-flow">フローとして保存</button>
         </div>
+        <details>
+          <summary>記録した内容（JSON）</summary>
+          <textarea id="result" readonly rows="12" spellcheck="false"></textarea>
+          <div class="buttons">
+            <button type="button" id="copy">コピー</button>
+            <button type="button" id="save">ファイルに保存</button>
+          </div>
+        </details>
+      </section>
+
+      <section aria-labelledby="flows-heading">
+        <h2 id="flows-heading">保存したフロー</h2>
+        <p id="flows-empty" class="note">保存したフローはまだありません。</p>
+        <ul id="flows" class="flows"></ul>
+        <p class="note">
+          <a href="../options/options.html" target="_blank">フローの管理</a>（JSON
+          の編集、読み込み、削除）
+        </p>
       </section>
     </main>
   </body>
