@@ -41,8 +41,9 @@ function buildTarget(element) {
     labelText(element) ||
     text ||
     element.getAttribute('placeholder') ||
-    element.getAttribute('name') ||
     element.getAttribute('title') ||
+    element.getAttribute('name') ||
+    element.getAttribute('id') ||
     tag;
 
   return text
@@ -127,11 +128,20 @@ function structuralSelector(element) {
 }
 
 /**
- * 要素の表示文字列を、空白をまとめて返します。入力欄の値は含めません。
+ * 要素の表示文字列を、空白をまとめて返します。入力欄に入力された値は含めません。
  * @param {Element} element
  * @returns {string}
  */
 function visibleText(element) {
+  // ボタンとして表示される input 要素は、表示される文字が value（画像の場合は alt）にあります。
+  if (element instanceof HTMLInputElement) {
+    if (['button', 'submit', 'reset'].includes(element.type)) {
+      return truncate(element.value.replace(/\s+/g, ' ').trim());
+    }
+    if (element.type === 'image') {
+      return truncate((element.getAttribute('alt') ?? '').replace(/\s+/g, ' ').trim());
+    }
+  }
   if (
     element instanceof HTMLInputElement ||
     element instanceof HTMLTextAreaElement ||
