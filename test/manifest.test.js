@@ -38,7 +38,7 @@ test('ページや他の拡張機能からの接続を受け付けず、ペー�
 });
 
 test('要求する権限は、SECURITY.md に記載したものだけである', () => {
-  assert.deepEqual(manifest.permissions, ['sidePanel']);
+  assert.deepEqual(manifest.permissions, ['sidePanel', 'storage', 'scripting', 'webNavigation']);
   assert.equal(manifest.optional_permissions, undefined);
 });
 
@@ -65,6 +65,8 @@ test('manifest.json が参照するファイルが存在する', () => {
     manifest.side_panel.default_path,
     manifest.options_ui.page,
   ];
+  // content script は manifest.json ではなく、Service Worker が読み込みます（background/recording.js）。
+  paths.push('content/selector.js', 'content/recorder.js');
   for (const path of paths) {
     assert.ok(existsSync(new URL(path, extensionDir)), path);
   }

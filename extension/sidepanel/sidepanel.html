@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>Lightomate</title>
     <link rel="stylesheet" href="../shared/base.css" />
+    <link rel="stylesheet" href="sidepanel.css" />
     <script type="module" src="sidepanel.js"></script>
   </head>
   <body>
@@ -11,8 +12,31 @@
       <h1>Lightomate</h1>
       <p class="version">バージョン <span id="version"></span></p>
     </header>
+
     <main>
-      <p>記録と実行の機能は準備中です。</p>
+      <section aria-labelledby="record-heading">
+        <h2 id="record-heading">操作の記録</h2>
+        <p class="page">記録するページ：<span id="page-origin">確認中です</span></p>
+        <div class="buttons">
+          <button type="button" id="start" disabled>記録開始</button>
+          <button type="button" id="stop" hidden>記録停止</button>
+        </div>
+        <p id="message" class="message" role="status"></p>
+      </section>
+
+      <section id="steps-section" aria-labelledby="steps-heading" hidden>
+        <h2 id="steps-heading">記録した手順（<span id="step-count">0</span> 件）</h2>
+        <ol id="steps" class="steps"></ol>
+      </section>
+
+      <section id="result-section" aria-labelledby="result-heading" hidden>
+        <h2 id="result-heading">記録した内容（JSON）</h2>
+        <textarea id="result" readonly rows="12" spellcheck="false"></textarea>
+        <div class="buttons">
+          <button type="button" id="copy">コピー</button>
+          <button type="button" id="save">ファイルに保存</button>
+        </div>
+      </section>
     </main>
   </body>
 </html>
