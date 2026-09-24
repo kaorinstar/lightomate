@@ -13,9 +13,10 @@
  * 印刷用の表示では非表示にし、PDF に写り込まないようにします。
  * @param {string} text 左上に表示する文字
  * @param {string} color 枠と文字の背景の色
+ * @param {string} textColor 文字の色。背景の色の上で読める色を指定します。
  * @returns {HTMLElement} 表示を消すときに remove() を呼ぶ要素
  */
-function showStatusOverlay(text, color) {
+function showStatusOverlay(text, color, textColor) {
   const host = document.createElement('lightomate-status');
   host.style.cssText =
     'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';
@@ -30,7 +31,7 @@ function showStatusOverlay(text, color) {
     }
     .badge {
       position: fixed; top: 8px; left: 8px; padding: 4px 10px; border-radius: 4px;
-      background: ${color}; color: #fff; pointer-events: none;
+      background: ${color}; color: ${textColor}; pointer-events: none;
       font: bold 13px/1.4 system-ui, sans-serif;
     }
     /* 要素に直接指定したスタイル（all: initial）より優先させるため、!important を付けます。 */

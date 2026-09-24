@@ -237,14 +237,13 @@ async function openTab(flow, steps) {
  * @param {number} tabId
  */
 async function runSteps(flow, steps, tabId) {
-  await chrome.action.setBadgeText({ tabId, text: 'RUN' });
-  await chrome.action.setBadgeBackgroundColor({ tabId, color: '#1a73e8' });
-
   let index = 0;
   try {
     while (index < steps.length) {
       await throwIfStopRequested();
       await updateRunState({ stepIndex: index });
+      // タブのページが移動すると、Chrome はそのタブ用のアイコンの文字を消します。手順ごとに設定し直します。
+      await showRunBadge(tabId);
 
       const step = steps[index];
       if (step.type === 'navigate' && step.cause === 'page') {
@@ -280,6 +279,16 @@ async function runSteps(flow, steps, tabId) {
     await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
     await chrome.tabs.sendMessage(tabId, { kind: 'runner/finish' }, { frameId: 0 }).catch(() => {});
   }
+}
+
+/**
+ * 実行中であることを、ツールバーのアイコンに黄色の「RUN」で示します。
+ * @param {number} tabId
+ */
+async function showRunBadge(tabId) {
+  await chrome.action.setBadgeText({ tabId, text: 'RUN' });
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: '#fbbc04' });
+  await chrome.action.setBadgeTextColor({ tabId, color: '#202124' });
 }
 
 /**

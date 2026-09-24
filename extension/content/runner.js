@@ -14,7 +14,9 @@
   }
   scope[installedKey] = true;
 
-  const overlay = showStatusOverlay('▶ 実行中（Lightomate）', '#1a73e8');
+  // 実行中は黄色で示します。青は画面の配色に紛れて気付きにくかったためです。
+  // 黄色の上では白い文字が読みにくいため、文字は黒にします。
+  const overlay = showStatusOverlay('▶ 実行中（Lightomate）', '#fbbc04', '#202124');
 
   /** 実行中の手順で要素を待つ処理を止めるためのものです。停止を指示されたときに使います。 */
   let currentStep = new AbortController();

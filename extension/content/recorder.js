@@ -38,7 +38,7 @@
     'a, button, input, label, summary, [role="button"], [role="link"], [role="menuitem"], ' +
     '[role="tab"], [role="checkbox"], [role="radio"], [onclick]';
 
-  const overlay = showStatusOverlay('● 記録中（Lightomate）', '#d93025');
+  const overlay = showStatusOverlay('● 記録中（Lightomate）', '#d93025', '#fff');
 
   /** @param {MouseEvent} event */
   const onClick = (event) => {
