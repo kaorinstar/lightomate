@@ -1,0 +1,22 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Windows で実行するスクリプトは CRLF とします。
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
+
+[*.{json,yml,yaml,xml}]
+indent_size = 2
+
+# Markdown では行末の空白 2 つが改行を意味するため、削除しません。
+[*.md]
+trim_trailing_whitespace = false
+
+# 開発言語が決まったら、その言語の設定をここに追加します。

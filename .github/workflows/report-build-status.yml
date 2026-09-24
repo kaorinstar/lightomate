@@ -1,0 +1,117 @@
+# ビルド用ワークフローのビルドジョブの後に呼び出され、push の場合にのみ動作します。
+# 現時点で呼び出し元はありません。開発言語が決まり、ビルド用ワークフローを追加した時点で使用します。
+#
+# プルリクエスト以外での失敗は、このワークフローがなければ記録に残りません。GitHub は実行者に
+# メールを送るだけです。重要なのは誰も見ていない実行（Dependabot の更新や、リリース作成中に
+# 失敗したタグのビルド）です。プルリクエストは意図的に対象外にしています。失敗したプルリクエストは
+# それ自体に失敗が表示されるうえ、push ごとに Issue を作ると Issue の一覧が埋もれるためです。
+#
+# Issue は同時に 1 件だけとします。ci-failure ラベルの付いた Issue が開いている場合、新しい失敗は
+# 2 件目の Issue ではなくその Issue へのコメントになります。同じ失敗が繰り返されるたびに Issue が
+# 増えることを防ぐためです。次に成功したときも同じ Issue にコメントしますが、Issue は閉じません。
+# ビルドの成功は症状が消えたことを示すだけで、原因が解明されたことは示さないためです。
+# Issue を閉じる判断は人が行います。
+
+name: report build status
+
+on:
+  workflow_call:
+    inputs:
+      outcome:
+        description: 呼び出し元ワークフローのビルドジョブの結果
+        required: true
+        type: string
+
+jobs:
+  report:
+    # ここではビルドを行いません。GitHub API を呼び出すだけなので、Windows は不要です。
+    runs-on: ubuntu-latest
+    if: inputs.outcome == 'failure' || inputs.outcome == 'success'
+
+    steps:
+      - name: ビルド失敗の Issue を作成、またはコメントを追加
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3   # v9.0.0
+        env:
+          OUTCOME: ${{ inputs.outcome }}
+        with:
+          script: |
+            const label = 'ci-failure';
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const ref = context.ref.replace(/^refs\/(heads|tags)\//, '');
+
+            // listForRepo はプルリクエストも返しますが、ここでの管理対象ではありません。
+            const labelled = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', labels: label, per_page: 100,
+            });
+            const issue = labelled.find(i => !i.pull_request);
+
+            if (process.env.OUTCOME === 'success') {
+              if (!issue) {
+                core.info('ビルドは成功し、開いている失敗の Issue はありません。報告する内容はありません。');
+                return;
+              }
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issue.number,
+                body: [
+                  `\`${context.workflow}\` ワークフローが \`${ref}\` で再び成功しました。`,
+                  '',
+                  `- 実行: ${runUrl}`,
+                  `- コミット: ${context.sha}`,
+                  '',
+                  'この Issue は意図的に開いたままにしています。ビルドの成功は症状が消えたことを示すだけで、',
+                  '原因が解明されたことは示しません。原因を解明した時点で閉じてください。',
+                ].join('\n'),
+              });
+              core.info(`#${issue.number} に成功を報告しました。`);
+              return;
+            }
+
+            // 失敗したジョブと手順の名前を記載します。このジョブ自体は実行中のため、
+            // 結果が失敗のものに絞り込むと、このジョブは自動的に除外されます。
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner, repo, run_id: context.runId, per_page: 100,
+            });
+            const failed = jobs
+              .filter(j => j.conclusion === 'failure')
+              .map(j => {
+                const step = (j.steps || []).find(s => s.conclusion === 'failure');
+                return step ? `  - \`${j.name}\` → \`${step.name}\`` : `  - \`${j.name}\``;
+              });
+
+            const body = [
+              `\`${context.workflow}\` ワークフローが \`${ref}\` で失敗しました。`,
+              '',
+              `- 実行: ${runUrl}`,
+              `- コミット: ${context.sha}`,
+              failed.length
+                ? `- 失敗:\n${failed.join('\n')}`
+                : '- 失敗: 失敗した手順を報告したジョブはありません。',
+              '',
+              'ログは実行ページにあり、ここには転記していません。',
+            ].join('\n');
+
+            if (issue) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body });
+              core.info(`2 件目の Issue を作成せず、#${issue.number} にコメントしました。`);
+              return;
+            }
+
+            // ラベルは付ける前に存在している必要があります。最初の失敗が、ラベルを初めて必要とする時点です。
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner, repo, name: label, color: 'b60205',
+                description: 'プルリクエスト以外でビルドが失敗しました',
+              });
+            }
+
+            const created = await github.rest.issues.create({
+              owner, repo,
+              title: `${context.workflow} が ${ref} で失敗しました`,
+              labels: [label],
+              body,
+            });
+            core.info(`#${created.data.number} を作成しました。`);
