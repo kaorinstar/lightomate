@@ -1,0 +1,13 @@
+# 既定の改行コードは LF とします。
+* text=auto eol=lf
+
+# Windows で実行するスクリプトは CRLF を維持します。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# バイナリは変換しません。
+*.exe binary
+*.dll binary
+*.ico binary
+*.png binary

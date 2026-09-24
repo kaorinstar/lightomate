@@ -1,0 +1,18 @@
+# ビルド成果物
+bin/
+artifacts/
+publish/
+dist/
+
+# 開発ツール
+.vs/
+.idea/
+.vscode/
+
+# テスト結果
+TestResults/
+
+# その他
+*.log
+
+# 開発言語が決まったら、その言語固有の除外設定をここに追加します。
