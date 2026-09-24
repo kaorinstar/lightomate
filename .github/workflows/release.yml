@@ -1,0 +1,99 @@
+# リリースを公開したときに、リリースノートと、Chrome に読み込むための ZIP を添付します。
+#
+# リリースは利用者が GitHub の画面で作成します（CLAUDE.md の「リリース」）。タイトルと説明は空欄の
+# まま公開し、このワークフローが version.md のタグと同じ見出しの節から記入します。
+#
+# 添付するファイルは次の 2 つです。
+# - lightomate-vX.Y.Z.zip：extension/ の中身だけをまとめたもの。展開したフォルダーをそのまま読み込めます。
+# - lightomate-update.bat：最新の ZIP を取得し、決まったフォルダーに展開する Windows 用のファイル。
+#
+# 確認に失敗した場合は、リリースを下書きに戻します。説明の空いたリリースを公開したままにしないためです。
+# 下書きに戻してもタグは残り、タグは作成時のコミットを指したままです。version.md などを直した後は、
+# 下書きとタグを削除してから、同じ名前のタグでリリースを作成し直してください。
+
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: タグ、manifest.json、version.md の確認
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: node scripts/release-notes.js "$TAG" > /dev/null
+
+      - name: 依存パッケージの導入
+        run: npm ci
+
+      - name: 構文チェック、整形の確認、型検査、テスト
+        run: npm run check
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # 書き込み権限は、リリースを編集するこのジョブにだけ付与します。
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+
+      - name: リリースノートの記入
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node scripts/release-notes.js "$TAG" > "$RUNNER_TEMP/notes.md"
+          gh release edit "$TAG" --title "Lightomate $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+
+      - name: ZIP とバッチファイルの添付
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # ZIP の最上位に manifest.json を置きます。展開したフォルダーをそのまま読み込めるようにするためです。
+          zip_path="$RUNNER_TEMP/lightomate-$TAG.zip"
+          (cd extension && zip -r -X "$zip_path" .)
+          unzip -l "$zip_path" manifest.json > /dev/null
+          gh release upload "$TAG" "$zip_path" tools/lightomate-update.bat --clobber
+
+  unpublish:
+    needs: [build, publish]
+    # どちらかのジョブが失敗した場合に、リリースを下書きに戻します。
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: リリースを下書きに戻す
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=true
+
+  report:
+    needs: [build, publish]
+    # 失敗しても実行します。リリースの失敗は、誰も見ていない場面で起こるため記録に残します。
+    if: always()
+    permissions:
+      issues: write
+      actions: read
+    uses: ./.github/workflows/report-build-status.yml
+    with:
+      outcome: ${{ (needs.build.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}

@@ -69,6 +69,8 @@ Prettier の対象はコードと設定ファイルだけです。Markdown と `
 | `extension/common/` | Service Worker と拡張機能の画面の両方で使う、`chrome.*` を使うモジュール：フローの保存など |
 | `extension/content/` | content script（ページ内で動くスクリプト）：操作の記録と実行 |
 | `test/` | 単体テスト |
+| `scripts/` | 開発とリリース用のスクリプト（Node.js）。拡張機能には含めません |
+| `tools/` | 利用者に配るファイル。`lightomate-update.bat` はリリースに添付します |
 | `docs/flow-format.md` | フロー定義（JSON）の形式の説明。`extension/shared/flow.js` と同時に変更します |
 
 - content script は `manifest.json` で宣言せず、記録中のタブにだけ Service Worker が
@@ -185,12 +187,17 @@ https://github.com/kaorinstar/lightomate/issues
 
 ## 継続的インテグレーション（CI）
 
-リリース用のワークフローは、最初のリリースの準備で追加します。現時点で存在するのは次の 2 つです。
+ワークフローは次の 3 つです。
 
 - `.github/workflows/build.yml`：push（`main`）とプルリクエストで、`npm run check` と同じ検査と、
   `.claude/hooks/check-main.test.sh` を実行します。権限は `contents: read` です。
-- `.github/workflows/report-build-status.yml`：ビルド用・リリース用のワークフローから、ビルド
-  ジョブの終了後に push の場合のみ呼び出されます。失敗時は `ci-failure` ラベルの Issue を作成し、
+- `.github/workflows/release.yml`：リリースの公開時に動作します。タグ、`manifest.json` の `version`、
+  `version.md` の節を確認し（`scripts/release-notes.js`）、検査を実行します。その後、リリースノートを
+  記入し、`extension/` の中身だけをまとめた `lightomate-vX.Y.Z.zip` と `tools/lightomate-update.bat`
+  を添付します。書き込み権限（`contents: write`）は、リリースを編集するジョブにだけ付与します。
+  失敗した場合はリリースを下書きに戻します。
+- `.github/workflows/report-build-status.yml`：`build.yml` からはビルドジョブの終了後に push の
+  場合のみ、`release.yml` からはリリースの公開時に呼び出されます。失敗時は `ci-failure` ラベルの Issue を作成し、
   すでに開いている場合は 2 件目を作らずにコメントします。次に成功したときも同じ Issue に
   コメントしますが、閉じません。ビルドの成功は症状が消えたことを示すだけで、原因が解明されたことは
   示さないためです。プルリクエストは対象外です。失敗したプルリクエストはそれ自体に失敗が表示される
@@ -217,13 +224,13 @@ https://github.com/kaorinstar/lightomate/issues
 出せなくなります。`manifest.json` の `version` はタグから先頭の `v` を除いた値と一致させます。
 
 `version.md` が更新履歴です。最新のバージョンを先頭に、バージョンごとに 1 節を設けます。リリース用
-ワークフローは、タグと一致する見出しの節をリリースノートとして使う想定です。そのため、項目は
-タグを作成する**前に**コミットします。
+ワークフローは、タグと一致する見出し（例：`## v0.1.0`）の節をリリースノートとして使います。
+そのため、項目はタグを作成する**前に**コミットします。
 
 **利用者が気付く変更は、その変更を行うプルリクエストで `## Unreleased` に項目を追加します。**
 リリースの準備は、その見出しをバージョン番号に変更する作業になり、後からコミット履歴を読んで
 一覧を作り直す必要がなくなります。`Unreleased` と一致するタグはないため、変更し忘れた場合は
-空のリリースを公開せずにワークフローが失敗します。
+ワークフローが失敗し、リリースを下書きに戻します。
 
 ### アシスタントはタグを push できない
 
@@ -241,6 +248,11 @@ GitHub から `HTTP 403` で拒否されます。GitHub のツールにもタグ
 3. **Target** が `main` であることを確認する
 4. タイトルと説明は空欄のままにする（リリース用ワークフローが `version.md` から記入します）
 5. **Publish release** を押す
+
+リリース用ワークフローが失敗してリリースが下書きに戻った場合、タグは作成時のコミットを指したまま
+残ります。原因を修正してマージした後、下書きのリリースとタグを削除し、同じ手順で作成し直すよう
+依頼します。削除する画面の URL は https://github.com/kaorinstar/lightomate/releases と
+https://github.com/kaorinstar/lightomate/tags です。
 
 ## サブエージェントのモデル選択
 

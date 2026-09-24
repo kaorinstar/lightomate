@@ -69,8 +69,8 @@ export default [
     },
   },
   {
-    // テストと開発用の設定ファイルは Node.js で動きます。
-    files: ['test/**/*.js', '*.js'],
+    // テスト、開発用のスクリプト、設定ファイルは Node.js で動きます。
+    files: ['test/**/*.js', 'scripts/**/*.js', '*.js'],
     languageOptions: { globals: globals.node },
   },
 ];
