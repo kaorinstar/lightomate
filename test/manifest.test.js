@@ -65,9 +65,22 @@ test('manifest.json が参照するファイルが存在する', () => {
     manifest.side_panel.default_path,
     manifest.options_ui.page,
   ];
+  paths.push(...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon));
   // content script は manifest.json ではなく、Service Worker が読み込みます（background/recording.js）。
   paths.push('content/selector.js', 'content/recorder.js');
   for (const path of paths) {
     assert.ok(existsSync(new URL(path, extensionDir)), path);
   }
+});
+
+test('アイコンが 16・32・48・128px の PNG で指定されている（#26）', () => {
+  // Chrome に読み込むのは extension/ だけのため、アイコンもその中に置きます。
+  const expected = {
+    16: 'icons/icon-16.png',
+    32: 'icons/icon-32.png',
+    48: 'icons/icon-48.png',
+    128: 'icons/icon-128.png',
+  };
+  assert.deepEqual(manifest.icons, expected);
+  assert.deepEqual(manifest.action.default_icon, expected);
 });

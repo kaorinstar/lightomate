@@ -5,7 +5,19 @@
   "version": "0.1.0",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvKszm5+IG5SYQCL3uJXsHHfc1wvv71FZpi3HtMMLCkWOwKANsUn1LuMC0/nwq4QxxvmGaUqiAFDA/6jogQfDAMaLCytlK1nZEgVMmlnRef58oWL6jfkXUBjVQ5Fz0f4NS4QK36wNCSVt+Q5TUyF9Ef/G4hKReGIjh20Mmw4irM87ohTZf7VxBkq6UT+b+dNUF9BjfebbdQ3wYtB5MNdu66nPIHOdsZlKGkhoruhm/bsYEwZVFdB0gis7dmVL7E6DfExItvytBmAjpRJ2UELscWvexTZltMi2f+ZGVcdA5WG6lM9+lBQfD/2dCi1MUHLYrna8d6rZyN41wf4NzZXFgwIDAQAB",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
     "default_title": "Lightomate を開く"
   },
   "side_panel": {
