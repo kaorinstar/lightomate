@@ -1,18 +1,18 @@
 name: 不具合の報告
-description: アプリの誤った動作、または動作しない機能
+description: 拡張機能の誤った動作、または動作しない機能
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
         ご報告ありがとうございます。脆弱性は Issue ではなく、
-        [SECURITY.md](https://github.com/kaorinstar/win-autoflows/blob/main/SECURITY.md)
+        [SECURITY.md](https://github.com/kaorinstar/lightomate/blob/main/SECURITY.md)
         の非公開フォームから報告してください。Issue は作成した時点で公開されます。
   - type: textarea
     id: what-happened
     attributes:
       label: 発生した内容
-      description: アプリがどのように動作したか。画面表示に関する問題はスクリーンショットがあると調査が早くなります。
+      description: 拡張機能がどのように動作したか。操作していたサイトの URL と、画面表示に関する問題はスクリーンショットがあると調査が早くなります。
     validations:
       required: true
   - type: textarea
@@ -27,24 +27,24 @@ body:
       label: 再現手順
       description: 再度発生させるための操作を順に記載してください。毎回ではなく時々発生する場合は、その旨も記載してください。
       placeholder: |
-        1. アプリを起動する。
-        2. 〇〇を選択する。
-        3. 〇〇をクリックする。
+        1. 〇〇のサイトを開く。
+        2. Lightomate で〇〇のフローを実行する。
+        3. 〇〇の手順で停止する。
     validations:
       required: true
   - type: input
     id: release
     attributes:
-      label: アプリのバージョン
-      description: 実行ファイルを右クリックして［プロパティ］を開き、［詳細］タブの［製品バージョン］を確認してください。
+      label: 拡張機能のバージョン
+      description: アドレスバーに chrome://extensions と入力して開き、Lightomate の欄に表示されるバージョンを確認してください。
       placeholder: 0.1.0
     validations:
       required: true
   - type: input
-    id: windows
+    id: chrome
     attributes:
-      label: Windows のバージョン
-      description: Win+R キーを押し、winver と入力して Enter キーを押すと表示されます。
-      placeholder: Windows 11 24H2 (ビルド 26100)
+      label: Chrome のバージョン
+      description: アドレスバーに chrome://version と入力して開くと、1 行目に表示されます。
+      placeholder: 141.0.7390.54
     validations:
       required: true

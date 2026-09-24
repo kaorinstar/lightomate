@@ -4,15 +4,21 @@ artifacts/
 publish/
 dist/
 
+# 依存パッケージ
+node_modules/
+
+# 拡張機能のパッケージと署名用の秘密鍵
+# 秘密鍵（.pem）は拡張機能の ID を決めるため、公開すると別人が同じ ID で拡張機能を作成できます。
+*.zip
+*.crx
+*.pem
+
 # 開発ツール
-.vs/
 .idea/
 .vscode/
 
 # テスト結果
-TestResults/
+coverage/
 
 # その他
 *.log
-
-# 開発言語が決まったら、その言語固有の除外設定をここに追加します。

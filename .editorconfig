@@ -12,11 +12,9 @@ indent_size = 4
 [*.{bat,cmd,ps1}]
 end_of_line = crlf
 
-[*.{json,yml,yaml,xml}]
+[*.{js,mjs,ts,json,html,css,yml,yaml}]
 indent_size = 2
 
 # Markdown では行末の空白 2 つが改行を意味するため、削除しません。
 [*.md]
 trim_trailing_whitespace = false
-
-# 開発言語が決まったら、その言語の設定をここに追加します。
