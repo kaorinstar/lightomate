@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "maxNodeModuleJsDepth": 0
   },
-  "include": ["extension/**/*.js", "test/**/*.js", "eslint.config.js"]
+  "include": ["extension/**/*.js", "test/**/*.js", "scripts/**/*.js", "eslint.config.js"]
 }
