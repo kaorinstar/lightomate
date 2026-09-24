@@ -13,6 +13,7 @@ import {
   startRecording,
   stopRecording,
 } from './recording.js';
+import { markInterruptedRun, requestStop, startRun } from './runner.js';
 
 // ツールバーのアイコンを押したときに、ポップアップではなくサイドパネルを開きます。
 // ポップアップはページをクリックした時点で閉じるため、記録中に開いたままにできないためです。
@@ -22,6 +23,8 @@ chrome.sidePanel
   .catch((error) => console.error('サイドパネルの設定に失敗しました。', error));
 
 const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
+
+markInterruptedRun().catch((error) => console.error('実行の状態を確認できませんでした。', error));
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // この拡張機能以外からのメッセージは受け付けません。
@@ -54,6 +57,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       );
       return true;
 
+    case 'runner/start':
+      if (
+        !fromExtensionPage ||
+        typeof message.flowId !== 'string' ||
+        !isStringRecord(message.params) ||
+        !isStringRecord(message.secrets)
+      ) {
+        return false;
+      }
+      startRun(message.flowId, message.params, message.secrets).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'runner/stop':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      requestStop().then(
+        () => sendResponse({ ok: true }),
+        (error) => sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
     case 'recording/step':
       addStep(message.step, sender).catch((error) =>
         console.error('手順を記録できませんでした。', error),
@@ -78,3 +105,17 @@ chrome.webNavigation.onDOMContentLoaded.addListener((details) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   onTabRemoved(tabId).catch((error) => console.error('記録を停止できませんでした。', error));
 });
+
+/**
+ * 値がすべて文字列のオブジェクトかを判定します。
+ * @param {unknown} value
+ * @returns {value is Record<string, string>}
+ */
+function isStringRecord(value) {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((item) => typeof item === 'string')
+  );
+}

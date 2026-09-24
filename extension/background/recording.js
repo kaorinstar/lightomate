@@ -28,8 +28,8 @@ import {
 const RECORDING_KEY = 'recording';
 const LAST_FLOW_KEY = 'lastFlow';
 
-/** ページへ読み込むスクリプトです。selector.js の関数を recorder.js が使うため、この順で読み込みます。 */
-const CONTENT_FILES = ['content/selector.js', 'content/recorder.js'];
+/** ページへ読み込むスクリプトです。selector.js と overlay.js の関数を recorder.js が使うため、この順で読み込みます。 */
+const CONTENT_FILES = ['content/selector.js', 'content/overlay.js', 'content/recorder.js'];
 
 /**
  * 状態の読み書きを 1 つずつ順に行うための待ち行列です。

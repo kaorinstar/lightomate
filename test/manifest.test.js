@@ -66,8 +66,15 @@ test('manifest.json が参照するファイルが存在する', () => {
     manifest.options_ui.page,
   ];
   paths.push(...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon));
-  // content script は manifest.json ではなく、Service Worker が読み込みます（background/recording.js）。
-  paths.push('content/selector.js', 'content/recorder.js');
+  // content script は manifest.json ではなく、Service Worker が読み込みます
+  // （background/recording.js と background/runner.js）。
+  paths.push(
+    'content/selector.js',
+    'content/overlay.js',
+    'content/recorder.js',
+    'content/finder.js',
+    'content/runner.js',
+  );
   for (const path of paths) {
     assert.ok(existsSync(new URL(path, extensionDir)), path);
   }

@@ -65,7 +65,8 @@ Prettier の対象はコードと設定ファイルだけです。Markdown と `
 | `extension/background/` | バックグラウンド処理（Service Worker）：フローの実行管理、タブの制御、ダウンロード |
 | `extension/sidepanel/` | サイドパネル：記録の開始・停止、フローの一覧と実行 |
 | `extension/options/` | 設定・編集画面：ビジュアルエディタを置く場所 |
-| `extension/shared/` | 共通モジュール：フロー定義の型と検証など |
+| `extension/shared/` | 共通モジュール：フロー定義の型と検証、パラメータの処理など。`chrome.*` を使いません |
+| `extension/common/` | Service Worker と拡張機能の画面の両方で使う、`chrome.*` を使うモジュール：フローの保存など |
 | `extension/content/` | content script（ページ内で動くスクリプト）：操作の記録と実行 |
 | `test/` | 単体テスト |
 | `scripts/` | 開発とリリース用のスクリプト（Node.js）。拡張機能には含めません |

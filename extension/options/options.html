@@ -2,11 +2,53 @@
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
-    <title>Lightomate の設定</title>
+    <title>Lightomate のフローの管理</title>
     <link rel="stylesheet" href="../shared/base.css" />
+    <link rel="stylesheet" href="options.css" />
+    <script type="module" src="options.js"></script>
   </head>
   <body>
-    <h1>Lightomate の設定</h1>
-    <p>フローの編集画面は準備中です。</p>
+    <h1>Lightomate のフローの管理</h1>
+    <p id="message" class="message" role="status"></p>
+
+    <div class="layout">
+      <nav aria-labelledby="list-heading">
+        <h2 id="list-heading">保存したフロー</h2>
+        <p id="empty" class="note">保存したフローはまだありません。</p>
+        <ul id="flows" class="flows"></ul>
+        <div class="buttons">
+          <button type="button" id="new">JSON からフローを追加</button>
+        </div>
+      </nav>
+
+      <main>
+        <section id="editor" hidden aria-labelledby="editor-heading">
+          <h2 id="editor-heading"></h2>
+          <p class="note">
+            フロー定義の JSON を直接編集できます。形式は、リポジトリの docs/flow-format.md
+            に記載しています。保存する前に形式を検証し、誤りがあれば保存しません。
+          </p>
+          <textarea id="json" rows="30" spellcheck="false"></textarea>
+          <div class="buttons">
+            <button type="button" id="save">保存</button>
+            <button type="button" id="export">ファイルに書き出し</button>
+            <button type="button" id="delete" class="danger">削除</button>
+          </div>
+        </section>
+
+        <section id="importer" hidden aria-labelledby="import-heading">
+          <h2 id="import-heading">JSON からフローを追加</h2>
+          <p class="note">
+            フロー定義の JSON を貼り付けるか、ファイルを選んでください。追加する前に、
+            フローが操作するサイトを確認します。
+          </p>
+          <input type="file" id="file" accept="application/json,.json" />
+          <textarea id="import-json" rows="20" spellcheck="false"></textarea>
+          <div class="buttons">
+            <button type="button" id="import">追加</button>
+          </div>
+        </section>
+      </main>
+    </div>
   </body>
 </html>
