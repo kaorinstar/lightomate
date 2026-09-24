@@ -68,7 +68,11 @@ Prettier の対象はコードと設定ファイルだけです。Markdown と `
 | `extension/shared/` | 共通モジュール：フロー定義の型と検証など |
 | `extension/content/` | content script（ページ内で動くスクリプト）：操作の記録と実行 |
 | `test/` | 単体テスト |
+| `docs/flow-format.md` | フロー定義（JSON）の形式の説明。`extension/shared/flow.js` と同時に変更します |
 
+- content script は `manifest.json` で宣言せず、記録中のタブにだけ Service Worker が
+  `chrome.scripting.executeScript` で読み込みます。同じページに 2 回読み込まれても誤りにならないよう、
+  最上位には関数の宣言だけを置き、処理は即時実行の関数の中に書きます。
 - **content script は ES モジュールとして読み込めません。** `extension/shared/` を `import` することも
   できません。読み込むには `web_accessible_resources` の宣言が必要になり、ページから拡張機能の有無を
   検出できるようになるためです。検証などの共通処理は Service Worker で行い、content script とは
