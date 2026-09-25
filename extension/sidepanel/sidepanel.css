@@ -151,3 +151,12 @@ body {
 .lm-flow-reason {
   margin: 0.25rem 0 0;
 }
+
+/* サイドパネルは幅が狭いため、検索欄を 1 行に置き、一致方法はその下に並べます（#44）。 */
+.lm-search {
+  flex-wrap: wrap;
+}
+
+.lm-combobox {
+  flex-basis: 100%;
+}

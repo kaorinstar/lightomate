@@ -6,6 +6,8 @@ import {
   conflictMessage,
   findConflictingRun,
   flowsForOrigin,
+  flowsToShow,
+  pageOrigin,
   runStatesFrom,
   uniqueName,
 } from '../extension/shared/flow-list.js';
@@ -113,4 +115,47 @@ test('保存した内容から、実行の状態だけを始めた日時の順�
     [`${RUN_KEY_PREFIX}a`]: earlier,
   });
   assert.deepEqual(states, [earlier, later]);
+});
+
+test('Web ページを表示している場合は、そのサイトのフローだけを表示する', () => {
+  const flows = [entry('1', '領収書', shop), entry('2', '納品書', www)];
+  const shown = flowsToShow(flows, shop);
+  assert.equal(shown.scope, 'site');
+  assert.deepEqual(
+    shown.flows.map((stored) => stored.id),
+    ['1'],
+  );
+});
+
+test('Web ページでもそのサイトのフローがない場合は、ほかのサイトのフローを表示しない', () => {
+  const flows = [entry('1', '領収書', shop)];
+  assert.deepEqual(flowsToShow(flows, 'https://other.example.com'), { scope: 'site', flows: [] });
+});
+
+test('Web ページ以外を表示している場合は、すべてのフローを表示する', () => {
+  const flows = [entry('1', '領収書', shop), entry('2', '納品書', www)];
+  for (const origin of [null, undefined, '']) {
+    const shown = flowsToShow(flows, origin);
+    assert.equal(shown.scope, 'all');
+    assert.deepEqual(
+      shown.flows.map((stored) => stored.id),
+      ['1', '2'],
+    );
+  }
+});
+
+test('Web ページだけにオリジンを返し、それ以外のページでは null を返す', () => {
+  assert.equal(pageOrigin('https://shop.example.com/orders?page=2'), shop);
+  assert.equal(pageOrigin('http://localhost:8080/'), 'http://localhost:8080');
+  for (const url of [
+    'chrome://newtab/',
+    'about:blank',
+    'chrome://settings/',
+    'file:///C:/Users/me/receipt.pdf',
+    'chrome-extension://abcdefghijklmnop/viewer.html',
+    '',
+    undefined,
+  ]) {
+    assert.equal(pageOrigin(url), null, String(url));
+  }
 });

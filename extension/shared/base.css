@@ -242,3 +242,113 @@
 .lm-field .invalid-feedback {
   margin: 0;
 }
+
+/*
+  フローの一覧の検索欄、候補、ホスト名ごとの見出しです（#42、#44）。管理画面とサイドパネルで使います。
+  部品は shared/combobox.js と shared/flow-groups.js が作ります。
+*/
+.lm-list-heading {
+  padding-block: 0.5rem 0.25rem;
+  border-bottom: 0;
+  color: var(--tblr-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+.lm-search {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--tblr-border-color);
+}
+
+.lm-search[hidden] {
+  display: none;
+}
+
+.lm-combobox {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.lm-search-mode {
+  flex: none;
+  width: auto;
+}
+
+/* 検索欄の候補です。入力欄の直下に重ねて表示します。 */
+.lm-suggestions {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 0.25rem);
+  right: 0;
+  left: 0;
+  max-height: 20rem;
+  margin: 0;
+  padding: 0.25rem 0;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--tblr-bg-surface);
+  border: 1px solid var(--tblr-border-color);
+  border-radius: var(--tblr-border-radius);
+  box-shadow: var(--tblr-box-shadow-dropdown);
+}
+
+.lm-suggestions[hidden] {
+  display: none;
+}
+
+.lm-option {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.375rem 0.75rem;
+  cursor: pointer;
+}
+
+.lm-option:hover,
+.lm-option.active {
+  background: var(--tblr-active-bg);
+}
+
+.lm-option-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lm-option-note {
+  flex: none;
+  color: var(--tblr-secondary);
+  font-size: 0.75rem;
+}
+
+/*
+  ホスト名ごとのまとまりです。見出し（summary）を押すと折りたたみます。
+  Tabler の list-group-item は表示方法を変えるため、標準の開閉の印が消えます。代わりの印を付けます。
+*/
+.lm-group > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.lm-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.lm-group > summary::before {
+  display: inline-block;
+  width: 1em;
+  content: '▸';
+}
+
+.lm-group[open] > summary::before {
+  content: '▾';
+}
+
+.lm-group + .lm-group > summary {
+  border-top: 1px solid var(--tblr-border-color);
+}

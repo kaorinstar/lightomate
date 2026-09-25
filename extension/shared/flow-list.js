@@ -1,5 +1,7 @@
 // 保存したフローの一覧と、実行を始めてよいかの判定です。chrome.* を使わない処理だけを置きます。
 
+import { isWebUrl } from './flow.js';
+
 /**
  * 一覧の判定に使う、保存したフローの項目です。
  * @typedef {object} FlowEntry
@@ -34,6 +36,31 @@ export function flowsForOrigin(flows, origin) {
     return [];
   }
   return flows.filter((stored) => stored.flow.origin === origin);
+}
+
+/**
+ * 表示中のページの URL から、フローの対象となるオリジンを返します。
+ * Web ページ（https:// または http://）以外の場合は null を返します。新しいタブ（chrome://newtab）、
+ * about:blank、chrome://、file://、拡張機能のページ（PDF の表示を含む）などです。
+ * @param {string | undefined} url
+ * @returns {string | null}
+ */
+export function pageOrigin(url) {
+  return url && isWebUrl(url) ? new URL(url).origin : null;
+}
+
+/**
+ * サイドパネルに表示するフローを決めます（#44）。
+ * Web ページ（https:// または http://）を表示している場合は、そのサイトのフローだけを返します。
+ * そのサイトのフローがなくても、ほかのサイトのフローは返しません。誤って実行することを防ぐためです。
+ * Web ページ以外（新しいタブ、about:blank、chrome:// など）の場合は、すべてのフローを返します。
+ * @template {FlowEntry} T
+ * @param {T[]} flows
+ * @param {string | null | undefined} origin 表示中のページのオリジン。Web ページ以外では null
+ * @returns {{ scope: 'site' | 'all', flows: T[] }}
+ */
+export function flowsToShow(flows, origin) {
+  return origin ? { scope: 'site', flows: flowsForOrigin(flows, origin) } : { scope: 'all', flows };
 }
 
 /**
