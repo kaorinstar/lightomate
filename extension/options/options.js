@@ -34,6 +34,7 @@ const elements = {
   stopSelectors: /** @type {HTMLTextAreaElement} */ (byId('stop-selectors')),
   stopPaths: /** @type {HTMLTextAreaElement} */ (byId('stop-paths')),
   stopClear: byId('stop-clear'),
+  stopDelete: byId('stop-delete'),
   stopMessage: byId('stop-message'),
 };
 
@@ -157,6 +158,10 @@ elements.stopClear.addEventListener('click', () => {
   showStopMessage('', false);
 });
 
+elements.stopDelete.addEventListener('click', () => {
+  onDeleteStopRule().catch((error) => showStopMessage(String(error), true));
+});
+
 onStopRulesChanged(() => {
   renderStopRules().catch(console.error);
 });
@@ -210,6 +215,31 @@ async function onSaveStopRule() {
     removing ? `${origin} の指定を削除しました。` : `${origin} の指定を保存しました。`,
     false,
   );
+}
+
+/** 入力欄のサイトの指定を削除します。削除の前に確認を表示します。 */
+async function onDeleteStopRule() {
+  const origin = elements.stopOrigin.value.trim().replace(/\/+$/, '');
+  const exists = (await listStopRules()).some((entry) => entry.origin === origin);
+  if (!exists) {
+    showStopMessage(
+      origin
+        ? `${origin} の指定はありません。削除するサイトを一覧から選んでください。`
+        : '削除するサイトを一覧から選んでください。',
+      true,
+    );
+    return;
+  }
+  if (!confirm(`${origin} の指定を削除します。元に戻せません。よろしいですか？`)) {
+    return;
+  }
+  const result = await saveStopRule(origin, { selectors: [], paths: [] });
+  if (!result.ok) {
+    showStopMessage(`削除できませんでした。\n${result.errors.join('\n')}`, true);
+    return;
+  }
+  editStopRule('', { selectors: [], paths: [] });
+  showStopMessage(`${origin} の指定を削除しました。`, false);
 }
 
 /**
