@@ -1,5 +1,6 @@
 // サイドパネルです。記録の開始・停止、記録したフローの保存、保存したフローの一覧と実行、
-// 実行の状態を表示します。
+// 実行の状態を表示します。Web ページを表示しているときはそのサイトのフローを、それ以外のページ
+// （新しいタブなど）ではすべてのフローを、ホスト名ごとにまとめて検索できる形で表示します（#44）。
 // 配置と、知らせを出す場所は docs/design-guidelines.md に従います。成功は画面の上部のトーストに出し、
 // 誤り・警告・確認は押したボタンの直下（行の中の操作は、その行の中）に出します。
 
@@ -13,17 +14,24 @@ import {
 } from '../common/flow-store.js';
 import { requestPermission } from '../common/permissions.js';
 import { describeStep, formatDateTime } from '../shared/describe.js';
-import { isWebUrl, orderFlow } from '../shared/flow.js';
+import { orderFlow } from '../shared/flow.js';
 import {
   RUN_KEY_PREFIX,
   conflictMessage,
   findConflictingRun,
-  flowsForOrigin,
+  flowsToShow,
   isActiveRun,
+  pageOrigin,
   runStatesFrom,
 } from '../shared/flow-list.js';
+import { attachCombobox } from '../shared/combobox.js';
+import { buildFlowGroups } from '../shared/flow-groups.js';
+import { MATCH_MODES, filterFlows, groupByHost, suggestions } from '../shared/flow-search.js';
 import {
+  NO_FIRST_PAGE,
   buildRunFields,
+  firstPageParams,
+  firstPageUrl,
   readRunFields,
   secretStepIndexes,
   showRunFieldErrors,
@@ -47,7 +55,9 @@ const elements = {
   runSection: byId('run-section'),
   runs: byId('runs'),
   formSection: byId('form-section'),
-  formFlowName: byId('form-flow-name'),
+  formHeading: byId('form-heading'),
+  formDescription: byId('form-description'),
+  formSubmit: byId('form-submit'),
   form: /** @type {HTMLFormElement} */ (byId('run-form')),
   formFields: byId('form-fields'),
   formCancel: byId('form-cancel'),
@@ -80,6 +90,11 @@ const elements = {
   flows: byId('flows'),
   flowsEmpty: byId('flows-empty'),
   toast: byId('toast'),
+  flowsHeading: byId('flows-heading'),
+  searchArea: byId('search-area'),
+  search: /** @type {HTMLInputElement} */ (byId('search')),
+  searchSuggestions: byId('search-suggestions'),
+  searchMode: /** @type {HTMLSelectElement} */ (byId('search-mode')),
 };
 
 /** 区画に固定で置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
@@ -102,6 +117,10 @@ let currentPage = null;
 
 /** 入力フォームを表示しているフローの id です。 */
 let formFlowId = '';
+
+/** 入力フォームで行う操作です。実行する（run）か、最初のページを開く（open）かです。 */
+/** @type {'run' | 'open'} */
+let formMode = 'run';
 
 /** 入力フォームを作ったときのパラメータです。送信時の検証に使います。 */
 /** @type {import('../shared/params.js').Param[]} */
@@ -301,22 +320,61 @@ async function onRunClick(stored) {
     }
     return;
   }
-  showForm(stored);
+  showForm(stored, 'run');
 }
 
 /**
- * 実行時の入力フォームを表示します。
- * パラメータごとの入力欄と、値を記録していない入力欄（パスワードなど）ごとの入力欄を作ります。
+ * ［開く］のボタンを押したときの処理です。最初の手順の URL を新しいタブで開き、手順は実行しません。
+ * URL がパラメータを参照する場合は、先に値を尋ねます。
  * @param {StoredFlow} stored
  */
-function showForm(stored) {
+async function onOpenClick(stored) {
+  clearNotices();
+  if (firstPageParams(stored.flow).length > 0) {
+    showForm(stored, 'open');
+    return;
+  }
+  const error = await openFirstPage(stored, {});
+  if (error) {
+    setRowNotice(stored.id, error, 'error');
+  }
+}
+
+/**
+ * @param {StoredFlow} stored
+ * @param {Record<string, string>} params
+ * @returns {Promise<string>} 開けなかった理由。開いた場合は空の文字列
+ */
+async function openFirstPage(stored, params) {
+  const result = firstPageUrl(stored.flow, params, new Date());
+  if (!result.ok) {
+    return result.error;
+  }
+  await chrome.tabs.create({ url: result.url, active: true });
+  return '';
+}
+
+/**
+ * 値の入力フォームを表示します。
+ * 実行する場合は、パラメータごとの入力欄と、値を記録していない入力欄（パスワードなど）ごとの入力欄を作ります。
+ * 最初のページを開く場合は、その URL が参照するパラメータの入力欄だけを作ります。
+ * @param {StoredFlow} stored
+ * @param {'run' | 'open'} mode
+ */
+function showForm(stored, mode) {
   formFlowId = stored.id;
-  elements.formFlowName.textContent = `「${stored.flow.name}」`;
-  const params = stored.flow.params ?? [];
+  formMode = mode;
+  const open = mode === 'open';
+  elements.formHeading.textContent = open ? '開くページの値の入力' : '実行する値の入力';
+  elements.formDescription.textContent = open
+    ? `「${stored.flow.name}」の最初のページを開きます。入力した値は保存しません。`
+    : `「${stored.flow.name}」を実行します。入力した値は保存しません。`;
+  elements.formSubmit.textContent = open ? 'この値で開く' : 'この値で実行';
+  const params = open ? firstPageParams(stored.flow) : (stored.flow.params ?? []);
   formParams = params;
   const fields = buildRunFields(document, stored.flow, {
     params,
-    secretSteps: secretStepIndexes(stored.flow),
+    secretSteps: open ? [] : secretStepIndexes(stored.flow),
     now: new Date(),
   });
 
@@ -337,7 +395,13 @@ elements.form.addEventListener('submit', async (event) => {
     return;
   }
   const { params, secrets } = readRunFields(new FormData(elements.form));
-  const error = await startRun(formFlowId, params, secrets);
+  const stored = formMode === 'open' ? await getFlow(formFlowId) : undefined;
+  const error =
+    formMode === 'open'
+      ? stored
+        ? await openFirstPage(stored, params)
+        : 'フローが見つかりません。'
+      : await startRun(formFlowId, params, secrets);
   if (error) {
     showNotice(elements.formNotice, error, 'error');
     return;
@@ -404,10 +468,7 @@ async function refreshCurrentPage() {
     const frame = await chrome.webNavigation
       .getFrame({ tabId: tab.id, frameId: 0 })
       .catch(() => null);
-    currentPage = {
-      tabId: tab.id,
-      origin: frame && isWebUrl(frame.url) ? new URL(frame.url).origin : null,
-    };
+    currentPage = { tabId: tab.id, origin: pageOrigin(frame?.url) };
   }
   await renderFlows();
 }
@@ -421,7 +482,8 @@ async function render() {
   // フローの実行中は、記録した手順の削除と破棄をできないようにします。
   const running = runs.some(isActiveRun);
 
-  elements.pageOrigin.textContent = currentPage?.origin ?? 'このページでは使えません';
+  // Web ページ以外では記録できませんが、すべてのフローの一覧から開く・実行することはできます（#44）。
+  elements.pageOrigin.textContent = currentPage?.origin ?? 'Web ページ以外を表示しています';
 
   // 同じサイトのフローを実行中のタブと、記録の操作が干渉しないよう、そのサイトでは記録を始めません。
   elements.start.disabled =
@@ -461,21 +523,27 @@ async function render() {
   await renderRuns(runs);
 
   // 記録中と、同じサイトのフローを実行中は、実行のボタンを押せなくし、理由を行の中に表示します。
-  for (const item of elements.flows.querySelectorAll('li[data-origin]')) {
+  // すべてのフローを表示しているとき（Web ページ以外）は、最初の手順がページを開く手順でないフローも
+  // 押せなくします。開くページが決まらず、実行するタブもないためです。
+  for (const item of elements.flows.querySelectorAll('[data-origin]')) {
     const row = /** @type {HTMLElement} */ (item);
     const conflict = findConflictingRun(row.dataset.origin ?? '', runs);
-    const run = row.querySelector('button[data-run]');
-    if (run instanceof HTMLButtonElement) {
-      run.disabled = Boolean(recording) || Boolean(conflict);
-    }
-    const reason = row.querySelector('.lm-flow-reason');
-    if (reason instanceof HTMLElement) {
-      reason.textContent = recording
+    const noFirstPage = row.dataset.noFirstPage === 'true';
+    const text = noFirstPage
+      ? NO_FIRST_PAGE
+      : recording
         ? '記録中は実行できません。'
         : conflict
           ? conflictMessage(conflict.origin, conflict.flowName)
           : '';
-      reason.hidden = !reason.textContent;
+    const run = row.querySelector('button[data-run]');
+    if (run instanceof HTMLButtonElement) {
+      run.disabled = Boolean(text);
+    }
+    const reason = row.querySelector('.lm-flow-reason');
+    if (reason instanceof HTMLElement) {
+      reason.textContent = text;
+      reason.hidden = !text;
     }
   }
 }
@@ -589,34 +657,105 @@ function runStatusText(run, step) {
 }
 
 /**
- * 表示中のサイトのフローの一覧を表示します。ほかのサイトのフローは表示しません。
- * フローは、そのサイトのページでだけ実行する仕様のためです。
+ * フローの一覧を表示します。Web ページを表示しているときは、そのサイトのフローだけを表示します。
+ * フローは、そのサイトのページでだけ実行する仕様のためです。Web ページ以外（新しいタブなど）では、
+ * すべてのフローをホスト名ごとにまとめ、検索欄で絞り込めるようにします（#44）。
  */
 async function renderFlows() {
   const origin = currentPage?.origin;
-  const flows = flowsForOrigin(await listFlows(), origin);
-  if (editing && !flows.some((stored) => stored.id === editing?.id)) {
+  const all = await listFlows();
+  const shown = flowsToShow(all, origin);
+  const everything = shown.scope === 'all';
+  allScope = everything;
+  searchable = everything ? all : [];
+  if (editing && !shown.flows.some((stored) => stored.id === editing?.id)) {
     editing = null;
   }
 
+  elements.flowsHeading.textContent = everything ? 'すべてのフロー' : 'このサイトのフロー';
+  elements.searchArea.hidden = !everything || all.length === 0;
+  if (elements.searchArea.hidden) {
+    searchBox.close();
+  }
+  const query = everything ? elements.search.value : '';
+  const flows = everything ? filterFlows(shown.flows, query, searchMode()) : shown.flows;
+
   elements.flowsEmpty.hidden = flows.length > 0;
-  elements.flowsEmpty.textContent = origin
+  elements.flowsEmpty.textContent = !everything
     ? `${origin} のフローはまだありません。「記録開始」を押し、このページで操作を記録してください。`
-    : 'このページでは、フローの記録と実行はできません。https:// または http:// で始まるページを開いてください。';
-  elements.flows.replaceChildren(...flows.map(flowItem));
+    : all.length > 0
+      ? '該当するフローはありません。'
+      : '保存したフローはまだありません。記録するサイトを開き、「記録開始」を押してください。';
+  elements.flows.replaceChildren(
+    ...(everything
+      ? buildFlowGroups(document, groupByHost(flows), {
+          renderItem: flowItem,
+          // 検索中は、該当するフローが見えるよう、すべてのまとまりを開きます。
+          isOpen: (host) => query.trim() !== '' || !collapsedHosts.has(host),
+          onToggle: (host, open) => {
+            if (query.trim() !== '') {
+              return;
+            }
+            if (open) {
+              collapsedHosts.delete(host);
+            } else {
+              collapsedHosts.add(host);
+            }
+          },
+        })
+      : flows.map(flowItem)),
+  );
   await render();
 }
+
+// ---- すべてのフローの検索（#44） ----
+// 検索欄の入力と一致方法は保存しません。サイドパネルを開き直すと、空欄と「部分一致」に戻ります。
+
+/** すべてのフローを表示しているか（Web ページ以外を表示しているか）です。 */
+let allScope = false;
+
+/** 候補を作るための、すべてのフローです。すべてのフローを表示しているときだけ入れます。 */
+/** @type {StoredFlow[]} */
+let searchable = [];
+
+/** 折りたたんだまとまりのホスト名です。一覧を作り直しても閉じたままにします。 */
+const collapsedHosts = new Set();
+
+elements.searchMode.append(...MATCH_MODES.map(({ value, label }) => new Option(label, value)));
+
+/** @returns {import('../shared/flow-search.js').MatchMode} */
+function searchMode() {
+  return /** @type {import('../shared/flow-search.js').MatchMode} */ (elements.searchMode.value);
+}
+
+const searchBox = attachCombobox(elements.search, elements.searchSuggestions, {
+  getOptions: () =>
+    suggestions(searchable, elements.search.value, searchMode()).map(({ value, kind }) => ({
+      value,
+      note: kind === 'flow' ? 'フロー' : 'サイト',
+    })),
+  onSelect: () => renderFlows().catch(console.error),
+});
+
+elements.search.addEventListener('input', () => {
+  renderFlows().catch(console.error);
+});
+
+elements.searchMode.addEventListener('change', () => {
+  renderFlows().catch(console.error);
+});
 
 /**
  * フローの一覧の 1 行を作ります。
  * 主な操作の「実行」だけを行に出し、名前の変更・編集・削除は「その他」の中に置きます。
  * @param {StoredFlow} stored
- * @returns {HTMLLIElement}
+ * @returns {HTMLDivElement}
  */
 function flowItem(stored) {
-  const item = document.createElement('li');
+  const item = document.createElement('div');
   item.className = 'list-group-item';
   item.dataset.origin = stored.flow.origin;
+  item.dataset.noFirstPage = String(allScope && stored.flow.steps[0]?.type !== 'navigate');
 
   if (editing?.id === stored.id && editing.mode === 'rename') {
     item.append(renameForm(stored, editing));
@@ -674,6 +813,17 @@ function flowItem(stored) {
   more.setAttribute('aria-expanded', String(menuOpen));
   const actions = document.createElement('div');
   actions.className = 'lm-flow-actions';
+  if (allScope) {
+    // Web ページ以外を表示しているときは、対象のサイトを開く手段として［開く］を置きます（#44）。
+    // 幅が狭いため、ボタンの文字は短くし、読み上げと説明には「最初のページを開く」を使います。
+    const open = button('開く', 'btn btn-sm', () => {
+      onOpenClick(stored).catch((error) => setRowNotice(stored.id, String(error), 'error'));
+    });
+    open.title = '最初のページを開く';
+    open.setAttribute('aria-label', `「${stored.flow.name}」の最初のページを開く`);
+    open.disabled = item.dataset.noFirstPage === 'true';
+    actions.append(open);
+  }
   actions.append(run, more);
   main.append(actions);
 
