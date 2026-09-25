@@ -87,6 +87,28 @@ export const MAX_TEXT_LENGTH = 2000;
  */
 
 /**
+ * 編集中の JSON の文字列のうち、フローの名前（最上位の "name"）だけを書き換えます（#53）。
+ * 名前の変更で、保存していない JSON の編集内容を失わないようにするためです。
+ * JSON として読み取れない場合と、最上位がオブジェクトでない場合は、書き換えずに null を返します。
+ * 書き換えた場合は、字下げ 2 文字で整形し直します。項目の順序は変えません。
+ * @param {string} text
+ * @param {string} name
+ * @returns {string | null}
+ */
+export function replaceJsonName(text, name) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  return JSON.stringify({ ...value, name }, null, 2);
+}
+
+/**
  * フロー定義の項目を、読みやすい順序に並べ直します。
  * chrome.storage は保存した項目を名前の順に並べ替えるため、表示や書き出しの前に使います。
  * @param {Flow} flow
