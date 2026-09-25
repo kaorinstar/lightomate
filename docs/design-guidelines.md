@@ -12,7 +12,8 @@ content script がページの中に出す表示（`extension/content/overlay.js
   CSS を使い、独自の装飾を足しません。
 - **サイドパネルは、表示中のサイトでフローを実行・記録する場所に絞ります。** JSON の編集、読み込み、
   サイトごとの設定は、管理画面に置きます。
-- **知らせは、操作した場所に出します。** 画面の上部にまとめて出しません（「5. 知らせと誤りの表示場所」）。
+- **誤りと確認は、押したボタンの直下に出します。** 画面の上部にまとめて出しません。成功の知らせだけは、
+  画面の上部に固定した欄（トースト）に出し、5 秒後に消します（「5. 知らせと誤りの表示場所」）。
 
 ### 根拠とした一次情報
 
@@ -21,6 +22,9 @@ content script がページの中に出す表示（`extension/content/overlay.js
 | [Chrome for Developers：Side Panel API](https://developer.chrome.com/blog/extension-side-panel-launch) | サイドパネルは閲覧の補助であり、閲覧中の内容に関係する機能を置き、不要な要素を置かない | サイドパネルの役割を実行と記録に絞る |
 | [Material Design 3：Canonical layouts](https://m3.material.io/foundations/layout/canonical-layouts) | 標準の型は feed、list-detail、supporting pane。list-detail は一覧と詳細を左右に並べる | 管理画面を list-detail にする。サイドパネルは幅が狭いため 1 列にする |
 | [NN/g：Progressive Disclosure](https://www.nngroup.com/articles/progressive-disclosure/) | 最初は頻繁に使う少数の操作だけを見せ、専門的な操作は求められたときに出す | 一覧の行には「実行」だけを出し、ほかの操作は「…」の中に置く |
+| [Atlassian Design System：Flag](https://atlassian.design/components/flag/usage) | 重大な警告や誤り、見落としてはならない知らせには、自動で消える知らせを使わない。自動で消してよいのは成功の知らせ | トーストは成功の知らせにだけ使う |
+| [WCAG 2.2：2.2.1 Timing Adjustable](https://www.w3.org/WAI/WCAG22/Understanding/timing-adjustable.html) | 一定時間で消える表示は時間制限にあたる。同じ内容を時間制限なしで確認できる場合は対象外 | トーストには、結果が画面のほかの場所にも残る知らせだけを出す |
+| [GOV.UK Design System：Notification banner](https://design-system.service.gov.uk/components/notification-banner/) | 入力の誤りを通知の帯で知らせない | 誤りはトーストに出さない |
 | [NN/g：10 Design Guidelines for Reporting Errors in Forms](https://www.nngroup.com/articles/errors-forms-design-guidelines/) | 誤りは問題の入力欄の下か横に出す。まとめ表示だけに頼らない。色だけで伝えない。モーダルを多用しない | 知らせを操作した場所に出す。記号を添える。`confirm()` を使わない |
 | [GOV.UK Design System：Error message](https://design-system.service.gov.uk/components/error-message/) | 入力欄の直下に赤字と赤枠で出す。何が起きたかと、どうすれば直るかを具体的に書く | 入力欄の誤りの出し方と、文の書き方 |
 | [Tabler：Page headers](https://docs.tabler.io/ui/layout/page-headers) | 見出しと操作ボタンを 1 行にまとめ、内容はカードで区切る | 両画面の見出しと区画の部品 |
@@ -72,7 +76,8 @@ content script がページの中に出す表示（`extension/content/overlay.js
 | 元に戻せない操作（削除など） | 最初のボタンは `btn btn-ghost-danger`、確認の中の確定のボタンは `btn btn-danger` |
 | 一覧の行の中の操作 | `btn-sm` を付ける |
 | 入力欄 | `form-label`、`form-control`、`form-select` |
-| 知らせ | `extension/shared/ui.js` の `showNotice`（`alert` を使います） |
+| 知らせ（誤り・警告） | `extension/shared/ui.js` の `showNotice`（`alert` を使います） |
+| 成功の知らせ | `extension/shared/ui.js` の `showToast`。表示欄は `<div id="toast" class="lm-toast-region" role="status" aria-live="polite">` |
 | 入力欄の誤り | `extension/shared/ui.js` の `showFieldError`（`is-invalid` と `invalid-feedback` を使います） |
 | 確認 | `extension/shared/ui.js` の `confirmInline` |
 
@@ -109,25 +114,37 @@ content script がページの中に出す表示（`extension/content/overlay.js
 
 ## 5. 知らせと誤りの表示場所
 
-知らせは、利用者が操作した場所に出します。画面の上部の 1 か所にまとめると、画面の下部で操作した
-ときに、知らせが見えない位置に出るためです。
+成功の知らせは、画面の上部に固定した欄（トースト）に出します。スクロールした位置にかかわらず見えるためです。
+誤り・警告・確認は、押したボタンの直下に出します。自動で消える表示は見落とされ、画面の上部に出す表示は、
+どの操作についての知らせかが位置から読み取れないためです。
 
-| 種類 | 表示場所 | 例 |
-|---|---|---|
-| 入力の誤り | その入力欄の直下（赤枠と文言） | フロー名が空、サイトの形式の誤り |
-| 操作の失敗 | その操作をした区画・行の中 | 保存の失敗、許可が得られない、実行を開始できない |
-| JSON の形式の誤り | 編集欄の上に誤りの一覧。編集欄に赤枠 | 管理画面の保存と追加 |
-| 実行の失敗・停止 | その実行の区画の中 | 手順が見つからない、確定ボタンの手前で止まった |
-| 操作の成功 | その操作をした区画の中 | 保存しました、コピーしました |
-| 区画や行が消える操作の結果 | 一覧の区画の先頭 | 削除しました、保存して記録の区画が閉じた |
-| 画面全体の状態 | 一覧の区画の中の空表示 | このページでは使えません |
-| 元に戻せない操作の確認 | 操作した行・区画の中 | 削除の確認 |
+| 種類 | 表示場所 | 消え方 | 例 |
+|---|---|---|---|
+| 操作の成功 | 画面の上部のトースト（`showToast`） | 5 秒後、または［✕］で消える。マウスを重ねている間とフォーカスがある間は消さない | 保存しました、コピーしました、削除しました |
+| 見落とすと困る成功 | 押したボタンの直下に、警告として出す | 次の操作を始めるまで消さない | 同じ名前があるため、番号を付けて保存した |
+| 操作の失敗・警告 | 押したボタンの行の直下 | 次の操作を始めるまで消さない | 保存の失敗、許可が得られない、実行を開始できない |
+| 入力の誤り | その入力欄の直下（赤枠と文言） | 入力を直すと消える | フロー名が空、サイトの形式の誤り |
+| JSON の形式の誤り | ［JSON を保存］［追加］の直下に誤りの一覧。編集欄に赤枠 | 次の操作を始めるまで消さない | 管理画面の保存と追加 |
+| 元に戻せない操作の確認 | 押したボタンの行の直下（`confirmInline`） | 選択するまで消さない | 削除の確認、破棄の確認 |
+| 実行の状態 | その実行の区画の中 | 実行の区画が閉じるまで残る | 手順が見つからない、確定ボタンの手前で止まった |
+| 画面全体の状態 | 一覧の区画の中の空表示 | 状態が変わるまで残る | このページでは使えません |
 
-- 知らせは、次の操作を始めたときに消します。
+- **トーストには、結果が画面のほかの場所にも残る知らせだけを出します。** 保存したフローは一覧に増え、
+  削除したフローは一覧から消えるため、トーストを見落としても結果を確認できます。
+- **見出しの帯にあるボタン**（サイドパネルの［記録開始］［記録停止］、管理画面の［名前の変更］［削除］）の
+  誤りと確認は、帯の直下（本文の先頭）に出します。帯の中には置きません。
+- **区画が閉じる操作**で名前に番号を付けた場合は、そのフローが表示される行または区画に警告を出します。
+  例：記録したフローの保存（一覧の行）、JSON からの追加（詳細の区画）。
+- 表示欄が画面の外にある場合は、見える位置まで移動します（`showNotice` が行います）。
+- トーストは 1 つだけ表示し、新しいトーストは前のトーストと置き換えます。フォーカスは移しません。
+- 誤りと警告は、次の操作を始めたときに消します。
 - 誤りは文字と記号で示し、色だけで伝えません。
 - 読み上げのため、誤りは `role="alert"`、それ以外は `role="status"` にします（`showNotice` が設定します）。
+  トーストの表示欄は `role="status"` とし、読み上げの対象から外れないよう、空のまま常に置いておきます。
 - ブラウザ標準の `confirm()` と `alert()` は使いません。画面の中央に出るため、どの操作の確認かが
   位置から読み取れないためです。
+- 表示欄と対象のボタンの組み合わせは、`test/notice-placement.test.js` で確かめます。表示欄を追加したときは、
+  このテストの一覧にも追加します。
 
 ## 6. 文の書き方
 

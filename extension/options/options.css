@@ -82,10 +82,6 @@ body {
   gap: 0.25rem;
 }
 
-#list-notice {
-  margin: 0.75rem 1rem;
-}
-
 #empty[hidden],
 #stop-empty[hidden] {
   display: none;

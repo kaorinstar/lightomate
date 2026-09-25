@@ -1,7 +1,7 @@
 // サイドパネルです。記録の開始・停止、記録したフローの保存、保存したフローの一覧と実行、
 // 実行の状態を表示します。
-// 配置と、知らせを出す場所は docs/design-guidelines.md に従います。知らせは画面の上部にまとめず、
-// 操作した区画や行の中に出します。
+// 配置と、知らせを出す場所は docs/design-guidelines.md に従います。成功は画面の上部のトーストに出し、
+// 誤り・警告・確認は押したボタンの直下（行の中の操作は、その行の中）に出します。
 
 import {
   deleteFlow,
@@ -22,7 +22,13 @@ import {
   runStatesFrom,
 } from '../shared/flow-list.js';
 import { defaultValue } from '../shared/params.js';
-import { confirmInline, followColorScheme, showFieldError, showNotice } from '../shared/ui.js';
+import {
+  confirmInline,
+  followColorScheme,
+  showFieldError,
+  showNotice,
+  showToast,
+} from '../shared/ui.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../background/recording.js').Recording} Recording */
@@ -53,6 +59,7 @@ const elements = {
   saveFlow: byId('save-flow'),
   discard: byId('discard'),
   resultConfirm: byId('result-confirm'),
+  saveNotice: byId('save-notice'),
   resultStepCount: byId('result-step-count'),
   resultSteps: byId('result-steps'),
   result: /** @type {HTMLTextAreaElement} */ (byId('result')),
@@ -63,6 +70,7 @@ const elements = {
   flowsNotice: byId('flows-notice'),
   flows: byId('flows'),
   flowsEmpty: byId('flows-empty'),
+  toast: byId('toast'),
 };
 
 /** 区画に固定で置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
@@ -70,6 +78,7 @@ const notices = [
   elements.formNotice,
   elements.recordingNotice,
   elements.resultNotice,
+  elements.saveNotice,
   elements.jsonNotice,
   elements.flowsNotice,
 ];
@@ -164,16 +173,11 @@ elements.saveFlow.addEventListener('click', async () => {
   showFieldError(elements.flowName, elements.flowNameFeedback, '');
   const result = await saveFlow({ ...lastFlow, name });
   if (!result.ok) {
-    showNotice(
-      elements.resultNotice,
-      `保存できませんでした。\n${result.errors.join('\n')}`,
-      'error',
-    );
+    showNotice(elements.saveNotice, `保存できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
   await chrome.storage.session.remove('lastFlow');
-  // 保存の区画は閉じるため、保存したフローが並ぶ一覧の区画に知らせます。
-  showNotice(elements.flowsNotice, savedMessage(name, result.name), 'success');
+  showSaved(result.id, name, result.name);
 });
 
 elements.discard.addEventListener('click', async () => {
@@ -187,7 +191,7 @@ elements.discard.addEventListener('click', async () => {
     return;
   }
   await chrome.storage.session.remove('lastFlow');
-  showNotice(elements.flowsNotice, '記録した手順を破棄しました。', 'info');
+  showToast(elements.toast, '記録した手順を破棄しました。', { kind: 'info' });
 });
 
 elements.flowName.addEventListener('input', () => {
@@ -200,7 +204,7 @@ elements.copy.addEventListener('click', async () => {
   clearNotices();
   try {
     await navigator.clipboard.writeText(elements.result.value);
-    showNotice(elements.jsonNotice, 'JSON をコピーしました。', 'success');
+    showToast(elements.toast, 'JSON をコピーしました。');
   } catch (error) {
     showNotice(elements.jsonNotice, `コピーできませんでした。${String(error)}`, 'error');
   }
@@ -744,7 +748,7 @@ async function onRename(stored, name) {
   }
   editing = null;
   menuOpenId = '';
-  setRowNotice(stored.id, savedMessage(name, result.name), 'success');
+  showSaved(stored.id, name, result.name);
 }
 
 /** @param {StoredFlow} stored */
@@ -753,8 +757,7 @@ async function onDelete(stored) {
   await deleteFlow(stored.id);
   editing = null;
   menuOpenId = '';
-  // 行は消えるため、一覧の区画の先頭に知らせます。
-  showNotice(elements.flowsNotice, `「${stored.flow.name}」を削除しました。`, 'success');
+  showToast(elements.toast, `「${stored.flow.name}」を削除しました。`);
   await renderFlows();
 }
 
@@ -807,15 +810,24 @@ function secretStepIndexes(flow) {
 }
 
 /**
- * 保存したことの知らせです。同じサイトに同じ名前のフローがあり、番号を付けた場合はその旨を加えます。
+ * 保存したことを知らせます。成功は画面の上部のトーストに出します。
+ * 同じサイトに同じ名前のフローがあり、番号を付けた場合は、見落とすと困るため、
+ * 自動で消えるトーストではなく、そのフローの行の中に警告として残します。
+ * @param {string} flowId
  * @param {string} requested 付けようとした名前
  * @param {string} saved 保存した名前
- * @returns {string}
  */
-function savedMessage(requested, saved) {
-  return requested === saved
-    ? `「${saved}」を保存しました。`
-    : `同じサイトに「${requested}」があるため、「${saved}」として保存しました。`;
+function showSaved(flowId, requested, saved) {
+  if (requested === saved) {
+    showToast(elements.toast, `「${saved}」を保存しました。`);
+    renderFlows().catch(console.error);
+    return;
+  }
+  setRowNotice(
+    flowId,
+    `同じサイトに「${requested}」があるため、「${saved}」として保存しました。`,
+    'warning',
+  );
 }
 
 /**

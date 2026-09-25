@@ -51,7 +51,6 @@
             </h2>
             <button type="button" class="btn btn-sm" id="new">JSON から追加</button>
           </div>
-          <p id="list-notice" hidden></p>
           <p id="empty" class="lm-empty">
             保存したフローはまだありません。サイドパネルの［記録開始］で作成できます。JSON
             のファイルがある場合は［JSON から追加］を押してください。
@@ -108,7 +107,6 @@
                   形式は、リポジトリの docs/flow-format.md
                   に記載しています。保存する前に形式を検証し、誤りがあれば保存しません。
                 </p>
-                <p id="json-notice" hidden></p>
                 <textarea
                   id="json"
                   class="form-control lm-code"
@@ -119,6 +117,7 @@
                 <div class="lm-buttons mt-3">
                   <button type="button" class="btn btn-primary" id="save">JSON を保存</button>
                 </div>
+                <p id="json-notice" hidden></p>
               </details>
             </div>
           </section>
@@ -128,7 +127,6 @@
               <h2 id="import-heading" class="card-title">JSON からフローを追加</h2>
             </div>
             <div class="card-body">
-              <p id="import-notice" hidden></p>
               <p class="lm-sub">
                 フロー定義の JSON を貼り付けるか、ファイルを選んでください。追加する前に、
                 フローが操作するサイトを確認します。
@@ -147,10 +145,11 @@
                 spellcheck="false"
                 aria-label="追加するフロー定義の JSON"
               ></textarea>
-              <div id="import-confirm" hidden></div>
               <div class="lm-buttons">
                 <button type="button" class="btn btn-primary" id="import">追加</button>
               </div>
+              <div id="import-confirm" hidden></div>
+              <p id="import-notice" hidden></p>
             </div>
           </section>
         </div>
@@ -219,13 +218,13 @@
                   placeholder="/checkout/*"
                 ></textarea>
               </div>
-              <div id="stop-confirm" hidden></div>
               <div class="lm-buttons">
                 <button type="submit" class="btn btn-primary">このサイトの指定を保存</button>
                 <button type="button" class="btn btn-ghost-danger" id="stop-delete">
                   このサイトの指定を削除
                 </button>
               </div>
+              <div id="stop-confirm" hidden></div>
               <p id="stop-notice" hidden></p>
             </div>
           </form>
@@ -233,6 +232,8 @@
       </section>
 
       <footer class="lm-sub lm-footer">Lightomate バージョン <span id="version"></span></footer>
+
+      <div id="toast" class="lm-toast-region" role="status" aria-live="polite"></div>
     </div>
   </body>
 </html>
