@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveSteps, samePage } from '../extension/background/runner.js';
+import {
+  isNewPageLoaded,
+  lastPageNavigationIndex,
+  resolveSteps,
+  samePage,
+} from '../extension/background/runner.js';
 
 const target = { selectors: ['#q'], tag: 'input', label: '検索' };
 
@@ -64,4 +69,42 @@ test('同じページかは、クエリ文字列とページ内の位置を除�
   assert.ok(!samePage('https://a.example/p', 'https://a.example/q'));
   assert.ok(!samePage('https://a.example/p', 'https://b.example/p'));
   assert.ok(!samePage('', 'https://a.example/p'));
+});
+
+test('続けて記録されたページの移動は、最後の移動の手順までまとめる', () => {
+  const click = { type: 'click', target };
+  const page = (/** @type {string} */ path) => ({
+    type: 'navigate',
+    cause: 'page',
+    url: `https://www.example.com${path}`,
+  });
+  const steps = /** @type {import('../extension/shared/flow.js').Step[]} */ ([
+    click,
+    page('/cart/add-to-cart'),
+    page('/cart/view'),
+    click,
+    page('/checkout'),
+  ]);
+  assert.equal(lastPageNavigationIndex(steps, 1), 2);
+  assert.equal(lastPageNavigationIndex(steps, 4), 4);
+});
+
+test('利用者の操作による移動は、まとめる対象に含めない', () => {
+  const steps = /** @type {import('../extension/shared/flow.js').Step[]} */ ([
+    { type: 'navigate', cause: 'page', url: 'https://www.example.com/a' },
+    { type: 'navigate', cause: 'user', url: 'https://www.example.com/b' },
+  ]);
+  assert.equal(lastPageNavigationIndex(steps, 0), 0);
+});
+
+test('移動の前と異なるページの読み込みが完了した時点で、移動が終わったと判定する', () => {
+  // 記録時と移動先の URL が異なっても、新しいページであれば移動が終わったと判定します（#51）。
+  assert.ok(isNewPageLoaded('doc-a', { documentId: 'doc-b', status: 'complete' }));
+  assert.ok(isNewPageLoaded(undefined, { documentId: 'doc-b', status: 'complete' }));
+});
+
+test('同じページのままの場合と、読み込み中の場合は、移動が終わったと判定しない', () => {
+  assert.ok(!isNewPageLoaded('doc-a', { documentId: 'doc-a', status: 'complete' }));
+  assert.ok(!isNewPageLoaded('doc-a', { documentId: 'doc-b', status: 'loading' }));
+  assert.ok(!isNewPageLoaded('doc-a', { documentId: undefined, status: 'complete' }));
 });
