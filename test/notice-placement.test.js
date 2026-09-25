@@ -46,7 +46,7 @@ const cases = [
     page: '管理画面',
     html: options,
     button: 'import',
-    notices: ['import-confirm'],
+    notices: ['import-confirm', 'import-notice'],
   },
   {
     page: '管理画面',

@@ -33,7 +33,7 @@ import {
 } from '../shared/flow.js';
 import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
 import { attachCombobox } from '../shared/combobox.js';
-import { flowFileName, flowFileText, parseFlowFile } from '../shared/flow-file.js';
+import { flowFileName, flowFileText, parseFlowFile, splitDuplicates } from '../shared/flow-file.js';
 import { buildFlowGroups } from '../shared/flow-groups.js';
 import { MATCH_MODES, filterFlows, groupByHost, suggestions } from '../shared/flow-search.js';
 import {
@@ -113,6 +113,7 @@ const elements = {
   deleteFlow: byId('delete'),
   importer: byId('importer'),
   importConfirm: byId('import-confirm'),
+  importNotice: byId('import-notice'),
   file: /** @type {HTMLInputElement} */ (byId('file')),
   importJson: /** @type {HTMLTextAreaElement} */ (byId('import-json')),
   importJsonFeedback: byId('import-json-feedback'),
@@ -146,6 +147,7 @@ const elements = {
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
 const notices = [
   elements.flowsNotice,
+  elements.importNotice,
   elements.editorNotice,
   elements.runNotice,
   elements.jsonNotice,
@@ -650,16 +652,30 @@ elements.importFlow.addEventListener('click', async () => {
     );
     return;
   }
-  const { flows } = parsed;
+  // 保存済みのフローと内容が同じフローは、追加しません（#27）。
+  const { fresh: flows, duplicates } = splitDuplicates(parsed.flows, await listFlows());
+  const duplicateText =
+    duplicates.length === 0
+      ? ''
+      : `\n\n次の ${duplicates.length} 件は、同じ内容のフローがあるため追加しません。\n` +
+        duplicates.map((flow) => `・${flow.name}（${flow.origin}）`).join('\n');
+  if (flows.length === 0) {
+    showNotice(
+      elements.importNotice,
+      `${parsed.flows.length === 1 ? 'このフロー' : `${parsed.flows.length} 件のフロー`}はすべて追加済みです。同じ内容のフローがあるため、何も追加しませんでした。`,
+      'info',
+    );
+    return;
+  }
   // 他人から受け取ったフローは、ログイン中のサイトで意図しない操作を行う可能性があります（#14）。
   const confirmed = await confirmInline(elements.importConfirm, {
     message:
-      flows.length === 1
+      (flows.length === 1
         ? `「${flows[0].name}」は ${flows[0].origin} を操作するフローです。` +
           '内容を確認し、信頼できるフローだけを追加してください。'
         : `次の ${flows.length} 件のフローを追加します。各フローは、括弧内のサイトを操作します。` +
           '内容を確認し、信頼できるフローだけを追加してください。\n' +
-          flows.map((flow) => `・${flow.name}（${flow.origin}）`).join('\n'),
+          flows.map((flow) => `・${flow.name}（${flow.origin}）`).join('\n')) + duplicateText,
     confirmLabel: '追加する',
   });
   if (!confirmed) {
@@ -674,12 +690,14 @@ elements.importFlow.addEventListener('click', async () => {
   elements.file.value = '';
   select(result.added[0].id);
   const renamed = result.added.filter(({ name, originalName }) => name !== originalName);
+  const skipped =
+    duplicates.length === 0 ? '' : `同じ内容の ${duplicates.length} 件は追加しませんでした。`;
   if (renamed.length === 0) {
     showToast(
       elements.toast,
-      flows.length === 1
+      (flows.length === 1
         ? `「${result.added[0].name}」を追加しました。`
-        : `${flows.length} 件のフローを追加しました。`,
+        : `${flows.length} 件のフローを追加しました。`) + skipped,
     );
     return;
   }
@@ -687,6 +705,7 @@ elements.importFlow.addEventListener('click', async () => {
   showNotice(
     elements.editorNotice,
     (flows.length === 1 ? '' : `${flows.length} 件のフローを追加しました。`) +
+      skipped +
       `同じサイトに同じ名前のフローがあるため、次の名前で追加しました。\n` +
       renamed.map(({ name, originalName }) => `・「${originalName}」→「${name}」`).join('\n'),
     'warning',

@@ -2,7 +2,7 @@
 //
 // ファイルは、フロー 1 件（オブジェクト）か、複数件（フローの配列）の JSON です。
 // 読み込むときは全件を検証し、1 件でも誤りがあれば 1 件も追加しません。どれが追加されたかを
-// わかりにくくしないためです。
+// わかりにくくしないためです。保存済みのフローと内容が同じフローは、追加しません。
 
 import { orderFlow, validateFlow } from './flow.js';
 import { uniqueName } from './flow-list.js';
@@ -48,6 +48,64 @@ export function parseFlowFile(value) {
   return errors.length > 0
     ? { ok: false, errors }
     : { ok: true, flows: /** @type {Flow[]} */ (value), multiple: true };
+}
+
+/**
+ * フローの内容を比べるための文字列です（#27）。フロー名と schemaVersion を除き、項目を名前の順に並べた JSON です。
+ * 名前だけを変えたフローや、版番号だけが異なるフローを、同じ内容として扱うためです。
+ * ハッシュは保存せず、比べるたびに作ります。保存すると、フローを編集するたびに更新が必要になるためです。
+ * @param {Flow} flow
+ * @returns {string}
+ */
+export function flowContentKey(flow) {
+  const content = { ...flow };
+  delete (/** @type {Partial<Flow>} */ (content).name);
+  delete (/** @type {Partial<Flow>} */ (content).schemaVersion);
+  return JSON.stringify(sortKeys(content));
+}
+
+/**
+ * 読み込むフローを、追加するものと、同じ内容のフローがすでにあるため追加しないものに分けます。
+ * 同じファイルの中で内容が同じフローは、最初の 1 件だけを追加します。
+ * @param {Flow[]} flows 読み込むフロー
+ * @param {StoredFlow[]} existing 保存済みのフロー
+ * @returns {{ fresh: Flow[], duplicates: Flow[] }}
+ */
+export function splitDuplicates(flows, existing) {
+  const seen = new Set(existing.map((stored) => flowContentKey(stored.flow)));
+  /** @type {Flow[]} */
+  const fresh = [];
+  /** @type {Flow[]} */
+  const duplicates = [];
+  for (const flow of flows) {
+    const key = flowContentKey(flow);
+    if (seen.has(key)) {
+      duplicates.push(flow);
+    } else {
+      seen.add(key);
+      fresh.push(flow);
+    }
+  }
+  return { fresh, duplicates };
+}
+
+/**
+ * オブジェクトの項目を、名前の順に並べ直した値を返します。配列の順序は変えません。
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function sortKeys(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortKeys);
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, sortKeys(/** @type {Record<string, unknown>} */ (value)[key])]),
+    );
+  }
+  return value;
 }
 
 /**

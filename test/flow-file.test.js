@@ -6,8 +6,10 @@ import { SCHEMA_VERSION } from '../extension/shared/flow.js';
 import {
   MAX_IMPORT_FLOWS,
   flowFileName,
+  flowContentKey,
   flowFileText,
   namesForImport,
+  splitDuplicates,
   parseFlowFile,
 } from '../extension/shared/flow-file.js';
 
@@ -108,4 +110,60 @@ test('1 件はオブジェクト、複数件は配列として書き出し、読
     flows: [flow('a'), flow('b')],
     multiple: true,
   });
+});
+
+test('名前と版番号だけが異なるフローは、同じ内容と判定する', () => {
+  assert.equal(
+    flowContentKey(flow('a')),
+    flowContentKey({ ...flow('別の名前'), schemaVersion: 1 }),
+  );
+});
+
+test('項目の順序が異なっても、同じ内容と判定する', () => {
+  const original = { ...flow('a'), interval: { min: 1000, max: 2000 } };
+  const reordered = JSON.parse(
+    JSON.stringify({
+      steps: [{ url: `${original.origin}/`, cause: 'user', type: 'navigate' }],
+      interval: { max: 2000, min: 1000 },
+      origin: original.origin,
+      name: 'a',
+      schemaVersion: SCHEMA_VERSION,
+    }),
+  );
+  assert.equal(flowContentKey(original), flowContentKey(reordered));
+});
+
+test('サイト、手順、パラメータ、間隔のいずれかが異なるフローは、別の内容と判定する', () => {
+  const base = flowContentKey(flow('a'));
+  const variants = [
+    flow('a', 'https://other.example.com'),
+    { ...flow('a'), steps: [...flow('a').steps, { type: 'wait', ms: 1000 }] },
+    { ...flow('a'), params: [{ name: 'q', label: '検索語', type: 'text' }] },
+    { ...flow('a'), interval: { min: 1000, max: 1000 } },
+  ];
+  for (const variant of variants) {
+    assert.notEqual(
+      flowContentKey(/** @type {import('../extension/shared/flow.js').Flow} */ (variant)),
+      base,
+    );
+  }
+});
+
+test('保存済みのフローと同じ内容のフローと、ファイルの中の 2 件目以降の同じ内容を除く', () => {
+  const existing = [
+    stored({ ...flow('保存済み'), steps: [...flow('x').steps, { type: 'wait', ms: 5 }] }),
+  ];
+  const alreadySaved = { ...flow('名前だけ違う'), steps: existing[0].flow.steps };
+  const { fresh, duplicates } = splitDuplicates(
+    [flow('新しい'), alreadySaved, flow('新しいの複製')],
+    existing,
+  );
+  assert.deepEqual(
+    fresh.map((item) => item.name),
+    ['新しい'],
+  );
+  assert.deepEqual(
+    duplicates.map((item) => item.name),
+    ['名前だけ違う', '新しいの複製'],
+  );
 });
