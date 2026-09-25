@@ -95,7 +95,12 @@
   document.addEventListener('click', onClick, true);
   document.addEventListener('change', onChange, true);
 
-  chrome.runtime.onMessage.addListener((message, sender) => {
+  /**
+   * Service Worker からの知らせを受け取ります。
+   * @param {any} message
+   * @param {chrome.runtime.MessageSender} sender
+   */
+  function onMessage(message, sender) {
     if (sender.id !== chrome.runtime.id) {
       return;
     }
@@ -109,8 +114,12 @@
     document.removeEventListener('click', onClick, true);
     document.removeEventListener('change', onChange, true);
     overlay.remove();
+    // 受け取りをやめます。残したまま同じページで記録を始め直すと、受け取りが増えるためです（#82）。
+    chrome.runtime.onMessage.removeListener(onMessage);
     scope[installedKey] = false;
-  });
+  }
+
+  chrome.runtime.onMessage.addListener(onMessage);
 
   /**
    * 手順を Service Worker へ送ります。

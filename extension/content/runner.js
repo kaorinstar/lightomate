@@ -50,7 +50,14 @@
    */
   let inspected = null;
 
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  /**
+   * Service Worker からの依頼を受け取ります。
+   * @param {any} message
+   * @param {chrome.runtime.MessageSender} sender
+   * @param {(response?: unknown) => void} sendResponse
+   * @returns {boolean} 応答を後で返す場合は true
+   */
+  function onMessage(message, sender, sendResponse) {
     if (sender.id !== chrome.runtime.id) {
       return false;
     }
@@ -77,6 +84,9 @@
       } else {
         overlay.remove();
       }
+      // 受け取りをやめます。残したまま次の実行でこのスクリプトが読み込まれると、受け取りが増え、
+      // 1 つの手順を受け取りの数だけ行うためです（#82）。
+      chrome.runtime.onMessage.removeListener(onMessage);
       scope[installedKey] = false;
       return false;
     }
@@ -93,7 +103,9 @@
       sendResponse({ ok: false, error: String(error) }),
     );
     return true;
-  });
+  }
+
+  chrome.runtime.onMessage.addListener(onMessage);
 
   /**
    * クリックする要素を探し、押さずに、その要素の文言と、止める要素の指定に一致したかを返します。
