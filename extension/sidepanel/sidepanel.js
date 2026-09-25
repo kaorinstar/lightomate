@@ -11,6 +11,7 @@ import {
   renameFlow,
   saveFlow,
 } from '../common/flow-store.js';
+import { requestPermission } from '../common/permissions.js';
 import { describeStep, formatDateTime } from '../shared/describe.js';
 import { isWebUrl, orderFlow } from '../shared/flow.js';
 import {
@@ -21,7 +22,12 @@ import {
   isActiveRun,
   runStatesFrom,
 } from '../shared/flow-list.js';
-import { defaultValue, paramFieldErrors } from '../shared/params.js';
+import {
+  buildRunFields,
+  readRunFields,
+  secretStepIndexes,
+  showRunFieldErrors,
+} from '../shared/run-form.js';
 import {
   confirmInline,
   followColorScheme,
@@ -97,12 +103,9 @@ let currentPage = null;
 /** 入力フォームを表示しているフローの id です。 */
 let formFlowId = '';
 
-/**
- * 入力フォームの入力欄と、その直下に置いた誤りの表示欄です。
- * param はパラメータの定義で、値を記録していない入力欄（パスワードなど）では null です。
- * @type {Array<{ control: HTMLInputElement | HTMLSelectElement, feedback: HTMLElement, param: import('../shared/params.js').Param | null }>}
- */
-let formControls = [];
+/** 入力フォームを作ったときのパラメータです。送信時の検証に使います。 */
+/** @type {import('../shared/params.js').Param[]} */
+let formParams = [];
 
 /**
  * 一覧で名前を変更している、または削除の確認を表示しているフローです。
@@ -309,41 +312,13 @@ async function onRunClick(stored) {
 function showForm(stored) {
   formFlowId = stored.id;
   elements.formFlowName.textContent = `「${stored.flow.name}」`;
-  const now = new Date();
-  formControls = [];
-
-  const fields = (stored.flow.params ?? []).map((param) => {
-    /** @type {HTMLInputElement | HTMLSelectElement} */
-    let control;
-    if (param.type === 'select') {
-      control = document.createElement('select');
-      control.className = 'form-select';
-      for (const option of param.options ?? []) {
-        control.append(new Option(option, option));
-      }
-    } else {
-      control = document.createElement('input');
-      control.className = 'form-control';
-      control.type = param.type === 'month' ? 'month' : 'text';
-      if (param.type === 'number') {
-        control.inputMode = 'decimal';
-      }
-    }
-    control.name = `param:${param.name}`;
-    control.value = defaultValue(param, now);
-    return formField(param.label, control, param);
+  const params = stored.flow.params ?? [];
+  formParams = params;
+  const fields = buildRunFields(document, stored.flow, {
+    params,
+    secretSteps: secretStepIndexes(stored.flow),
+    now: new Date(),
   });
-
-  for (const index of secretStepIndexes(stored.flow)) {
-    const step = stored.flow.steps[index];
-    const control = document.createElement('input');
-    control.className = 'form-control';
-    control.type = 'password';
-    control.name = `secret:${index}`;
-    control.autocomplete = 'off';
-    const label = step.type === 'input' ? step.target.label : '';
-    fields.push(formField(`${label}（手順 ${index + 1}）`, control, null));
-  }
 
   elements.formFields.replaceChildren(...fields);
   showNotice(elements.formNotice, '');
@@ -358,23 +333,10 @@ function showForm(stored) {
 elements.form.addEventListener('submit', async (event) => {
   event.preventDefault();
   clearNotices();
-  /** @type {Record<string, string>} */
-  const params = {};
-  /** @type {Record<string, string>} */
-  const secrets = {};
-  for (const [key, value] of new FormData(elements.form)) {
-    if (typeof value !== 'string') {
-      continue;
-    }
-    if (key.startsWith('param:')) {
-      params[key.slice('param:'.length)] = value;
-    } else if (key.startsWith('secret:')) {
-      secrets[key.slice('secret:'.length)] = value;
-    }
-  }
-  if (showFormErrors(params)) {
+  if (showRunFieldErrors(elements.form, formParams, new Date())) {
     return;
   }
+  const { params, secrets } = readRunFields(new FormData(elements.form));
   const error = await startRun(formFlowId, params, secrets);
   if (error) {
     showNotice(elements.formNotice, error, 'error');
@@ -382,35 +344,6 @@ elements.form.addEventListener('submit', async (event) => {
   }
   hideForm();
 });
-
-/**
- * 入力フォームの値を検証し、誤りをそれぞれの入力欄の直下に表示します。
- * Chrome 標準の吹き出し（required による検証）は使いません。見た目と位置が、ほかの誤りと異なるためです。
- * @param {Record<string, string>} params パラメータの入力値
- * @returns {boolean} 誤りがある場合は true。最初の誤りの欄にフォーカスを移します
- */
-function showFormErrors(params) {
-  const paramErrors = paramFieldErrors(
-    formControls.flatMap(({ param }) => (param ? [param] : [])),
-    params,
-    new Date(),
-  );
-  /** @type {HTMLElement | null} */
-  let first = null;
-  for (const { control, feedback, param } of formControls) {
-    const error = param
-      ? (paramErrors[param.name] ?? '')
-      : control.value === ''
-        ? '値を入力してください。'
-        : '';
-    showFieldError(control, feedback, error);
-    if (error && !first) {
-      first = control;
-    }
-  }
-  first?.focus();
-  return first !== null;
-}
 
 elements.formCancel.addEventListener('click', hideForm);
 
@@ -432,7 +365,7 @@ async function startRun(flowId, params, secrets) {
 
 function hideForm() {
   elements.formSection.hidden = true;
-  formControls = [];
+  formParams = [];
   // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
   elements.formFields.replaceChildren();
   showNotice(elements.formNotice, '');
@@ -899,31 +832,6 @@ function setRowNotice(flowId, text, kind) {
 // ---- 補助 ----
 
 /**
- * サイトを操作する許可を求めます。許可済みの場合、画面は表示されません。
- * @param {string} origin
- * @returns {Promise<string>} 許可が得られなかった理由。得られた場合は空の文字列
- */
-async function requestPermission(origin) {
-  try {
-    if (await chrome.permissions.request({ origins: [`${origin}/*`] })) {
-      return '';
-    }
-  } catch (error) {
-    return `許可を求められませんでした。${String(error)}`;
-  }
-  return `${origin} を操作する許可が得られなかったため、続けられません。もう一度押し、表示される画面で「許可」を選んでください。`;
-}
-
-/**
- * 値を記録していない入力欄（パスワードなど）の手順の番号を返します。
- * @param {Flow} flow
- * @returns {number[]}
- */
-function secretStepIndexes(flow) {
-  return flow.steps.flatMap((step, index) => (step.type === 'input' && step.secret ? [index] : []));
-}
-
-/**
  * 保存したことを知らせます。成功は画面の上部のトーストに出します。
  * 同じサイトに同じ名前のフローがあり、番号を付けた場合は、見落とすと困るため、
  * 自動で消えるトーストではなく、そのフローの行の中に警告として残します。
@@ -963,32 +871,6 @@ function button(text, className, onClick) {
 async function getLastFlow() {
   const stored = await chrome.storage.session.get('lastFlow');
   return /** @type {Flow | undefined} */ (stored.lastFlow);
-}
-
-/**
- * 入力フォームの 1 項目（項目名、入力欄、誤りの表示欄）を作り、formControls に登録します。
- * 誤りの表示欄は入力欄の直後に置きます。Tabler は、誤りの印の付いた入力欄の後ろの表示欄だけを表示するためです。
- * @param {string} text 項目名
- * @param {HTMLInputElement | HTMLSelectElement} control
- * @param {import('../shared/params.js').Param | null} param
- * @returns {HTMLDivElement}
- */
-function formField(text, control, param) {
-  const id = `run-field-${formControls.length}`;
-  control.id = id;
-  const label = document.createElement('label');
-  label.className = 'form-label';
-  label.htmlFor = id;
-  label.textContent = text;
-  const feedback = document.createElement('div');
-  feedback.className = 'invalid-feedback';
-  feedback.id = `${id}-feedback`;
-  control.addEventListener('input', () => showFieldError(control, feedback, ''));
-  formControls.push({ control, feedback, param });
-  const field = document.createElement('div');
-  field.className = 'lm-field';
-  field.append(label, control, feedback);
-  return field;
 }
 
 /**

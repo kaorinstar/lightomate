@@ -229,3 +229,16 @@
   font-family: var(--tblr-font-monospace);
   font-size: 0.8125rem;
 }
+
+/* 実行する値の入力欄です（shared/run-form.js）。サイドパネルと管理画面で使います。項目名の下に入力欄を置きます。 */
+.lm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+}
+
+.lm-field .form-label,
+.lm-field .invalid-feedback {
+  margin: 0;
+}

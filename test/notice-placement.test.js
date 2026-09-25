@@ -113,5 +113,6 @@ for (const { page, html, control, feedback = `${control}-feedback` } of fields) 
 }
 
 test('実行する値の入力では、Chrome 標準の吹き出しを使わない', () => {
-  assert.match(sidepanel, /<form id="run-form" novalidate>/);
+  assert.match(sidepanel, /<form id="run-form"[^>]* novalidate[ >]/);
+  assert.match(options, /<form id="run-form"[^>]* novalidate[ >]/);
 });
