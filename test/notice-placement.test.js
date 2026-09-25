@@ -44,7 +44,7 @@ const cases = [
   {
     page: '管理画面',
     html: options,
-    button: 'bulk-clear',
+    button: 'bulk-delete',
     notices: ['bulk-confirm', 'bulk-notice'],
   },
   { page: '管理画面', html: options, button: 'save', notices: ['json-notice'] },

@@ -116,7 +116,6 @@ const elements = {
   bulkCount: byId('bulk-count'),
   bulkExport: byId('bulk-export'),
   bulkDelete: byId('bulk-delete'),
-  bulkClear: byId('bulk-clear'),
   bulkConfirm: byId('bulk-confirm'),
   bulkNotice: byId('bulk-notice'),
   flowsNotice: byId('flows-notice'),
@@ -634,13 +633,6 @@ elements.selectAll.addEventListener('change', () => {
     }
   }
   render().catch(console.error);
-});
-
-elements.bulkClear.addEventListener('click', () => {
-  clearNotices();
-  checkedIds.clear();
-  render().catch(console.error);
-  elements.selectAll.focus();
 });
 
 // 選んだフローを 1 つのファイルに書き出します（#27 と同じ形式とファイル名）。
