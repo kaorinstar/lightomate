@@ -254,6 +254,12 @@ body {
   white-space: pre-line;
 }
 
+/* 見出しの帯の直下に出す、すべて削除の確認と、削除できなかった知らせです（#75）。 */
+#history-confirm,
+#history-notice {
+  margin: 0.75rem 1rem;
+}
+
 .lm-history .lm-nowrap {
   white-space: nowrap;
 }

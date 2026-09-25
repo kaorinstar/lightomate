@@ -52,6 +52,12 @@ const cases = [
     button: 'stop-delete',
     notices: ['stop-confirm', 'stop-notice'],
   },
+  {
+    page: '管理画面',
+    html: options,
+    button: 'history-clear',
+    notices: ['history-confirm', 'history-notice'],
+  },
 ];
 
 /** ボタンと表示欄の間にあってはならない、内容を持つ要素です。 */

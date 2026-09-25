@@ -119,6 +119,9 @@ const elements = {
   historyEmpty: byId('history-empty'),
   historyTableWrap: byId('history-table-wrap'),
   historyCsv: byId('history-csv'),
+  historyClear: byId('history-clear'),
+  historyConfirm: byId('history-confirm'),
+  historyNotice: byId('history-notice'),
 };
 
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
@@ -127,6 +130,7 @@ const notices = [
   elements.runNotice,
   elements.jsonNotice,
   elements.stopNotice,
+  elements.historyNotice,
 ];
 
 /**
@@ -642,7 +646,8 @@ onFlowsChanged(() => {
 render().catch(console.error);
 
 // ---- 実行履歴（#19） ----
-// 履歴は Service Worker が実行の終わりに記録します。この画面は表示と CSV への書き出しだけを行います。
+// 履歴は Service Worker が実行の終わりに記録します。この画面は表示と CSV への書き出しを行い、
+// 削除（#75）は Service Worker に依頼します。記録と削除の書き込みを、同じ待ち行列で順に行うためです。
 
 onHistoryChanged(() => {
   renderHistory().catch(console.error);
@@ -661,6 +666,45 @@ elements.historyCsv.addEventListener('click', async () => {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 });
 
+elements.historyClear.addEventListener('click', async () => {
+  clearNotices();
+  const runIds = (await listHistory()).map((entry) => entry.runId);
+  if (runIds.length === 0) {
+    return;
+  }
+  // 確認の後に記録された履歴は、利用者が見ていないため削除しません。確認を出した時点の履歴だけを削除します。
+  if (
+    !(await confirmInline(elements.historyConfirm, {
+      message: `実行履歴 ${runIds.length} 件をすべて削除します。元に戻せません。保存したファイルは削除しません。`,
+      confirmLabel: '削除する',
+      danger: true,
+    }))
+  ) {
+    return;
+  }
+  if (await removeHistoryEntries(runIds)) {
+    showToast(elements.toast, `実行履歴 ${runIds.length} 件を削除しました。`);
+  }
+});
+
+/**
+ * 実行履歴の削除を Service Worker に依頼します。削除できなかった場合は、見出しの帯の直下に知らせます。
+ * @param {string[]} runIds
+ * @returns {Promise<boolean>} 削除できたか
+ */
+async function removeHistoryEntries(runIds) {
+  const response = await chrome.runtime.sendMessage({ kind: 'history/remove', runIds });
+  if (!response?.ok) {
+    showNotice(
+      elements.historyNotice,
+      `実行履歴を削除できませんでした。\n${response?.error ?? ''}`.trim(),
+      'error',
+    );
+    return false;
+  }
+  return true;
+}
+
 /** 実行履歴の一覧を表示し直します。 */
 async function renderHistory() {
   const history = await listHistory();
@@ -668,6 +712,7 @@ async function renderHistory() {
   elements.historyEmpty.hidden = history.length > 0;
   elements.historyTableWrap.hidden = history.length === 0;
   elements.historyCsv.toggleAttribute('disabled', history.length === 0);
+  elements.historyClear.toggleAttribute('disabled', history.length === 0);
   elements.history.replaceChildren(
     ...history.map((entry) => {
       const started = document.createElement('td');
@@ -707,8 +752,28 @@ async function renderHistory() {
       files.className = 'lm-sub';
       files.textContent = entry.files.join('\n');
 
+      // 行ごとに同じ「×」が並ぶため、読み上げでは対象の日時とフロー名を示します。1 件ずつの削除は確認しません。
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn btn-sm btn-ghost-secondary lm-history-remove';
+      remove.textContent = '×';
+      remove.title = 'この履歴を削除';
+      remove.setAttribute(
+        'aria-label',
+        `${formatDateTime(entry.startedAt)} の「${entry.flowName}」の履歴を削除`,
+      );
+      remove.addEventListener('click', async () => {
+        clearNotices();
+        if (await removeHistoryEntries([entry.runId])) {
+          showToast(elements.toast, `「${entry.flowName}」の履歴を削除しました。`);
+        }
+      });
+      const actions = document.createElement('td');
+      actions.className = 'lm-nowrap';
+      actions.append(remove);
+
       const row = document.createElement('tr');
-      row.append(started, flow, status, reason, files);
+      row.append(started, flow, status, reason, files, actions);
       return row;
     }),
   );
