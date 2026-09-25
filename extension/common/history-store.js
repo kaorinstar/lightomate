@@ -1,7 +1,8 @@
 // 実行履歴（#19）の保存です。chrome.storage.local に、新しい順の配列として保存します。
 // 書き込むのは Service Worker だけです。拡張機能の画面は読み取りと、変化の受け取りだけを行います。
+// 画面からの削除（#75）も、メッセージで Service Worker に依頼します。
 
-import { appendHistory } from '../shared/history.js';
+import { appendHistory, withoutHistoryEntries } from '../shared/history.js';
 
 /** @typedef {import('../shared/history.js').HistoryEntry} HistoryEntry */
 
@@ -31,6 +32,21 @@ export async function listHistory() {
 export function addHistory(entry) {
   const result = queue.then(async () => {
     const history = appendHistory(await listHistory(), entry);
+    await chrome.storage.local.set({ [HISTORY_KEY]: history });
+  });
+  queue = result.catch(() => {});
+  return result;
+}
+
+/**
+ * 指定した実行の履歴を削除します。記録と同じ待ち行列で行い、実行の終了時の記録と入れ違わないようにします。
+ * 保存したファイルは削除しません。
+ * @param {string[]} runIds
+ * @returns {Promise<void>}
+ */
+export function removeHistory(runIds) {
+  const result = queue.then(async () => {
+    const history = withoutHistoryEntries(await listHistory(), runIds);
     await chrome.storage.local.set({ [HISTORY_KEY]: history });
   });
   queue = result.catch(() => {});
