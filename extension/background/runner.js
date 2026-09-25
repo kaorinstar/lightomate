@@ -21,6 +21,8 @@ import {
 } from '../shared/flow-list.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
 import { confirmPauseNote, findConfirmText } from '../shared/purchase-guard.js';
+import { findStopPath, stopRuleNote } from '../shared/stop-rules.js';
+import { getStopRule } from '../common/stop-rules-store.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -384,6 +386,13 @@ async function runInPage(runId, flow, tabId, step) {
     throw new Error(`フローのサイト（${flow.origin}）とは別のページに移動したため、停止しました。`);
   }
 
+  // サイトごとの「必ず止まる場所」の指定（#54）です。止める画面では、クリック・入力・選択を行いません。
+  const rule = await getStopRule(flow.origin);
+  const stopPath = findStopPath(rule, tab.url);
+  if (stopPath !== undefined) {
+    throw new Halted(stopRuleNote('path', stopPath));
+  }
+
   await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
 
   if (step.type === 'click') {
@@ -391,7 +400,16 @@ async function runInPage(runId, flow, tabId, step) {
       kind: 'runner/inspect',
       step,
       timeoutMs: ELEMENT_TIMEOUT_MS,
+      stopSelectors: rule.selectors,
     });
+    // 利用者が明示した指定のため、文言による判定より先に確かめます。
+    // ページから届いた値は、指定の一覧に含まれるものだけを受け付けます。
+    if (
+      typeof inspected.matchedSelector === 'string' &&
+      rule.selectors.includes(inspected.matchedSelector)
+    ) {
+      throw new Halted(stopRuleNote('selector', inspected.matchedSelector));
+    }
     const texts = Array.isArray(inspected.texts)
       ? inspected.texts.filter((/** @type {unknown} */ text) => typeof text === 'string')
       : [];

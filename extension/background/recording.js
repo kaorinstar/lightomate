@@ -13,6 +13,8 @@ import {
   validateStep,
 } from '../shared/flow.js';
 import { guardRecordedStep } from '../shared/purchase-guard.js';
+import { applyStopRuleToRecordedStep } from '../shared/stop-rules.js';
+import { getStopRule } from '../common/stop-rules-store.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -135,10 +137,14 @@ export function stopRecording() {
  * 実行時に確定ボタンを押さないためです。利用者が記録中に押したクリックそのものは止めません。
  * @param {unknown} step
  * @param {chrome.runtime.MessageSender} sender
+ * サイトごとの「必ず止まる場所」の指定（#54）に一致するクリックも、同じように一時停止として記録します。
+ * @param {unknown} step
+ * @param {chrome.runtime.MessageSender} sender
  * @param {unknown} texts クリックした要素の文言（content/element-text.js）
+ * @param {unknown} matchedSelector クリックした要素が一致した、止める要素の指定
  * @returns {Promise<void>}
  */
-export function addStep(step, sender, texts) {
+export function addStep(step, sender, texts, matchedSelector) {
   return enqueue(async () => {
     const recording = await getRecording();
     if (
@@ -152,22 +158,39 @@ export function addStep(step, sender, texts) {
     ) {
       return;
     }
-    const guarded = guardRecordedStep(
+    // サイトごとの指定を先に確かめます。利用者が明示した指定のため、文言による判定より優先します。
+    const ruled = applyStopRuleToRecordedStep(
       /** @type {Step} */ (step),
-      Array.isArray(texts) ? texts.filter((text) => typeof text === 'string') : [],
+      recording.steps.at(-1),
+      await getStopRule(recording.origin),
+      sender.url,
+      typeof matchedSelector === 'string' ? matchedSelector : undefined,
     );
-    recording.steps.push(guarded.step);
-    await chrome.storage.session.set({ [RECORDING_KEY]: recording });
-    if (guarded.confirmText !== undefined) {
+    /** @type {Step | null} */
+    let recorded = ruled.step;
+    /** @type {string | undefined} */
+    let notice;
+    if (ruled.note !== undefined) {
+      notice =
+        'サイトごとの指定に一致したため、クリックの代わりに一時停止を記録しました。実行はこの手前で止まります。';
+    } else {
+      const guarded = guardRecordedStep(
+        /** @type {Step} */ (step),
+        Array.isArray(texts) ? texts.filter((text) => typeof text === 'string') : [],
+      );
+      recorded = guarded.step;
+      if (guarded.confirmText !== undefined) {
+        notice =
+          '確定ボタンのため、クリックの代わりに一時停止を記録しました。実行はこの手前で止まります。';
+      }
+    }
+    if (recorded) {
+      recording.steps.push(recorded);
+      await chrome.storage.session.set({ [RECORDING_KEY]: recording });
+    }
+    if (notice !== undefined) {
       await chrome.tabs
-        .sendMessage(
-          recording.tabId,
-          {
-            kind: 'recorder/notice',
-            text: '確定ボタンのため、クリックの代わりに一時停止を記録しました。実行はこの手前で止まります。',
-          },
-          { frameId: 0 },
-        )
+        .sendMessage(recording.tabId, { kind: 'recorder/notice', text: notice }, { frameId: 0 })
         .catch(() => {});
     }
   });
@@ -231,6 +254,18 @@ async function attach(recording) {
     return;
   }
   try {
+    // サイトごとの止める要素の指定（#54）を、記録用のスクリプトより先にページへ置きます。
+    // 記録用のスクリプトは extension/shared/ を読み込めないため、値として渡します。
+    const { selectors } = await getStopRule(recording.origin);
+    await chrome.scripting.executeScript({
+      target: { tabId: recording.tabId, frameIds: [0] },
+      func: (/** @type {string[]} */ stopSelectors) => {
+        /** @type {Record<string, unknown>} */ (
+          /** @type {unknown} */ (globalThis)
+        ).__lightomateStopSelectors = stopSelectors;
+      },
+      args: [selectors],
+    });
     await chrome.scripting.executeScript({
       target: { tabId: recording.tabId, frameIds: [0] },
       files: CONTENT_FILES,

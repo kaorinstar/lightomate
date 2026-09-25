@@ -50,5 +50,52 @@
         </section>
       </main>
     </div>
+
+    <section class="stop-rules" aria-labelledby="stop-heading">
+      <h2 id="stop-heading">必ず止まる場所（サイトごと）</h2>
+      <p class="note">
+        確定ボタンの文言で判定できないボタンや画面を、サイトごとに指定します。<wbr />指定したサイトのすべてのフローで、実行はその手前で止まります。<wbr />記録中にクリックした場合は、一時停止として記録します。
+      </p>
+      <ul id="stop-list" class="stop-list"></ul>
+      <p id="stop-empty" class="note">指定はまだありません。</p>
+
+      <form id="stop-form" class="stop-form">
+        <label class="field">
+          サイト（https:// または http:// から始まるオリジン）
+          <input
+            type="text"
+            id="stop-origin"
+            list="stop-origins"
+            placeholder="https://www.amazon.co.jp"
+          />
+          <datalist id="stop-origins"></datalist>
+        </label>
+        <label class="field">
+          止める要素（CSS セレクター。1 行に 1 件）
+          <textarea
+            id="stop-selectors"
+            rows="4"
+            spellcheck="false"
+            placeholder="#placeOrder"
+          ></textarea>
+        </label>
+        <label class="field">
+          止める画面（URL のパス。1 行に 1 件。* は任意の文字列）
+          <textarea
+            id="stop-paths"
+            rows="4"
+            spellcheck="false"
+            placeholder="/checkout/*"
+          ></textarea>
+        </label>
+        <div class="buttons">
+          <button type="submit">このサイトの指定を保存</button>
+          <button type="button" id="stop-clear">新しいサイト</button>
+        </div>
+        <p class="note">
+          止める要素と止める画面をどちらも空にして保存すると、そのサイトの指定を削除します。
+        </p>
+      </form>
+    </section>
   </body>
 </html>

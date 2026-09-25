@@ -4,7 +4,7 @@
 // Service Worker が手順ごとに読み込みます。同じページに 2 回読み込まれても、受け取りは 1 つだけです。
 // どの手順を実行するかは Service Worker が決めます。このスクリプトは、届いた手順を実行するだけです。
 
-/* global elementTexts, showStatusOverlay, waitForTarget */
+/* global elementTexts, matchStopSelector, showStatusOverlay, waitForTarget */
 
 (() => {
   const installedKey = '__lightomateRunner';
@@ -42,7 +42,7 @@
       return false;
     }
     if (message?.kind === 'runner/inspect') {
-      inspect(message.step, message.timeoutMs).then(sendResponse, (error) =>
+      inspect(message.step, message.timeoutMs, message.stopSelectors).then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
       );
       return true;
@@ -57,19 +57,24 @@
   });
 
   /**
-   * クリックする要素を探し、押さずに、その要素の文言を返します。
+   * クリックする要素を探し、押さずに、その要素の文言と、止める要素の指定に一致したかを返します。
    * @param {{ target: { selectors: string[], tag: string, text?: string } }} step
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true, texts: string[] } | { ok: false, error: string }>}
+   * @param {unknown} stopSelectors サイトごとの止める要素の指定（#54）
+   * @returns {Promise<{ ok: true, texts: string[], matchedSelector?: string } | { ok: false, error: string }>}
    */
-  async function inspect(step, timeoutMs) {
+  async function inspect(step, timeoutMs, stopSelectors) {
     inspected = null;
     const found = await findElement(step, timeoutMs);
     if (!found.ok) {
       return found;
     }
     inspected = found.element;
-    return { ok: true, texts: elementTexts(found.element) };
+    return {
+      ok: true,
+      texts: elementTexts(found.element),
+      matchedSelector: matchStopSelector(found.element, stopSelectors),
+    };
   }
 
   /**
