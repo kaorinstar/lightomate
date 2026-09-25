@@ -294,6 +294,12 @@ async function openTab(flow, steps) {
  */
 async function runSteps(flow, steps, tabId, runId) {
   let index = 0;
+  /**
+   * 直前の手順を始める前に表示していたページの識別子です。ページの操作による移動の手順で、
+   * 新しいページに切り替わったかを判定するために使います（#51）。
+   * @type {string | undefined}
+   */
+  let documentBefore;
   try {
     while (index < steps.length) {
       await throwIfStopRequested(runId);
@@ -303,10 +309,13 @@ async function runSteps(flow, steps, tabId, runId) {
 
       const step = steps[index];
       if (step.type === 'navigate' && step.cause === 'page') {
-        // ページの操作による移動は、直前のクリックなどの結果です。移動が終わるのを待ちます。
-        // 転送が続く場合、途中のページを経ずに最後のページに着くことがあるため、
-        // 続けて記録された移動のうち、どれかに着いた時点で、その手順まで進めます。
-        index = await waitForPageNavigation(runId, tabId, steps, index);
+        // ページの操作による移動は、直前のクリックなどの結果です。新しいページの読み込みが
+        // 終わるのを待ちます。移動先の URL は比べません。サイトが記録時と異なる画面に転送する
+        // ことがあるためです（#51）。想定と異なるページに着いた場合は、次の手順の要素が
+        // 見つからずに止まります。転送が続いて記録された移動は、まとめて 1 回の移動として扱います。
+        await waitForNewPage(runId, tabId, documentBefore, step.url);
+        index = lastPageNavigationIndex(steps, index);
+        documentBefore = await getDocumentId(tabId);
       } else if (step.type === 'pause') {
         throw new Halted(step.note ?? '一時停止の手順です。以降の操作は手で行ってください。');
       } else if (step.type === 'navigate') {
@@ -314,8 +323,9 @@ async function runSteps(flow, steps, tabId, runId) {
           await chrome.tabs.update(tabId, { url: step.url });
         }
         await waitForLoad(runId, tabId, (url) => samePage(url, step.url), step.url);
+        documentBefore = await getDocumentId(tabId);
       } else {
-        await runInPage(runId, flow, tabId, step);
+        documentBefore = await runInPage(runId, flow, tabId, step);
       }
 
       index += 1;
@@ -362,9 +372,12 @@ async function showRunBadge(tabId) {
  * @param {Flow} flow
  * @param {number} tabId
  * @param {Step} step
+ * @returns {Promise<string | undefined>} 手順を実行する前に表示していたページの識別子
  */
 async function runInPage(runId, flow, tabId, step) {
   await waitForLoad(runId, tabId, () => true, '');
+  // クリックで移動した場合に、新しいページに切り替わったかを判定できるよう、操作の前に控えます（#51）。
+  const documentId = await getDocumentId(tabId);
   const tab = await chrome.tabs.get(tabId);
   // 別のサイトに移動していた場合は、入力値を別のサイトに入力しないよう停止します（#14）。
   if (!tab.url || new URL(tab.url).origin !== flow.origin) {
@@ -392,6 +405,7 @@ async function runInPage(runId, flow, tabId, step) {
     }
   }
   await requestPage(runId, tabId, { kind: 'runner/step', step, timeoutMs: ELEMENT_TIMEOUT_MS });
+  return documentId;
 }
 
 /**
@@ -432,38 +446,87 @@ async function requestPage(runId, tabId, message) {
 }
 
 /**
- * ページの操作による移動が終わるまで待ちます。
- * @param {string} runId
- * @param {number} tabId
+ * 続けて記録された「ページの操作による移動」の手順のうち、最後の手順の番号を返します。
+ * 転送が続く場合、実行時は途中のページを経ずに最後のページに着くことがあるため、まとめて扱います。
  * @param {Step[]} steps
- * @param {number} index 待つ移動の手順の番号
- * @returns {Promise<number>} 着いたページの手順の番号
+ * @param {number} index 最初の移動の手順の番号
+ * @returns {number}
  */
-async function waitForPageNavigation(runId, tabId, steps, index) {
-  /** @type {{ index: number, url: string }[]} */
-  const candidates = [];
-  for (let i = index; i < steps.length; i += 1) {
-    const step = steps[i];
-    if (step.type !== 'navigate' || step.cause !== 'page') {
+export function lastPageNavigationIndex(steps, index) {
+  let last = index;
+  while (last + 1 < steps.length) {
+    const next = steps[last + 1];
+    if (next.type !== 'navigate' || next.cause !== 'page') {
       break;
     }
-    candidates.push({ index: i, url: step.url });
+    last += 1;
   }
+  return last;
+}
 
-  let reached = index;
-  await waitForLoad(
-    runId,
-    tabId,
-    (url) => {
-      const match = candidates.findLast((candidate) => samePage(url, candidate.url));
-      if (match) {
-        reached = match.index;
-      }
-      return Boolean(match);
-    },
-    candidates.map((candidate) => candidate.url).join(' または '),
+/**
+ * 新しいページの読み込みが終わったかを判定します。
+ * ページの識別子（documentId）が移動の前と異なり、読み込みが完了している場合に true を返します。
+ * @param {string | undefined} before 移動の前のページの識別子。取得できなかった場合は undefined です。
+ * @param {{ documentId?: string, status?: string }} current 現在のページの識別子と、タブの読み込みの状態
+ * @returns {boolean}
+ */
+export function isNewPageLoaded(before, current) {
+  return (
+    current.status === 'complete' &&
+    current.documentId !== undefined &&
+    current.documentId !== before
   );
-  return reached;
+}
+
+/**
+ * タブの最上位のフレームに表示しているページの識別子を返します。取得できない場合は undefined です。
+ * @param {number} tabId
+ * @returns {Promise<string | undefined>}
+ */
+async function getDocumentId(tabId) {
+  const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => null);
+  return frame?.documentId;
+}
+
+/**
+ * ページの操作による移動で、新しいページの読み込みが終わるまで待ちます。
+ * 読み込みの直後に続けて転送されることがあるため、同じページが 2 回続けて読み込み済みと
+ * 判定されるまで待ちます。
+ * @param {string} runId
+ * @param {number} tabId
+ * @param {string | undefined} documentBefore 移動の前のページの識別子
+ * @param {string} recordedUrl 記録時の移動先（失敗時の表示に使います）
+ */
+async function waitForNewPage(runId, tabId, documentBefore, recordedUrl) {
+  const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+  let lastUrl = '';
+  /** @type {string | undefined} */
+  let loaded;
+  while (Date.now() < deadline) {
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch {
+      throw new Error('実行中のタブが閉じられたため、停止しました。');
+    }
+    lastUrl = tab.url ?? tab.pendingUrl ?? '';
+    const documentId = await getDocumentId(tabId);
+    if (isNewPageLoaded(documentBefore, { documentId, status: tab.status })) {
+      if (loaded === documentId) {
+        return;
+      }
+      loaded = documentId;
+    } else {
+      loaded = undefined;
+    }
+    await throwIfStopRequested(runId);
+    await sleep(STOP_CHECK_INTERVAL_MS);
+  }
+  throw new Error(
+    `${Math.round(NAVIGATION_TIMEOUT_MS / 1000)} 秒待ちましたが、新しいページが表示されませんでした` +
+      `（記録時の移動先：${recordedUrl}）。現在のページ：${lastUrl || '不明'}`,
+  );
 }
 
 /**
