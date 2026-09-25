@@ -1,4 +1,5 @@
-// フローの管理画面です。保存したフローの内容の表示、名前の変更、書き出し、削除、JSON の編集と、
+// フローの管理画面です。保存したフローの内容の表示、最初のページを開く操作と実行、名前の変更、
+// 書き出し、削除、JSON の編集と、
 // JSON からの追加、サイトごとの「必ず止まる場所」の指定を行います。2 つはタブで分けています。
 // ビジュアルエディタ（#9）ができるまでは、手順の変更は JSON を直接編集して行います。
 // 配置と、知らせを出す場所は docs/design-guidelines.md に従います。成功は画面の上部のトーストに出し、
@@ -12,6 +13,7 @@ import {
   renameFlow,
   saveFlow,
 } from '../common/flow-store.js';
+import { requestPermission } from '../common/permissions.js';
 import {
   getStopRule,
   listStopRules,
@@ -20,6 +22,15 @@ import {
 } from '../common/stop-rules-store.js';
 import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
 import { isWebOrigin, orderFlow, validateFlow } from '../shared/flow.js';
+import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
+import {
+  NO_FIRST_PAGE,
+  buildRunFields,
+  firstPageParams,
+  firstPageUrl,
+  readRunFields,
+  secretStepIndexes,
+} from '../shared/run-form.js';
 import { parseLines, validateStopRule } from '../shared/stop-rules.js';
 import {
   confirmInline,
@@ -46,6 +57,15 @@ const elements = {
   editorActions: byId('editor-actions'),
   editorConfirm: byId('editor-confirm'),
   editorNotice: byId('editor-notice'),
+  openFirst: /** @type {HTMLButtonElement} */ (byId('open-first')),
+  run: /** @type {HTMLButtonElement} */ (byId('run')),
+  runReason: byId('run-reason'),
+  runForm: /** @type {HTMLFormElement} */ (byId('run-form')),
+  runFormHeading: byId('run-form-heading'),
+  runFields: byId('run-fields'),
+  runSubmit: byId('run-submit'),
+  runCancel: byId('run-cancel'),
+  runNotice: byId('run-notice'),
   rename: byId('rename'),
   renameForm: /** @type {HTMLFormElement} */ (byId('rename-form')),
   renameInput: /** @type {HTMLInputElement} */ (byId('rename-input')),
@@ -85,6 +105,7 @@ const elements = {
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
 const notices = [
   elements.editorNotice,
+  elements.runNotice,
   elements.jsonNotice,
   elements.importNotice,
   elements.stopNotice,
@@ -202,6 +223,193 @@ elements.save.addEventListener('click', async () => {
     `同じサイトに「${name}」があるため、「${result.name}」として保存しました。`,
     'warning',
   );
+});
+
+// ---- 最初のページを開く・実行（#43） ----
+
+/**
+ * 入力フォームで行う操作です。開く（open）か、実行する（run）かを、フォームを開いたときに決めます。
+ * @type {{ mode: 'open' | 'run', flowId: string } | null}
+ */
+let runFormState = null;
+
+elements.openFirst.addEventListener('click', async () => {
+  clearNotices();
+  hideRunForm();
+  const stored = await getFlow(selectedId);
+  if (!stored) {
+    return;
+  }
+  if (firstPageParams(stored.flow).length > 0) {
+    showRunForm(stored, 'open');
+    return;
+  }
+  await openFirstPage(stored, {});
+});
+
+elements.run.addEventListener('click', () => {
+  onRunClick().catch((error) => showNotice(elements.editorNotice, String(error), 'error'));
+});
+
+async function onRunClick() {
+  clearNotices();
+  hideRunForm();
+  // 許可を求める処理は、ボタンを押した直後に呼び出す必要があります。その前に待ち時間を入れないよう、
+  // 選んだフローのサイトは、表示中の内容から取ります。
+  const origin = elements.editorOrigin.textContent ?? '';
+  if (!selectedId || !origin) {
+    return;
+  }
+  const denied = await requestPermission(origin);
+  if (denied) {
+    showNotice(elements.editorNotice, denied, 'error');
+    return;
+  }
+  const stored = await getFlow(selectedId);
+  if (!stored) {
+    return;
+  }
+  if ((stored.flow.params ?? []).length === 0 && secretStepIndexes(stored.flow).length === 0) {
+    await startRun(stored, {}, {}, elements.editorNotice);
+    return;
+  }
+  showRunForm(stored, 'run');
+}
+
+elements.runForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  onRunFormSubmit().catch((error) => showNotice(elements.runNotice, String(error), 'error'));
+});
+
+async function onRunFormSubmit() {
+  clearNotices();
+  const state = runFormState;
+  const stored = state ? await getFlow(state.flowId) : undefined;
+  if (!state || !stored) {
+    hideRunForm();
+    return;
+  }
+  const { params, secrets } = readRunFields(new FormData(elements.runForm));
+  const done =
+    state.mode === 'open'
+      ? await openFirstPage(stored, params)
+      : await startRun(stored, params, secrets, elements.runNotice);
+  if (done) {
+    hideRunForm();
+  }
+}
+
+elements.runCancel.addEventListener('click', hideRunForm);
+
+/**
+ * 最初の手順の URL を新しいタブで開きます。手順は実行しません。
+ * @param {StoredFlow} stored
+ * @param {Record<string, string>} params
+ * @returns {Promise<boolean>} 開いたか
+ */
+async function openFirstPage(stored, params) {
+  const result = firstPageUrl(stored.flow, params, new Date());
+  const notice = runFormState ? elements.runNotice : elements.editorNotice;
+  if (!result.ok) {
+    showNotice(notice, result.error, 'error');
+    return false;
+  }
+  await chrome.tabs.create({ url: result.url, active: true });
+  return true;
+}
+
+/**
+ * サイドパネルの［実行］と同じ処理で、フローの実行を始めます。
+ * @param {StoredFlow} stored
+ * @param {Record<string, string>} params
+ * @param {Record<string, string>} secrets
+ * @param {HTMLElement} notice 始められなかった理由を出す場所
+ * @returns {Promise<boolean>} 始めたか
+ */
+async function startRun(stored, params, secrets, notice) {
+  const response = await chrome.runtime.sendMessage({
+    kind: 'runner/start',
+    flowId: stored.id,
+    params,
+    secrets,
+  });
+  if (!response?.ok) {
+    showNotice(notice, response?.error ?? '実行を開始できません。', 'error');
+    return false;
+  }
+  showToast(
+    elements.toast,
+    `「${stored.flow.name}」の実行を始めました。実行の状態はサイドパネルに表示します。`,
+    { kind: 'info' },
+  );
+  return true;
+}
+
+/**
+ * 値の入力フォームを表示します。開く場合は、最初の手順の URL が参照するパラメータだけを尋ねます。
+ * @param {StoredFlow} stored
+ * @param {'open' | 'run'} mode
+ */
+function showRunForm(stored, mode) {
+  runFormState = { mode, flowId: stored.id };
+  const open = mode === 'open';
+  elements.runFormHeading.textContent = open ? '開くページの値の入力' : '実行する値の入力';
+  elements.runSubmit.textContent = open ? 'この値で開く' : 'この値で実行';
+  elements.runFields.replaceChildren(
+    ...buildRunFields(document, stored.flow, {
+      params: open ? firstPageParams(stored.flow) : (stored.flow.params ?? []),
+      secretSteps: open ? [] : secretStepIndexes(stored.flow),
+      now: new Date(),
+    }),
+  );
+  showNotice(elements.runNotice, '');
+  elements.runForm.hidden = false;
+  elements.runForm.scrollIntoView({ block: 'nearest' });
+  const first = elements.runFields.querySelector('input, select');
+  if (first instanceof HTMLElement) {
+    first.focus();
+  }
+}
+
+function hideRunForm() {
+  runFormState = null;
+  elements.runForm.hidden = true;
+  // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
+  elements.runFields.replaceChildren();
+  showNotice(elements.runNotice, '');
+}
+
+/**
+ * ［最初のページを開く］と［実行］を押せるかを、フローと、記録・実行の状態に合わせて更新します。
+ * 押せない場合は、理由をボタンの下に表示します。
+ * @param {import('../shared/flow.js').Flow} flow
+ */
+async function renderRunButtons(flow) {
+  const stored = await chrome.storage.session.get(null);
+  const conflict = findConflictingRun(flow.origin, runStatesFrom(stored));
+  const noFirstPage = flow.steps[0]?.type !== 'navigate';
+  const reason = noFirstPage
+    ? NO_FIRST_PAGE
+    : stored.recording
+      ? '記録中は実行できません。'
+      : conflict
+        ? conflictMessage(conflict.origin, conflict.flowName)
+        : '';
+  elements.openFirst.disabled = noFirstPage;
+  elements.run.disabled = Boolean(reason);
+  elements.runReason.textContent = reason;
+  elements.runReason.hidden = !reason;
+}
+
+// 記録と実行の状態は Service Worker が chrome.storage.session に書き込みます。
+// 実行中は手順ごとに書き込まれるため、一覧は作り直さず、ボタンの状態だけを更新します。
+chrome.storage.session.onChanged.addListener(() => {
+  (async () => {
+    const stored = selectedId ? await getFlow(selectedId) : undefined;
+    if (stored) {
+      await renderRunButtons(stored.flow);
+    }
+  })().catch(console.error);
 });
 
 elements.rename.addEventListener('click', async () => {
@@ -540,6 +748,7 @@ function select(id) {
   }
   clearNotices();
   showRenameForm(false);
+  hideRunForm();
   // 別のフローを選んだら、JSON の編集欄は閉じ、内容の表示から見せます。
   elements.jsonDetails.open = false;
   render().catch(console.error);
@@ -562,6 +771,7 @@ async function render() {
   }
   if (stored) {
     renderDetail(stored);
+    await renderRunButtons(stored.flow);
   } else {
     delete elements.editor.dataset.id;
   }

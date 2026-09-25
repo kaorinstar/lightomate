@@ -236,3 +236,21 @@ body {
 .lm-footer {
   margin-top: 2.5rem;
 }
+
+/* 選んだフローを開く・実行するときの、値の入力欄です（#43）。手順の一覧と区別するため、枠で囲みます。 */
+.lm-run-form {
+  padding: 1rem;
+  border: 1px solid var(--tblr-primary);
+  border-radius: var(--tblr-border-radius);
+}
+
+.lm-run-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 28rem;
+}
+
+#run-reason {
+  margin: 0 0 1rem;
+}

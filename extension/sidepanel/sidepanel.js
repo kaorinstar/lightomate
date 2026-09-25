@@ -11,6 +11,7 @@ import {
   renameFlow,
   saveFlow,
 } from '../common/flow-store.js';
+import { requestPermission } from '../common/permissions.js';
 import { describeStep, formatDateTime } from '../shared/describe.js';
 import { isWebUrl, orderFlow } from '../shared/flow.js';
 import {
@@ -21,7 +22,7 @@ import {
   isActiveRun,
   runStatesFrom,
 } from '../shared/flow-list.js';
-import { defaultValue } from '../shared/params.js';
+import { buildRunFields, readRunFields, secretStepIndexes } from '../shared/run-form.js';
 import {
   confirmInline,
   followColorScheme,
@@ -302,42 +303,11 @@ async function onRunClick(stored) {
 function showForm(stored) {
   formFlowId = stored.id;
   elements.formFlowName.textContent = `「${stored.flow.name}」`;
-  const now = new Date();
-
-  const fields = (stored.flow.params ?? []).map((param) => {
-    /** @type {HTMLInputElement | HTMLSelectElement} */
-    let control;
-    if (param.type === 'select') {
-      control = document.createElement('select');
-      control.className = 'form-select';
-      for (const option of param.options ?? []) {
-        control.append(new Option(option, option));
-      }
-    } else {
-      control = document.createElement('input');
-      control.className = 'form-control';
-      control.type = param.type === 'month' ? 'month' : 'text';
-      if (param.type === 'number') {
-        control.inputMode = 'decimal';
-      }
-    }
-    control.name = `param:${param.name}`;
-    control.value = defaultValue(param, now);
-    control.required = true;
-    return labeled(param.label, control);
+  const fields = buildRunFields(document, stored.flow, {
+    params: stored.flow.params ?? [],
+    secretSteps: secretStepIndexes(stored.flow),
+    now: new Date(),
   });
-
-  for (const index of secretStepIndexes(stored.flow)) {
-    const step = stored.flow.steps[index];
-    const control = document.createElement('input');
-    control.className = 'form-control';
-    control.type = 'password';
-    control.name = `secret:${index}`;
-    control.autocomplete = 'off';
-    control.required = true;
-    const label = step.type === 'input' ? step.target.label : '';
-    fields.push(labeled(`${label}（手順 ${index + 1}）`, control));
-  }
 
   elements.formFields.replaceChildren(...fields);
   showNotice(elements.formNotice, '');
@@ -352,20 +322,7 @@ function showForm(stored) {
 elements.form.addEventListener('submit', async (event) => {
   event.preventDefault();
   clearNotices();
-  /** @type {Record<string, string>} */
-  const params = {};
-  /** @type {Record<string, string>} */
-  const secrets = {};
-  for (const [key, value] of new FormData(elements.form)) {
-    if (typeof value !== 'string') {
-      continue;
-    }
-    if (key.startsWith('param:')) {
-      params[key.slice('param:'.length)] = value;
-    } else if (key.startsWith('secret:')) {
-      secrets[key.slice('secret:'.length)] = value;
-    }
-  }
+  const { params, secrets } = readRunFields(new FormData(elements.form));
   const error = await startRun(formFlowId, params, secrets);
   if (error) {
     showNotice(elements.formNotice, error, 'error');
@@ -860,31 +817,6 @@ function setRowNotice(flowId, text, kind) {
 // ---- 補助 ----
 
 /**
- * サイトを操作する許可を求めます。許可済みの場合、画面は表示されません。
- * @param {string} origin
- * @returns {Promise<string>} 許可が得られなかった理由。得られた場合は空の文字列
- */
-async function requestPermission(origin) {
-  try {
-    if (await chrome.permissions.request({ origins: [`${origin}/*`] })) {
-      return '';
-    }
-  } catch (error) {
-    return `許可を求められませんでした。${String(error)}`;
-  }
-  return `${origin} を操作する許可が得られなかったため、続けられません。もう一度押し、表示される画面で「許可」を選んでください。`;
-}
-
-/**
- * 値を記録していない入力欄（パスワードなど）の手順の番号を返します。
- * @param {Flow} flow
- * @returns {number[]}
- */
-function secretStepIndexes(flow) {
-  return flow.steps.flatMap((step, index) => (step.type === 'input' && step.secret ? [index] : []));
-}
-
-/**
  * 保存したことを知らせます。成功は画面の上部のトーストに出します。
  * 同じサイトに同じ名前のフローがあり、番号を付けた場合は、見落とすと困るため、
  * 自動で消えるトーストではなく、そのフローの行の中に警告として残します。
@@ -924,18 +856,6 @@ function button(text, className, onClick) {
 async function getLastFlow() {
   const stored = await chrome.storage.session.get('lastFlow');
   return /** @type {Flow | undefined} */ (stored.lastFlow);
-}
-
-/**
- * @param {string} text
- * @param {HTMLElement} control
- * @returns {HTMLLabelElement}
- */
-function labeled(text, control) {
-  const label = document.createElement('label');
-  label.className = 'form-label lm-field';
-  label.append(text, control);
-  return label;
 }
 
 /**
