@@ -2,7 +2,14 @@
 // ビジュアルエディタ（#9）ができるまでは、JSON を直接編集します。
 
 import { deleteFlow, getFlow, listFlows, onFlowsChanged, saveFlow } from '../common/flow-store.js';
-import { orderFlow, validateFlow } from '../shared/flow.js';
+import {
+  getStopRule,
+  listStopRules,
+  onStopRulesChanged,
+  saveStopRule,
+} from '../common/stop-rules-store.js';
+import { isWebOrigin, orderFlow, validateFlow } from '../shared/flow.js';
+import { parseLines, validateStopRule } from '../shared/stop-rules.js';
 
 const elements = {
   message: byId('message'),
@@ -19,6 +26,16 @@ const elements = {
   file: /** @type {HTMLInputElement} */ (byId('file')),
   importJson: /** @type {HTMLTextAreaElement} */ (byId('import-json')),
   importFlow: byId('import'),
+  stopList: byId('stop-list'),
+  stopEmpty: byId('stop-empty'),
+  stopForm: /** @type {HTMLFormElement} */ (byId('stop-form')),
+  stopOrigin: /** @type {HTMLInputElement} */ (byId('stop-origin')),
+  stopOrigins: byId('stop-origins'),
+  stopSelectors: /** @type {HTMLTextAreaElement} */ (byId('stop-selectors')),
+  stopPaths: /** @type {HTMLTextAreaElement} */ (byId('stop-paths')),
+  stopClear: byId('stop-clear'),
+  stopDelete: byId('stop-delete'),
+  stopMessage: byId('stop-message'),
 };
 
 /** 編集中のフローの id です。URL の # 以降にも書き、再読み込みしても同じフローを開きます。 */
@@ -125,8 +142,166 @@ elements.importFlow.addEventListener('click', async () => {
 
 onFlowsChanged(() => {
   render().catch(console.error);
+  renderStopRules().catch(console.error);
 });
 render().catch(console.error);
+
+// ---- 必ず止まる場所（#54） ----
+
+elements.stopForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  onSaveStopRule().catch((error) => showStopMessage(String(error), true));
+});
+
+elements.stopClear.addEventListener('click', () => {
+  editStopRule('', { selectors: [], paths: [] });
+  showStopMessage('', false);
+});
+
+elements.stopDelete.addEventListener('click', () => {
+  onDeleteStopRule().catch((error) => showStopMessage(String(error), true));
+});
+
+onStopRulesChanged(() => {
+  renderStopRules().catch(console.error);
+});
+renderStopRules().catch(console.error);
+
+/**
+ * 「必ず止まる場所」の結果と誤りを、保存のボタンの下に表示します。
+ * 画面の上部の表示欄では、下部の入力欄を操作している間に見えないためです。
+ * @param {string} text
+ * @param {boolean} isError
+ */
+function showStopMessage(text, isError) {
+  elements.stopMessage.textContent = text;
+  elements.stopMessage.classList.toggle('error', isError);
+  if (text) {
+    // 保存のボタンが画面の下端にある場合も、表示が見える位置まで移動します。
+    elements.stopMessage.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+/** 入力欄の指定を検証し、保存します。 */
+async function onSaveStopRule() {
+  const origin = elements.stopOrigin.value.trim().replace(/\/+$/, '');
+  if (!isWebOrigin(origin)) {
+    showStopMessage(
+      'サイトは https:// または http:// で始まるオリジン（例：https://www.amazon.co.jp）で入力してください。',
+      true,
+    );
+    return;
+  }
+  const rule = {
+    selectors: parseLines(elements.stopSelectors.value),
+    paths: parseLines(elements.stopPaths.value),
+  };
+  const errors = [...validateStopRule(rule), ...selectorSyntaxErrors(rule.selectors)];
+  if (errors.length > 0) {
+    showStopMessage(`指定に誤りがあるため、保存しませんでした。\n${errors.join('\n')}`, true);
+    return;
+  }
+  const removing = rule.selectors.length === 0 && rule.paths.length === 0;
+  if (removing && !confirm(`${origin} の指定を削除します。よろしいですか？`)) {
+    return;
+  }
+  const result = await saveStopRule(origin, rule);
+  if (!result.ok) {
+    showStopMessage(`保存できませんでした。\n${result.errors.join('\n')}`, true);
+    return;
+  }
+  elements.stopOrigin.value = origin;
+  showStopMessage(
+    removing ? `${origin} の指定を削除しました。` : `${origin} の指定を保存しました。`,
+    false,
+  );
+}
+
+/** 入力欄のサイトの指定を削除します。削除の前に確認を表示します。 */
+async function onDeleteStopRule() {
+  const origin = elements.stopOrigin.value.trim().replace(/\/+$/, '');
+  const exists = (await listStopRules()).some((entry) => entry.origin === origin);
+  if (!exists) {
+    showStopMessage(
+      origin
+        ? `${origin} の指定はありません。削除するサイトを一覧から選んでください。`
+        : '削除するサイトを一覧から選んでください。',
+      true,
+    );
+    return;
+  }
+  if (!confirm(`${origin} の指定を削除します。元に戻せません。よろしいですか？`)) {
+    return;
+  }
+  const result = await saveStopRule(origin, { selectors: [], paths: [] });
+  if (!result.ok) {
+    showStopMessage(`削除できませんでした。\n${result.errors.join('\n')}`, true);
+    return;
+  }
+  editStopRule('', { selectors: [], paths: [] });
+  showStopMessage(`${origin} の指定を削除しました。`, false);
+}
+
+/**
+ * CSS セレクターの構文を確かめます。誤りのある指定は、実行時に一致しないまま飛ばされるためです。
+ * @param {string[]} selectors
+ * @returns {string[]}
+ */
+function selectorSyntaxErrors(selectors) {
+  const probe = document.createDocumentFragment();
+  return selectors.flatMap((selector) => {
+    try {
+      probe.querySelector(selector);
+      return [];
+    } catch {
+      return [`止める要素の「${selector}」は、CSS セレクターとして読み取れません。`];
+    }
+  });
+}
+
+/**
+ * 指定を入力欄に表示します。
+ * @param {string} origin
+ * @param {{ selectors: string[], paths: string[] }} rule
+ */
+function editStopRule(origin, rule) {
+  elements.stopOrigin.value = origin;
+  elements.stopSelectors.value = rule.selectors.join('\n');
+  elements.stopPaths.value = rule.paths.join('\n');
+  elements.stopOrigin.focus();
+}
+
+/** 指定のあるサイトの一覧と、入力候補のサイトを表示し直します。 */
+async function renderStopRules() {
+  const rules = await listStopRules();
+  elements.stopEmpty.hidden = rules.length > 0;
+  elements.stopList.replaceChildren(
+    ...rules.map(({ origin, rule }) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      const count = document.createElement('small');
+      count.textContent = `要素 ${rule.selectors.length} 件・画面 ${rule.paths.length} 件`;
+      button.append(origin, count);
+      button.addEventListener('click', () => {
+        getStopRule(origin)
+          .then((current) => editStopRule(origin, current))
+          .catch(console.error);
+      });
+      const item = document.createElement('li');
+      item.append(button);
+      return item;
+    }),
+  );
+
+  // 保存したフローのサイトを、入力の候補にします。
+  const origins = new Set([
+    ...(await listFlows()).map((stored) => stored.flow.origin),
+    ...rules.map(({ origin }) => origin),
+  ]);
+  elements.stopOrigins.replaceChildren(
+    ...[...origins].sort().map((origin) => new Option(origin, origin)),
+  );
+}
 
 /**
  * 編集するフローを選びます。空の文字列の場合は、どれも選びません。

@@ -4,7 +4,7 @@
 // ES モジュールの extension/shared/ を読み込めないため、ここでは文言を集めて送るだけにします。
 // 同じページに 2 回読み込まれても誤りにならないよう、最上位には関数の宣言だけを置きます。
 
-/* exported elementTexts */
+/* exported elementTexts, matchStopSelector */
 
 /**
  * 要素の表示文字列、aria-label、title、value と、要素の中の画像の alt を返します。
@@ -35,4 +35,24 @@ function elementTexts(element) {
     add(image.getAttribute('alt') ?? image.getAttribute('aria-label'));
   }
   return texts;
+}
+
+/**
+ * 要素、またはその祖先の要素が、止める要素の指定（CSS セレクター）のどれかに一致すれば、
+ * その指定を返します（#54）。構文に誤りのある指定は飛ばします。
+ * @param {Element} element
+ * @param {unknown} selectors Service Worker から受け取った、止める要素の指定
+ * @returns {string | undefined}
+ */
+function matchStopSelector(element, selectors) {
+  if (!Array.isArray(selectors)) {
+    return undefined;
+  }
+  return selectors.find((selector) => {
+    try {
+      return typeof selector === 'string' && element.closest(selector) !== null;
+    } catch {
+      return false;
+    }
+  });
 }

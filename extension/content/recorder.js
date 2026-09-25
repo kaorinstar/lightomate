@@ -6,7 +6,7 @@
 // Service Worker から停止の連絡を受けると終了します。
 // 記録した手順は Service Worker へ送り、ここでは保存しません。
 
-/* global buildTarget, elementTexts, showNotice, showStatusOverlay */
+/* global buildTarget, elementTexts, matchStopSelector, showNotice, showStatusOverlay */
 
 (() => {
   /** 同じページに 2 回読み込まれた場合に、記録が二重にならないようにする目印です。 */
@@ -52,7 +52,12 @@
       return;
     }
     // 確定ボタンかどうかを Service Worker が判定できるよう、要素の文言も送ります（#29）。
-    send({ type: 'click', target: buildTarget(element) }, elementTexts(element));
+    // サイトごとの止める要素の指定（#54）は、Service Worker がこのスクリプトより先に置きます。
+    send(
+      { type: 'click', target: buildTarget(element) },
+      elementTexts(element),
+      matchStopSelector(event.target, scope.__lightomateStopSelectors),
+    );
   };
 
   /** @param {Event} event */
@@ -111,12 +116,15 @@
    * 手順を Service Worker へ送ります。
    * @param {object} step
    * @param {string[]} [texts] クリックした要素の文言
+   * @param {string} [matchedSelector] クリックした要素が一致した、止める要素の指定
    */
-  function send(step, texts) {
-    chrome.runtime.sendMessage({ kind: 'recording/step', step, texts }).catch(() => {
-      // 拡張機能を再読み込みした後など、Service Worker と接続できない場合は記録を続けられません。
-      overlay.remove();
-    });
+  function send(step, texts, matchedSelector) {
+    chrome.runtime
+      .sendMessage({ kind: 'recording/step', step, texts, matchedSelector })
+      .catch(() => {
+        // 拡張機能を再読み込みした後など、Service Worker と接続できない場合は記録を続けられません。
+        overlay.remove();
+      });
   }
 
   /**
