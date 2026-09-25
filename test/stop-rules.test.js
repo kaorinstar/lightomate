@@ -9,6 +9,7 @@ import {
   matchesPath,
   parseLines,
   ruleForOrigin,
+  stopRuleFieldErrors,
   validateStopRule,
 } from '../extension/shared/stop-rules.js';
 
@@ -129,4 +130,16 @@ test('記録時、指定に一致しないクリックと、クリック以外�
 test('記録時、ページから届いた指定が一覧にない場合は、一致として扱わない', () => {
   const result = applyStopRuleToRecordedStep(click, undefined, rule, `${shop}/cart`, '#other');
   assert.deepEqual(result, { step: click });
+});
+
+test('止める要素と止める画面の誤りを、欄ごとに分けて返す', () => {
+  assert.deepEqual(stopRuleFieldErrors({ selectors: ['#a'], paths: ['/checkout/*'] }), {
+    selectors: [],
+    paths: [],
+  });
+  const rule = { selectors: [' '], paths: ['checkout/*', '/ok'] };
+  const errors = stopRuleFieldErrors(rule);
+  assert.deepEqual(errors.selectors, ['止める要素に空の指定があります。']);
+  assert.deepEqual(errors.paths, ['止める画面の「checkout/*」が / で始まっていません。']);
+  assert.deepEqual(validateStopRule(rule), [...errors.selectors, ...errors.paths]);
 });

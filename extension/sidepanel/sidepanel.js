@@ -22,7 +22,12 @@ import {
   isActiveRun,
   runStatesFrom,
 } from '../shared/flow-list.js';
-import { buildRunFields, readRunFields, secretStepIndexes } from '../shared/run-form.js';
+import {
+  buildRunFields,
+  readRunFields,
+  secretStepIndexes,
+  showRunFieldErrors,
+} from '../shared/run-form.js';
 import {
   confirmInline,
   followColorScheme,
@@ -97,6 +102,10 @@ let currentPage = null;
 
 /** 入力フォームを表示しているフローの id です。 */
 let formFlowId = '';
+
+/** 入力フォームを作ったときのパラメータです。送信時の検証に使います。 */
+/** @type {import('../shared/params.js').Param[]} */
+let formParams = [];
 
 /**
  * 一覧で名前を変更している、または削除の確認を表示しているフローです。
@@ -303,8 +312,10 @@ async function onRunClick(stored) {
 function showForm(stored) {
   formFlowId = stored.id;
   elements.formFlowName.textContent = `「${stored.flow.name}」`;
+  const params = stored.flow.params ?? [];
+  formParams = params;
   const fields = buildRunFields(document, stored.flow, {
-    params: stored.flow.params ?? [],
+    params,
     secretSteps: secretStepIndexes(stored.flow),
     now: new Date(),
   });
@@ -322,6 +333,9 @@ function showForm(stored) {
 elements.form.addEventListener('submit', async (event) => {
   event.preventDefault();
   clearNotices();
+  if (showRunFieldErrors(elements.form, formParams, new Date())) {
+    return;
+  }
   const { params, secrets } = readRunFields(new FormData(elements.form));
   const error = await startRun(formFlowId, params, secrets);
   if (error) {
@@ -351,6 +365,7 @@ async function startRun(flowId, params, secrets) {
 
 function hideForm() {
   elements.formSection.hidden = true;
+  formParams = [];
   // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
   elements.formFields.replaceChildren();
   showNotice(elements.formNotice, '');
