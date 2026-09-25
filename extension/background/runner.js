@@ -6,9 +6,19 @@
 // 実行の状態（何番目の手順か、成功・失敗）は chrome.storage.session に保存し、サイドパネルが
 // 表示します。入力した値（パスワードを含む）はこのファイルの変数にだけ置き、保存しません。
 // そのため Service Worker が途中で停止した場合、実行は続けられず、中断として記録します。
+//
+// 別のサイトのフローは同時に実行できます。同じサイトのフローは同時に実行しません（#32）。
+// 実行の状態は実行ごとに別のキー（run/<実行の id>）に保存し、ほかの実行の更新と競合しないようにします。
 
 import { getFlow } from '../common/flow-store.js';
 import { isWebUrl, validateFlow } from '../shared/flow.js';
+import {
+  RUN_KEY_PREFIX,
+  conflictMessage,
+  findConflictingRun,
+  isActiveRun,
+  runStatesFrom,
+} from '../shared/flow-list.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
@@ -17,8 +27,10 @@ import { renderTemplate, resolveParams } from '../shared/params.js';
 /**
  * 実行の状態です。サイドパネルが表示に使います。値は含めません。
  * @typedef {object} RunState
+ * @property {string} runId 実行の識別子
  * @property {string} flowId
  * @property {string} flowName
+ * @property {string} origin フローのオリジン。同じサイトの実行が重ならないかの判定に使います。
  * @property {number} tabId 実行しているタブ
  * @property {number} stepIndex 実行中の手順の番号（0 から数えます）。完了後は最後の手順の番号、
  *   失敗後は失敗した手順の番号、停止後は停止した時点で完了していた手順の数です。
@@ -27,8 +39,6 @@ import { renderTemplate, resolveParams } from '../shared/params.js';
  * @property {string} [error] 失敗した理由
  * @property {string} startedAt
  */
-
-const RUN_KEY = 'run';
 
 /** 要素が表示されるまで待つ上限です。 */
 const ELEMENT_TIMEOUT_MS = 10_000;
@@ -48,27 +58,44 @@ const STOP_CHECK_INTERVAL_MS = 250;
 /** サイドパネルから停止を指示されたことを示す誤りです。失敗ではなく停止として扱います。 */
 class StopRequested extends Error {}
 
-/** この Service Worker で実行中かどうかです。停止すると失われるため、中断の判定に使います。 */
-let activeRun = false;
+/**
+ * この Service Worker で実行中の実行の id と、そのオリジンです。停止すると失われるため、
+ * 中断の判定に使います。実行の状態を保存する前から登録し、同じサイトの実行を同時に始めないようにします。
+ * @type {Map<string, string>}
+ */
+const activeRuns = new Map();
 
-/** @returns {Promise<RunState | undefined>} */
-export async function getRunState() {
-  const stored = await chrome.storage.session.get(RUN_KEY);
-  return /** @type {RunState | undefined} */ (stored[RUN_KEY]);
+/**
+ * @param {string} runId
+ * @returns {Promise<RunState | undefined>}
+ */
+export async function getRunState(runId) {
+  const key = RUN_KEY_PREFIX + runId;
+  const stored = await chrome.storage.session.get(key);
+  return /** @type {RunState | undefined} */ (stored[key]);
+}
+
+/**
+ * 実行の状態の一覧を、始めた日時の古い順に返します。
+ * @returns {Promise<RunState[]>}
+ */
+export async function listRunStates() {
+  return /** @type {RunState[]} */ (runStatesFrom(await chrome.storage.session.get(null)));
 }
 
 /** @param {RunState} state */
 async function setRunState(state) {
-  await chrome.storage.session.set({ [RUN_KEY]: state });
+  await chrome.storage.session.set({ [RUN_KEY_PREFIX + state.runId]: state });
 }
 
 /**
  * 実行中の状態の一部を更新します。更新の直前に読み直し、サイドパネルからの停止の指示
  * （status が stopping）を上書きしないようにします。
+ * @param {string} runId
  * @param {Partial<RunState>} update
  */
-async function updateRunState(update) {
-  const state = await getRunState();
+async function updateRunState(runId, update) {
+  const state = await getRunState(runId);
   if (state) {
     await setRunState({ ...state, ...update });
   }
@@ -78,14 +105,15 @@ async function updateRunState(update) {
  * Service Worker の起動時に呼び出します。実行中のまま残っている状態は、前の Service Worker が
  * 実行の途中で停止したことを示すため、中断として記録します。
  */
-export async function markInterruptedRun() {
-  const state = await getRunState();
-  if (!activeRun && state && (state.status === 'running' || state.status === 'stopping')) {
-    await setRunState({
-      ...state,
-      status: 'failed',
-      error: '拡張機能の処理が途中で停止したため、実行を中断しました。',
-    });
+export async function markInterruptedRuns() {
+  for (const state of await listRunStates()) {
+    if (!activeRuns.has(state.runId) && isActiveRun(state)) {
+      await setRunState({
+        ...state,
+        status: 'failed',
+        error: '拡張機能の処理が途中で停止したため、実行を中断しました。',
+      });
+    }
   }
 }
 
@@ -97,11 +125,6 @@ export async function markInterruptedRun() {
  * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
  */
 export async function startRun(flowId, paramInput, secretInput) {
-  const state = await getRunState();
-  if (activeRun || state?.status === 'running' || state?.status === 'stopping') {
-    return { ok: false, error: 'ほかのフローを実行中です。' };
-  }
-
   const stored = await getFlow(flowId);
   if (!stored) {
     return { ok: false, error: 'フローが見つかりません。' };
@@ -120,34 +143,53 @@ export async function startRun(flowId, paramInput, secretInput) {
     return resolved;
   }
 
-  activeRun = true;
+  // 保存した状態に加え、この Service Worker で始めたばかりの実行とも比べます。
+  // 比べてから登録するまでの間に await を置かないでください。同じサイトの実行を同時に始めないためです。
+  const conflict = findConflictingRun(flow.origin, [
+    ...(await listRunStates()),
+    ...[...activeRuns].map(([, origin]) => ({
+      flowName: '',
+      origin,
+      status: 'running',
+      startedAt: '',
+    })),
+  ]);
+  if (conflict) {
+    return { ok: false, error: conflictMessage(flow.origin, conflict.flowName) };
+  }
+  const runId = crypto.randomUUID();
+  activeRuns.set(runId, flow.origin);
+
   try {
     const tabId = await openTab(flow, resolved.steps);
     await setRunState({
+      runId,
       flowId,
       flowName: flow.name,
+      origin: flow.origin,
       tabId,
       stepIndex: 0,
       total: resolved.steps.length,
       status: 'running',
       startedAt: new Date().toISOString(),
     });
-    runSteps(flow, resolved.steps, tabId).finally(() => {
-      activeRun = false;
+    runSteps(flow, resolved.steps, tabId, runId).finally(() => {
+      activeRuns.delete(runId);
     });
     return { ok: true };
   } catch (error) {
-    activeRun = false;
+    activeRuns.delete(runId);
     return { ok: false, error: String(error) };
   }
 }
 
 /**
  * 実行の停止を求めます。実行中の手順が終わった時点で停止します。
+ * @param {string} runId
  * @returns {Promise<void>}
  */
-export async function requestStop() {
-  const state = await getRunState();
+export async function requestStop(runId) {
+  const state = await getRunState(runId);
   if (state?.status === 'running') {
     await setRunState({ ...state, status: 'stopping' });
   }
@@ -235,13 +277,14 @@ async function openTab(flow, steps) {
  * @param {Flow} flow
  * @param {Step[]} steps パラメータを当てはめた手順
  * @param {number} tabId
+ * @param {string} runId
  */
-async function runSteps(flow, steps, tabId) {
+async function runSteps(flow, steps, tabId, runId) {
   let index = 0;
   try {
     while (index < steps.length) {
-      await throwIfStopRequested();
-      await updateRunState({ stepIndex: index });
+      await throwIfStopRequested(runId);
+      await updateRunState(runId, { stepIndex: index });
       // タブのページが移動すると、Chrome はそのタブ用のアイコンの文字を消します。手順ごとに設定し直します。
       await showRunBadge(tabId);
 
@@ -250,27 +293,27 @@ async function runSteps(flow, steps, tabId) {
         // ページの操作による移動は、直前のクリックなどの結果です。移動が終わるのを待ちます。
         // 転送が続く場合、途中のページを経ずに最後のページに着くことがあるため、
         // 続けて記録された移動のうち、どれかに着いた時点で、その手順まで進めます。
-        index = await waitForPageNavigation(tabId, steps, index);
+        index = await waitForPageNavigation(runId, tabId, steps, index);
       } else if (step.type === 'navigate') {
         if (index > 0) {
           await chrome.tabs.update(tabId, { url: step.url });
         }
-        await waitForLoad(tabId, (url) => samePage(url, step.url), step.url);
+        await waitForLoad(runId, tabId, (url) => samePage(url, step.url), step.url);
       } else {
-        await runInPage(flow, tabId, step);
+        await runInPage(runId, flow, tabId, step);
       }
 
       index += 1;
       await sleep(STEP_INTERVAL_MS);
     }
-    await updateRunState({ status: 'done', stepIndex: steps.length - 1 });
+    await updateRunState(runId, { status: 'done', stepIndex: steps.length - 1 });
   } catch (error) {
     if (error instanceof StopRequested) {
       // stepIndex は、停止した時点で完了していた手順の数と同じです。
-      await updateRunState({ status: 'stopped', stepIndex: index });
+      await updateRunState(runId, { status: 'stopped', stepIndex: index });
       return;
     }
-    await updateRunState({
+    await updateRunState(runId, {
       status: 'failed',
       stepIndex: index,
       error: error instanceof Error ? error.message : String(error),
@@ -293,12 +336,13 @@ async function showRunBadge(tabId) {
 
 /**
  * クリック・入力・選択を、ページの content script に依頼します。
+ * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
  * @param {Step} step
  */
-async function runInPage(flow, tabId, step) {
-  await waitForLoad(tabId, () => true, '');
+async function runInPage(runId, flow, tabId, step) {
+  await waitForLoad(runId, tabId, () => true, '');
   const tab = await chrome.tabs.get(tabId);
   // 別のサイトに移動していた場合は、入力値を別のサイトに入力しないよう停止します（#14）。
   if (!tab.url || new URL(tab.url).origin !== flow.origin) {
@@ -321,7 +365,7 @@ async function runInPage(flow, tabId, step) {
   let result;
   while (!(result = await Promise.race([reply, sleep(STOP_CHECK_INTERVAL_MS).then(() => null)]))) {
     try {
-      await throwIfStopRequested();
+      await throwIfStopRequested(runId);
     } catch (error) {
       // ページで要素を待つ処理も止めます。
       await chrome.tabs
@@ -343,12 +387,13 @@ async function runInPage(flow, tabId, step) {
 
 /**
  * ページの操作による移動が終わるまで待ちます。
+ * @param {string} runId
  * @param {number} tabId
  * @param {Step[]} steps
  * @param {number} index 待つ移動の手順の番号
  * @returns {Promise<number>} 着いたページの手順の番号
  */
-async function waitForPageNavigation(tabId, steps, index) {
+async function waitForPageNavigation(runId, tabId, steps, index) {
   /** @type {{ index: number, url: string }[]} */
   const candidates = [];
   for (let i = index; i < steps.length; i += 1) {
@@ -361,6 +406,7 @@ async function waitForPageNavigation(tabId, steps, index) {
 
   let reached = index;
   await waitForLoad(
+    runId,
     tabId,
     (url) => {
       const match = candidates.findLast((candidate) => samePage(url, candidate.url));
@@ -378,11 +424,12 @@ async function waitForPageNavigation(tabId, steps, index) {
  * タブの読み込みが終わり、表示中の URL が条件を満たすまで待ちます。
  * Service Worker は操作がない状態が約 30 秒続くと停止するため、イベントを待つのではなく、
  * 短い間隔でタブの状態を問い合わせます。問い合わせのたびに停止までの時間が延びます。
+ * @param {string} runId
  * @param {number} tabId
  * @param {(url: string) => boolean} isExpected
  * @param {string} description 待っているページの説明（失敗時の表示に使います）
  */
-async function waitForLoad(tabId, isExpected, description) {
+async function waitForLoad(runId, tabId, isExpected, description) {
   const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
   let lastUrl = '';
   while (Date.now() < deadline) {
@@ -396,7 +443,7 @@ async function waitForLoad(tabId, isExpected, description) {
     if (tab.status === 'complete' && lastUrl && isExpected(lastUrl)) {
       return;
     }
-    await throwIfStopRequested();
+    await throwIfStopRequested(runId);
     await sleep(STOP_CHECK_INTERVAL_MS);
   }
   throw new Error(
@@ -426,9 +473,10 @@ export function samePage(a, b) {
 /**
  * サイドパネルから停止を指示されている場合に、StopRequested を投げます。
  * サイドパネルの［閉じる］などで実行の状態が消えている場合も、停止として扱います。
+ * @param {string} runId
  */
-async function throwIfStopRequested() {
-  const state = await getRunState();
+async function throwIfStopRequested(runId) {
+  const state = await getRunState(runId);
   if (!state || state.status === 'stopping') {
     throw new StopRequested('停止を指示されました。');
   }

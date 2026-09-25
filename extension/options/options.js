@@ -39,7 +39,18 @@ elements.save.addEventListener('click', async () => {
     showMessage(`形式に誤りがあるため、保存しませんでした。\n${result.errors.join('\n')}`, true);
     return;
   }
-  showMessage('保存しました。', false);
+  const { name } = /** @type {{ name: string }} */ (flow);
+  if (result.name === name) {
+    showMessage('保存しました。', false);
+    return;
+  }
+  // 同じサイトに同じ名前のフローがあり、番号を付けて保存した場合は、編集欄の名前も合わせます。
+  elements.json.value = JSON.stringify(
+    orderFlow(/** @type {import('../shared/flow.js').Flow} */ ({ ...flow, name: result.name })),
+    null,
+    2,
+  );
+  showMessage(`同じサイトに「${name}」があるため、「${result.name}」として保存しました。`, false);
 });
 
 elements.exportFlow.addEventListener('click', async () => {
@@ -104,7 +115,12 @@ elements.importFlow.addEventListener('click', async () => {
   elements.importJson.value = '';
   elements.file.value = '';
   select(result.id);
-  showMessage(`「${name}」を追加しました。`, false);
+  showMessage(
+    result.name === name
+      ? `「${name}」を追加しました。`
+      : `同じサイトに「${name}」があるため、「${result.name}」として追加しました。`,
+    false,
+  );
 });
 
 onFlowsChanged(() => {

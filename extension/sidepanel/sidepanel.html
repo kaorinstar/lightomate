@@ -18,11 +18,7 @@
 
       <section id="run-section" aria-labelledby="run-heading" hidden>
         <h2 id="run-heading">フローの実行</h2>
-        <p id="run-status" class="run-status"></p>
-        <div class="buttons">
-          <button type="button" id="run-stop" class="danger">実行停止</button>
-          <button type="button" id="run-close">閉じる</button>
-        </div>
+        <ul id="runs" class="runs"></ul>
       </section>
 
       <section id="form-section" aria-labelledby="form-heading" hidden>
@@ -73,12 +69,12 @@
       </section>
 
       <section aria-labelledby="flows-heading">
-        <h2 id="flows-heading">保存したフロー</h2>
-        <p id="flows-empty" class="note">保存したフローはまだありません。</p>
+        <h2 id="flows-heading">このサイトのフロー</h2>
+        <p id="flows-empty" class="note"></p>
         <ul id="flows" class="flows"></ul>
         <p class="note">
-          <a href="../options/options.html" target="_blank">フローの管理</a>（JSON
-          の編集、読み込み、削除）
+          ほかのサイトのフローは、<a href="../options/options.html" target="_blank">フローの管理</a
+          >で確認できます（JSON の編集、読み込み、削除）。
         </p>
       </section>
     </main>
