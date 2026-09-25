@@ -47,6 +47,18 @@ export function appendHistory(history, entry, limit = HISTORY_LIMIT) {
 }
 
 /**
+ * 指定した実行の履歴を除いた一覧を返します。元の一覧は変更しません。
+ * 一覧にない runId は無視します。
+ * @param {HistoryEntry[]} history
+ * @param {Iterable<string>} runIds 除く実行の識別子
+ * @returns {HistoryEntry[]}
+ */
+export function withoutHistoryEntries(history, runIds) {
+  const removing = new Set(runIds);
+  return history.filter((entry) => !removing.has(entry.runId));
+}
+
+/**
  * 終わった実行の状態から、履歴の 1 件を作ります。止まった理由の中の入力した値は伏せます。
  * @param {{
  *   runId: string, flowId: string, flowName: string, origin: string, startedAt: string,

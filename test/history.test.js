@@ -8,6 +8,7 @@ import {
   historyEntryFromRun,
   historyToCsv,
   redactValues,
+  withoutHistoryEntries,
 } from '../extension/shared/history.js';
 
 /**
@@ -78,6 +79,32 @@ test('元の一覧は変更しない', () => {
   const original = [entry('a')];
   appendHistory(original, entry('b'));
   assert.equal(original.length, 1);
+});
+
+test('指定した実行の履歴だけを除き、元の一覧は変更しない（#75）', () => {
+  const original = [entry('a'), entry('b'), entry('c')];
+  const history = withoutHistoryEntries(original, ['b']);
+  assert.deepEqual(
+    history.map((item) => item.runId),
+    ['a', 'c'],
+  );
+  assert.equal(original.length, 3);
+});
+
+test('一覧にない実行を指定した場合は、一覧を変えない（#75）', () => {
+  const history = withoutHistoryEntries([entry('a'), entry('b')], ['x']);
+  assert.deepEqual(
+    history.map((item) => item.runId),
+    ['a', 'b'],
+  );
+});
+
+test('複数の実行を指定した場合は、すべて除く（#75）', () => {
+  const history = withoutHistoryEntries([entry('a'), entry('b'), entry('c')], ['a', 'c']);
+  assert.deepEqual(
+    history.map((item) => item.runId),
+    ['b'],
+  );
 });
 
 test('入力した値と、URL にエンコードした形を伏せる', () => {

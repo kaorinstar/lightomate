@@ -15,6 +15,7 @@ import {
   startRecording,
   stopRecording,
 } from './recording.js';
+import { removeHistory } from '../common/history-store.js';
 import { markInterruptedRuns, requestStop, startRun } from './runner.js';
 
 // ツールバーのアイコンを押したときに、ポップアップではなくサイドパネルを開きます。
@@ -96,6 +97,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       }
       requestStop(message.runId).then(
+        () => sendResponse({ ok: true }),
+        (error) => sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'history/remove':
+      if (
+        !fromExtensionPage ||
+        !Array.isArray(message.runIds) ||
+        !message.runIds.every((/** @type {unknown} */ id) => typeof id === 'string')
+      ) {
+        return false;
+      }
+      removeHistory(message.runIds).then(
         () => sendResponse({ ok: true }),
         (error) => sendResponse({ ok: false, error: String(error) }),
       );
