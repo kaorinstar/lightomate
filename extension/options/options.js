@@ -23,6 +23,9 @@ import {
 import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
 import { isWebOrigin, orderFlow, validateFlow } from '../shared/flow.js';
 import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
+import { attachCombobox } from '../shared/combobox.js';
+import { buildFlowGroups } from '../shared/flow-groups.js';
+import { MATCH_MODES, filterFlows, groupByHost, suggestions } from '../shared/flow-search.js';
 import {
   NO_FIRST_PAGE,
   buildRunFields,
@@ -48,6 +51,11 @@ const elements = {
   flows: byId('flows'),
   flowCount: byId('flow-count'),
   empty: byId('empty'),
+  searchArea: byId('search-area'),
+  search: /** @type {HTMLInputElement} */ (byId('search')),
+  searchSuggestions: byId('search-suggestions'),
+  searchMode: /** @type {HTMLSelectElement} */ (byId('search-mode')),
+  noMatch: byId('no-match'),
   newFlow: byId('new'),
   placeholder: byId('placeholder'),
   editor: byId('editor'),
@@ -577,6 +585,40 @@ elements.importFlow.addEventListener('click', async () => {
   );
 });
 
+// ---- 一覧の検索（#42） ----
+// 検索欄の入力と一致方法は保存しません。画面を開き直すと、空欄と「部分一致」に戻ります。
+
+/** 折りたたんだまとまりのホスト名です。一覧を作り直しても閉じたままにします。 */
+const collapsedHosts = new Set();
+
+/** 候補を作るための、保存したフローの一覧です。一覧を表示するたびに更新します。 */
+/** @type {StoredFlow[]} */
+let allFlows = [];
+
+elements.searchMode.append(...MATCH_MODES.map(({ value, label }) => new Option(label, value)));
+
+/** @returns {import('../shared/flow-search.js').MatchMode} */
+function searchMode() {
+  return /** @type {import('../shared/flow-search.js').MatchMode} */ (elements.searchMode.value);
+}
+
+attachCombobox(elements.search, elements.searchSuggestions, {
+  getOptions: () =>
+    suggestions(allFlows, elements.search.value, searchMode()).map(({ value, kind }) => ({
+      value,
+      note: kind === 'flow' ? 'フロー' : 'サイト',
+    })),
+  onSelect: () => render().catch(console.error),
+});
+
+elements.search.addEventListener('input', () => {
+  render().catch(console.error);
+});
+
+elements.searchMode.addEventListener('change', () => {
+  render().catch(console.error);
+});
+
 onFlowsChanged(() => {
   render().catch(console.error);
   renderStopRules().catch(console.error);
@@ -788,7 +830,28 @@ async function render() {
   const flows = await listFlows();
   elements.empty.hidden = flows.length > 0;
   elements.flowCount.textContent = flows.length > 0 ? String(flows.length) : '';
-  elements.flows.replaceChildren(...flowListItems(flows));
+  allFlows = flows;
+  elements.searchArea.hidden = flows.length === 0;
+  const query = elements.search.value;
+  const groups = groupByHost(filterFlows(flows, query, searchMode()));
+  elements.noMatch.hidden = flows.length === 0 || groups.length > 0;
+  elements.flows.replaceChildren(
+    ...buildFlowGroups(document, groups, {
+      renderItem: flowListItem,
+      // 検索中は、該当するフローが見えるよう、すべてのまとまりを開きます。
+      isOpen: (host) => query.trim() !== '' || !collapsedHosts.has(host),
+      onToggle: (host, open) => {
+        if (query.trim() !== '') {
+          return;
+        }
+        if (open) {
+          collapsedHosts.delete(host);
+        } else {
+          collapsedHosts.add(host);
+        }
+      },
+    }),
+  );
 
   const stored = selectedId ? await getFlow(selectedId) : undefined;
   elements.editor.hidden = !stored;
@@ -876,36 +939,22 @@ function definition(term, description) {
 }
 
 /**
- * フローの一覧を、サイトごとに見出しを付けて作ります。
- * @param {StoredFlow[]} flows
- * @returns {HTMLElement[]}
+ * フローの一覧の 1 行です。
+ * @param {StoredFlow} stored
+ * @returns {HTMLButtonElement}
  */
-function flowListItems(flows) {
-  /** @type {Map<string, StoredFlow[]>} */
-  const byOrigin = new Map();
-  for (const stored of flows) {
-    byOrigin.set(stored.flow.origin, [...(byOrigin.get(stored.flow.origin) ?? []), stored]);
+function flowListItem(stored) {
+  const detail = document.createElement('div');
+  detail.className = 'lm-sub';
+  detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
+  const button = listButton(stored.flow.name, detail);
+  const current = stored.id === selectedId;
+  button.classList.toggle('active', current);
+  if (current) {
+    button.setAttribute('aria-current', 'true');
   }
-  return [...byOrigin.keys()].sort().flatMap((origin) => {
-    const group = byOrigin.get(origin) ?? [];
-    const heading = document.createElement('div');
-    heading.className = 'list-group-item lm-list-heading';
-    heading.textContent = `${origin}（${group.length}）`;
-    const items = group.map((stored) => {
-      const detail = document.createElement('div');
-      detail.className = 'lm-sub';
-      detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
-      const button = listButton(stored.flow.name, detail);
-      const current = stored.id === selectedId;
-      button.classList.toggle('active', current);
-      if (current) {
-        button.setAttribute('aria-current', 'true');
-      }
-      button.addEventListener('click', () => select(stored.id));
-      return button;
-    });
-    return [heading, ...items];
-  });
+  button.addEventListener('click', () => select(stored.id));
+  return button;
 }
 
 /**
