@@ -34,6 +34,7 @@ const elements = {
   stopSelectors: /** @type {HTMLTextAreaElement} */ (byId('stop-selectors')),
   stopPaths: /** @type {HTMLTextAreaElement} */ (byId('stop-paths')),
   stopClear: byId('stop-clear'),
+  stopMessage: byId('stop-message'),
 };
 
 /** 編集中のフローの id です。URL の # 以降にも書き、再読み込みしても同じフローを開きます。 */
@@ -148,11 +149,12 @@ render().catch(console.error);
 
 elements.stopForm.addEventListener('submit', (event) => {
   event.preventDefault();
-  onSaveStopRule().catch((error) => showMessage(String(error), true));
+  onSaveStopRule().catch((error) => showStopMessage(String(error), true));
 });
 
 elements.stopClear.addEventListener('click', () => {
   editStopRule('', { selectors: [], paths: [] });
+  showStopMessage('', false);
 });
 
 onStopRulesChanged(() => {
@@ -160,11 +162,26 @@ onStopRulesChanged(() => {
 });
 renderStopRules().catch(console.error);
 
+/**
+ * 「必ず止まる場所」の結果と誤りを、保存のボタンの下に表示します。
+ * 画面の上部の表示欄では、下部の入力欄を操作している間に見えないためです。
+ * @param {string} text
+ * @param {boolean} isError
+ */
+function showStopMessage(text, isError) {
+  elements.stopMessage.textContent = text;
+  elements.stopMessage.classList.toggle('error', isError);
+  if (text) {
+    // 保存のボタンが画面の下端にある場合も、表示が見える位置まで移動します。
+    elements.stopMessage.scrollIntoView({ block: 'nearest' });
+  }
+}
+
 /** 入力欄の指定を検証し、保存します。 */
 async function onSaveStopRule() {
   const origin = elements.stopOrigin.value.trim().replace(/\/+$/, '');
   if (!isWebOrigin(origin)) {
-    showMessage(
+    showStopMessage(
       'サイトは https:// または http:// で始まるオリジン（例：https://www.amazon.co.jp）で入力してください。',
       true,
     );
@@ -176,7 +193,7 @@ async function onSaveStopRule() {
   };
   const errors = [...validateStopRule(rule), ...selectorSyntaxErrors(rule.selectors)];
   if (errors.length > 0) {
-    showMessage(`指定に誤りがあるため、保存しませんでした。\n${errors.join('\n')}`, true);
+    showStopMessage(`指定に誤りがあるため、保存しませんでした。\n${errors.join('\n')}`, true);
     return;
   }
   const removing = rule.selectors.length === 0 && rule.paths.length === 0;
@@ -185,11 +202,11 @@ async function onSaveStopRule() {
   }
   const result = await saveStopRule(origin, rule);
   if (!result.ok) {
-    showMessage(`保存できませんでした。\n${result.errors.join('\n')}`, true);
+    showStopMessage(`保存できませんでした。\n${result.errors.join('\n')}`, true);
     return;
   }
   elements.stopOrigin.value = origin;
-  showMessage(
+  showStopMessage(
     removing ? `${origin} の指定を削除しました。` : `${origin} の指定を保存しました。`,
     false,
   );
