@@ -4,6 +4,7 @@
 // 拡張機能を削除すると、保存したフローも削除されます。
 
 import { orderFlow, validateFlow } from '../shared/flow.js';
+import { uniqueName } from '../shared/flow-list.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 
@@ -47,9 +48,12 @@ export async function getFlow(id) {
 /**
  * フローを保存します。id を指定しない場合は、新しいフローとして追加します。
  * 形式に誤りがある場合は保存せず、誤りの説明を返します。
+ *
+ * 同じサイトに同じ名前のフローがある場合は、上書きせず、名前に番号を付けて保存します
+ * （例：「領収書 (2)」）。保存した名前を name で返します。
  * @param {unknown} flow
  * @param {string} [id]
- * @returns {Promise<{ ok: true, id: string } | { ok: false, errors: string[] }>}
+ * @returns {Promise<{ ok: true, id: string, name: string } | { ok: false, errors: string[] }>}
  */
 export async function saveFlow(flow, id) {
   const errors = validateFlow(flow);
@@ -59,14 +63,30 @@ export async function saveFlow(flow, id) {
   const all = await readAll();
   const now = new Date().toISOString();
   const flowId = id ?? crypto.randomUUID();
+  const valid = /** @type {Flow} */ (flow);
+  const name = uniqueName(valid.name, valid.origin, Object.values(all), flowId);
   all[flowId] = {
     id: flowId,
     createdAt: all[flowId]?.createdAt ?? now,
     updatedAt: now,
-    flow: /** @type {Flow} */ (flow),
+    flow: { ...valid, name },
   };
   await chrome.storage.local.set({ [FLOWS_KEY]: all });
-  return { ok: true, id: flowId };
+  return { ok: true, id: flowId, name };
+}
+
+/**
+ * フローの名前を変えます。同じサイトに同じ名前のフローがある場合は、番号を付けます。
+ * @param {string} id
+ * @param {string} name
+ * @returns {Promise<{ ok: true, id: string, name: string } | { ok: false, errors: string[] }>}
+ */
+export async function renameFlow(id, name) {
+  const stored = (await readAll())[id];
+  if (!stored) {
+    return { ok: false, errors: ['フローが見つかりません。'] };
+  }
+  return saveFlow({ ...stored.flow, name }, id);
 }
 
 /**

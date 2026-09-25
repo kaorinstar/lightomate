@@ -13,7 +13,7 @@ import {
   startRecording,
   stopRecording,
 } from './recording.js';
-import { markInterruptedRun, requestStop, startRun } from './runner.js';
+import { markInterruptedRuns, requestStop, startRun } from './runner.js';
 
 // ツールバーのアイコンを押したときに、ポップアップではなくサイドパネルを開きます。
 // ポップアップはページをクリックした時点で閉じるため、記録中に開いたままにできないためです。
@@ -24,7 +24,7 @@ chrome.sidePanel
 
 const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
 
-markInterruptedRun().catch((error) => console.error('実行の状態を確認できませんでした。', error));
+markInterruptedRuns().catch((error) => console.error('実行の状態を確認できませんでした。', error));
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // この拡張機能以外からのメッセージは受け付けません。
@@ -72,10 +72,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
 
     case 'runner/stop':
-      if (!fromExtensionPage) {
+      if (!fromExtensionPage || typeof message.runId !== 'string') {
         return false;
       }
-      requestStop().then(
+      requestStop(message.runId).then(
         () => sendResponse({ ok: true }),
         (error) => sendResponse({ ok: false, error: String(error) }),
       );
