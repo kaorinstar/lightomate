@@ -139,36 +139,32 @@
               <form id="speed-form" class="lm-block" novalidate aria-labelledby="speed-heading">
                 <h3 id="speed-heading" class="lm-block-title">実行の速度</h3>
                 <p class="lm-sub">
-                  手順と手順の間に、最短と最長の間で毎回変わる時間だけ待ちます。<wbr />両方を空欄にすると、既定の
+                  手順と手順の間に、最短と最長の間で毎回変わる時間だけ待ちます。<wbr />片方だけ入力すると、両方に同じ値を入れます。<wbr />両方を空欄にすると、既定の
                   1 秒です。
                 </p>
-                <div class="lm-speed-fields">
-                  <div class="lm-field">
-                    <label class="form-label" for="interval-min">最短（秒）</label>
-                    <input
-                      type="text"
-                      class="form-control"
-                      id="interval-min"
-                      inputmode="decimal"
-                      placeholder="1"
-                    />
-                    <div class="invalid-feedback" id="interval-min-feedback"></div>
-                  </div>
-                  <div class="lm-field">
-                    <label class="form-label" for="interval-max">最長（秒）</label>
-                    <input
-                      type="text"
-                      class="form-control"
-                      id="interval-max"
-                      inputmode="decimal"
-                      placeholder="1"
-                    />
-                    <div class="invalid-feedback" id="interval-max-feedback"></div>
-                  </div>
-                </div>
-                <div class="lm-buttons">
+                <div class="lm-speed-row">
+                  <label for="interval-min">最短</label>
+                  <input
+                    type="text"
+                    class="form-control lm-seconds"
+                    id="interval-min"
+                    inputmode="decimal"
+                    placeholder="1"
+                  />
+                  <span>秒</span>
+                  <span aria-hidden="true">〜</span>
+                  <label for="interval-max">最長</label>
+                  <input
+                    type="text"
+                    class="form-control lm-seconds"
+                    id="interval-max"
+                    inputmode="decimal"
+                    placeholder="1"
+                  />
+                  <span>秒</span>
                   <button type="submit" class="btn" id="speed-save">速度を保存</button>
                 </div>
+                <div class="invalid-feedback lm-speed-feedback" id="interval-feedback"></div>
                 <p id="speed-notice" hidden></p>
               </form>
 

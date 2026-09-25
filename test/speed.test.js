@@ -8,6 +8,7 @@ import {
   formatSeconds,
   parseSeconds,
   pickDelay,
+  readIntervalInput,
   stepInterval,
 } from '../extension/shared/speed.js';
 
@@ -63,4 +64,27 @@ test('ミリ秒を秒数で表示する', () => {
   assert.equal(formatSeconds(1000), '1');
   assert.equal(formatSeconds(1500), '1.5');
   assert.equal(formatSeconds(0), '0');
+});
+
+test('片方だけ入力した場合は、空欄の方に同じ値を入れる', () => {
+  assert.deepEqual(readIntervalInput('3', ''), { ok: true, interval: { min: 3000, max: 3000 } });
+  assert.deepEqual(readIntervalInput('', '2.5'), { ok: true, interval: { min: 2500, max: 2500 } });
+  assert.deepEqual(readIntervalInput('1', '3'), { ok: true, interval: { min: 1000, max: 3000 } });
+});
+
+test('両方が空欄の場合は、既定の間隔に戻す（interval なし）', () => {
+  assert.deepEqual(readIntervalInput(' ', ''), { ok: true, interval: undefined });
+});
+
+test('誤りのある欄を示す', () => {
+  for (const [minText, maxText, field] of [
+    ['abc', '3', 'min'],
+    ['', 'abc', 'max'],
+    ['1', '61', 'max'],
+    ['3', '1', 'max'],
+  ]) {
+    const result = readIntervalInput(minText, maxText);
+    assert.equal(result.ok, false);
+    assert.equal(!result.ok && result.field, field, `値: ${minText}、${maxText}`);
+  }
 });

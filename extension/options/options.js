@@ -45,7 +45,7 @@ import {
   showRunFieldErrors,
 } from '../shared/run-form.js';
 import { STATUS_LABELS, historyToCsv, stepText } from '../shared/history.js';
-import { MAX_INTERVAL_MS, formatSeconds, parseSeconds } from '../shared/speed.js';
+import { formatSeconds, readIntervalInput } from '../shared/speed.js';
 import { parseLines, stopRuleFieldErrors } from '../shared/stop-rules.js';
 import {
   confirmInline,
@@ -94,9 +94,8 @@ const elements = {
   paramsSection: byId('params-section'),
   speedForm: /** @type {HTMLFormElement} */ (byId('speed-form')),
   intervalMin: /** @type {HTMLInputElement} */ (byId('interval-min')),
-  intervalMinFeedback: byId('interval-min-feedback'),
   intervalMax: /** @type {HTMLInputElement} */ (byId('interval-max')),
-  intervalMaxFeedback: byId('interval-max-feedback'),
+  intervalFeedback: byId('interval-feedback'),
   speedNotice: byId('speed-notice'),
   params: byId('params'),
   stepCount: byId('step-count'),
@@ -157,8 +156,8 @@ const notices = [
  */
 const fieldFeedbacks = [
   [elements.json, elements.jsonFeedback],
-  [elements.intervalMin, elements.intervalMinFeedback],
-  [elements.intervalMax, elements.intervalMaxFeedback],
+  [elements.intervalMin, elements.intervalFeedback],
+  [elements.intervalMax, elements.intervalFeedback],
   [elements.importJson, elements.importJsonFeedback],
   [elements.stopOrigin, elements.stopOriginFeedback],
   [elements.stopSelectors, elements.stopSelectorsFeedback],
@@ -704,47 +703,29 @@ render().catch(console.error);
 function fillSpeedFields(flow) {
   elements.intervalMin.value = flow.interval ? formatSeconds(flow.interval.min) : '';
   elements.intervalMax.value = flow.interval ? formatSeconds(flow.interval.max) : '';
-  showFieldError(elements.intervalMin, elements.intervalMinFeedback, '');
-  showFieldError(elements.intervalMax, elements.intervalMaxFeedback, '');
+  clearSpeedError();
 }
 
-for (const [control, feedback] of /** @type {Array<[HTMLInputElement, HTMLElement]>} */ ([
-  [elements.intervalMin, elements.intervalMinFeedback],
-  [elements.intervalMax, elements.intervalMaxFeedback],
-])) {
-  control.addEventListener('input', () => showFieldError(control, feedback, ''));
+/** 実行の速度の誤りを消します。2 つの欄で、行の直下の表示欄を共有しています。 */
+function clearSpeedError() {
+  showFieldError(elements.intervalMin, elements.intervalFeedback, '');
+  showFieldError(elements.intervalMax, elements.intervalFeedback, '');
 }
+
+elements.intervalMin.addEventListener('input', clearSpeedError);
+elements.intervalMax.addEventListener('input', clearSpeedError);
 
 elements.speedForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   clearNotices();
-  const minText = elements.intervalMin.value;
-  const maxText = elements.intervalMax.value;
-  /** @type {import('../shared/speed.js').Interval | undefined} */
-  let interval;
-  if (minText.trim() !== '' || maxText.trim() !== '') {
-    const min = parseSeconds(minText, MAX_INTERVAL_MS);
-    const max = parseSeconds(maxText, MAX_INTERVAL_MS);
-    const minError =
-      minText.trim() === '' ? '最長と同じく入力してください。' : min.ok ? '' : min.error;
-    const maxError =
-      maxText.trim() === '' ? '最短と同じく入力してください。' : max.ok ? '' : max.error;
-    const orderError =
-      !minError && !maxError && min.ok && max.ok && min.ms > max.ms
-        ? '最短以上の秒数を入力してください。'
-        : '';
-    showFieldError(elements.intervalMin, elements.intervalMinFeedback, minError);
-    showFieldError(elements.intervalMax, elements.intervalMaxFeedback, maxError || orderError);
-    if (minError) {
-      elements.intervalMin.focus();
-      return;
-    }
-    if (maxError || orderError || !min.ok || !max.ok) {
-      elements.intervalMax.focus();
-      return;
-    }
-    interval = { min: min.ms, max: max.ms };
+  const input = readIntervalInput(elements.intervalMin.value, elements.intervalMax.value);
+  if (!input.ok) {
+    const control = input.field === 'min' ? elements.intervalMin : elements.intervalMax;
+    showFieldError(control, elements.intervalFeedback, input.error);
+    control.focus();
+    return;
   }
+  const { interval } = input;
   const result = await setFlowInterval(selectedId, interval);
   if (!result.ok) {
     showNotice(

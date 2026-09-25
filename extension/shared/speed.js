@@ -96,6 +96,35 @@ export function parseSeconds(text, maxMs) {
 }
 
 /**
+ * 管理画面の「実行の速度」の入力を、手順の間隔にします。
+ * 片方だけ入力した場合は、空欄の方に同じ値を入れます（一定の間隔）。両方が空欄の場合は interval を
+ * undefined とし、既定の間隔に戻します。
+ * @param {string} minText 最短の欄の文字列（秒）
+ * @param {string} maxText 最長の欄の文字列（秒）
+ * @returns {{ ok: true, interval: Interval | undefined }
+ *   | { ok: false, field: 'min' | 'max', error: string }}
+ */
+export function readIntervalInput(minText, maxText) {
+  const minTrimmed = minText.trim();
+  const maxTrimmed = maxText.trim();
+  if (minTrimmed === '' && maxTrimmed === '') {
+    return { ok: true, interval: undefined };
+  }
+  const min = parseSeconds(minTrimmed || maxTrimmed, MAX_INTERVAL_MS);
+  if (!min.ok) {
+    return { ok: false, field: minTrimmed ? 'min' : 'max', error: min.error };
+  }
+  const max = parseSeconds(maxTrimmed || minTrimmed, MAX_INTERVAL_MS);
+  if (!max.ok) {
+    return { ok: false, field: 'max', error: max.error };
+  }
+  if (min.ms > max.ms) {
+    return { ok: false, field: 'max', error: '最長には、最短以上の秒数を入力してください。' };
+  }
+  return { ok: true, interval: { min: min.ms, max: max.ms } };
+}
+
+/**
  * ミリ秒を、画面に表示する秒数にします（例：1500 → "1.5"）。
  * @param {number} ms
  * @returns {string}
