@@ -156,3 +156,12 @@ test("CSV の値が数式として実行されないよう、= などで始ま�
   const csv = historyToCsv([{ ...entry('a'), flowName: '=HYPERLINK("http://x")' }]);
   assert.ok(csv.includes(`"'=HYPERLINK(""http://x"")"`));
 });
+
+test('保存したファイルのパスを記録する（#16）', () => {
+  const files = ['/home/me/Downloads/Lightomate/領収書/a.pdf'];
+  const result = historyEntryFromRun({ ...run, status: 'done', stepIndex: 2 }, '', [], files);
+  assert.deepEqual(result?.files, files);
+  // 元の配列を後から変更しても、履歴は変わりません。
+  files.push('b.pdf');
+  assert.equal(result?.files.length, 1);
+});

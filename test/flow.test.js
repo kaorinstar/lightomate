@@ -46,9 +46,10 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1 のフローは、そのまま版 2 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 2);
+test('版 1 と版 2 のフローは、そのまま版 3 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 3);
   assert.deepEqual(validateFlow({ ...validFlow, schemaVersion: 1 }), []);
+  assert.deepEqual(validateFlow({ ...validFlow, schemaVersion: 2 }), []);
 });
 
 test('一時停止の手順は、説明を省略でき、説明は文字列に限る', () => {
@@ -169,4 +170,93 @@ test('JSON として読み取れない、または最上位がオブジェクト
   assert.equal(replaceJsonName('[1, 2]', '新しい名前'), null);
   assert.equal(replaceJsonName('"文字列"', '新しい名前'), null);
   assert.equal(replaceJsonName('null', '新しい名前'), null);
+});
+
+// ---- PDF の保存（savePdf）と読み取り（extract）（#16） ----
+
+const extractTarget = { selectors: ['#order-id'], tag: 'span', label: '注文番号' };
+
+test('savePdf は path と onConflict を省略でき、値を検証する', () => {
+  assert.deepEqual(validateStep({ type: 'savePdf' }), []);
+  assert.deepEqual(
+    validateStep({
+      type: 'savePdf',
+      path: 'Lightomate/領収書/{{run.yyyy}}.pdf',
+      onConflict: 'overwrite',
+    }),
+    [],
+  );
+  assert.equal(validateStep({ type: 'savePdf', onConflict: 'skip' }).length, 1);
+  assert.equal(validateStep({ type: 'savePdf', path: 1 }).length, 1);
+  assert.ok(validateStep({ type: 'savePdf', path: '../外/a.pdf' }).length > 0);
+  assert.ok(validateStep({ type: 'savePdf', path: '/etc/a.pdf' }).length > 0);
+  assert.ok(validateStep({ type: 'savePdf', path: 'C:/Users/a.pdf' }).length > 0);
+});
+
+test('extract は要素と名前を持ち、組み込みの値の名前は使えない', () => {
+  assert.deepEqual(
+    validateStep({ type: 'extract', target: extractTarget, name: 'orderNumber' }),
+    [],
+  );
+  assert.equal(
+    validateStep({ type: 'extract', target: extractTarget, name: '注文番号' }).length,
+    1,
+  );
+  assert.equal(validateStep({ type: 'extract', target: extractTarget, name: 'run' }).length, 1);
+  assert.ok(validateStep({ type: 'extract', name: 'orderNumber' }).length > 0);
+});
+
+test('savePdf の path は、組み込みの値、パラメータ、前の手順で読み取った値を参照できる', () => {
+  const flow = {
+    ...validFlow,
+    schemaVersion: 3,
+    params: [{ name: 'month', label: '対象月', type: 'month' }],
+    steps: [
+      ...validFlow.steps,
+      { type: 'extract', target: extractTarget, name: 'orderNumber' },
+      {
+        type: 'savePdf',
+        path: 'Lightomate/{{site.host}}/{{month.year}}-{{month.mm}}/{{orderNumber}}_{{run.hhmmss}}.pdf',
+      },
+    ],
+  };
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('savePdf の path が、後の手順で読み取る値や未定義の名前を参照する場合は誤りを報告する', () => {
+  const errors = validateFlow({
+    ...validFlow,
+    schemaVersion: 3,
+    steps: [
+      ...validFlow.steps,
+      { type: 'savePdf', path: 'Lightomate/{{orderNumber}}.pdf' },
+      { type: 'extract', target: extractTarget, name: 'orderNumber' },
+    ],
+  });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /orderNumber/);
+});
+
+test('extract の名前がパラメータと同じ場合は誤りを報告する', () => {
+  const errors = validateFlow({
+    ...validFlow,
+    schemaVersion: 3,
+    params: [{ name: 'orderNumber', label: '注文番号', type: 'text' }],
+    steps: [...validFlow.steps, { type: 'extract', target: extractTarget, name: 'orderNumber' }],
+  });
+  assert.equal(errors.length, 1);
+});
+
+test('版 2 以前のフローに savePdf と extract がある場合は誤りを報告する', () => {
+  const errors = validateFlow({
+    ...validFlow,
+    schemaVersion: 2,
+    steps: [
+      ...validFlow.steps,
+      { type: 'extract', target: extractTarget, name: 'a' },
+      { type: 'savePdf' },
+    ],
+  });
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /schemaVersion が 3 以上/);
 });

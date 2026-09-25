@@ -24,6 +24,7 @@ import { historyEntryFromRun } from '../shared/history.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
 import { confirmPauseNote, findConfirmText } from '../shared/purchase-guard.js';
 import { findStopPath, stopRuleNote } from '../shared/stop-rules.js';
+import { DEFAULT_SAVE_PATH, buildSavePath, builtinValues } from '../shared/save-path.js';
 import { getStopRule } from '../common/stop-rules-store.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
@@ -63,6 +64,12 @@ const CONTENT_FILES = [
   'content/runner.js',
 ];
 
+/** PDF の保存（ダウンロード）が終わるのを待つ上限です。 */
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+
+/** ページから読み取る文字の長さの上限です。保存先のファイル名に使うため、長すぎる値を切ります。 */
+const EXTRACT_MAX_LENGTH = 200;
+
 /** 停止の指示を確かめる間隔です。要素やページの読み込みを待っている間も、この間隔で確かめます。 */
 const STOP_CHECK_INTERVAL_MS = 250;
 
@@ -89,6 +96,12 @@ const activeRuns = new Map();
  * @type {Map<string, string[]>}
  */
 const redactions = new Map();
+
+/**
+ * 実行ごとの、保存したファイルのパスです（#16）。実行が終わったときに実行履歴に記録します（#19）。
+ * @type {Map<string, string[]>}
+ */
+const savedFiles = new Map();
 
 /**
  * @param {string} runId
@@ -137,8 +150,10 @@ async function finishRun(runId, update) {
   await updateRunState(runId, update);
   const state = await getRunState(runId);
   const values = redactions.get(runId) ?? [];
+  const files = savedFiles.get(runId) ?? [];
   redactions.delete(runId);
-  const entry = state && historyEntryFromRun(state, new Date().toISOString(), values);
+  savedFiles.delete(runId);
+  const entry = state && historyEntryFromRun(state, new Date().toISOString(), values, files);
   if (entry) {
     await addHistory(entry).catch((error) =>
       console.error('実行履歴を記録できませんでした。', error),
@@ -187,11 +202,15 @@ export async function startRun(flowId, paramInput, secretInput) {
   if (!resolved.ok) {
     return resolved;
   }
+  const paramValues = resolveParams(flow.params ?? [], paramInput, now).values;
   const values = [
     ...Object.values(paramInput),
     ...Object.values(secretInput),
-    ...Object.values(resolveParams(flow.params ?? [], paramInput, now).values),
+    ...Object.values(paramValues),
   ];
+  // PDF の保存先（#16）に埋め込む値です。ページから読み取った値は、実行中に加えます。
+  // パスワードなど値を記録していない欄の値は、保存先に使えないよう含めません。
+  const pathValues = { ...builtinValues(flow.name, flow.origin, now), ...paramValues };
 
   // 保存した状態に加え、この Service Worker で始めたばかりの実行とも比べます。
   // 比べてから登録するまでの間に await を置かないでください。同じサイトの実行を同時に始めないためです。
@@ -210,6 +229,7 @@ export async function startRun(flowId, paramInput, secretInput) {
   const runId = crypto.randomUUID();
   activeRuns.set(runId, flow.origin);
   redactions.set(runId, values);
+  savedFiles.set(runId, []);
 
   try {
     const tabId = await openTab(flow, resolved.steps);
@@ -224,13 +244,14 @@ export async function startRun(flowId, paramInput, secretInput) {
       status: 'running',
       startedAt: new Date().toISOString(),
     });
-    runSteps(flow, resolved.steps, tabId, runId).finally(() => {
+    runSteps(flow, resolved.steps, tabId, runId, pathValues).finally(() => {
       activeRuns.delete(runId);
     });
     return { ok: true };
   } catch (error) {
     activeRuns.delete(runId);
     redactions.delete(runId);
+    savedFiles.delete(runId);
     return { ok: false, error: String(error) };
   }
 }
@@ -330,8 +351,9 @@ async function openTab(flow, steps) {
  * @param {Step[]} steps パラメータを当てはめた手順
  * @param {number} tabId
  * @param {string} runId
+ * @param {Record<string, string>} pathValues PDF の保存先に埋め込む値。読み取った値を加えていきます
  */
-async function runSteps(flow, steps, tabId, runId) {
+async function runSteps(flow, steps, tabId, runId, pathValues) {
   let index = 0;
   /**
    * 直前の手順を始める前に表示していたページの識別子です。ページの操作による移動の手順で、
@@ -363,8 +385,22 @@ async function runSteps(flow, steps, tabId, runId) {
         }
         await waitForLoad(runId, tabId, (url) => samePage(url, step.url), step.url);
         documentBefore = await getDocumentId(tabId);
+      } else if (step.type === 'savePdf') {
+        const file = await savePdf(runId, flow, tabId, step, pathValues);
+        savedFiles.get(runId)?.push(file);
+        documentBefore = await getDocumentId(tabId);
       } else {
-        documentBefore = await runInPage(runId, flow, tabId, step);
+        const done = await runInPage(runId, flow, tabId, step);
+        documentBefore = done.documentId;
+        if (step.type === 'extract') {
+          const text = typeof done.response.text === 'string' ? done.response.text : '';
+          if (!text) {
+            throw new Error(`「${step.target.label}」から文字を読み取れませんでした（空でした）。`);
+          }
+          pathValues[step.name] = text.slice(0, EXTRACT_MAX_LENGTH);
+          // 読み取った値は個人情報を含む場合があるため、実行履歴の理由には残しません。
+          redactions.get(runId)?.push(pathValues[step.name]);
+        }
       }
 
       index += 1;
@@ -411,7 +447,8 @@ async function showRunBadge(tabId) {
  * @param {Flow} flow
  * @param {number} tabId
  * @param {Step} step
- * @returns {Promise<string | undefined>} 手順を実行する前に表示していたページの識別子
+ * @returns {Promise<{ documentId: string | undefined, response: Record<string, any> }>}
+ *   documentId は手順を実行する前に表示していたページの識別子、response はページからの応答です
  */
 async function runInPage(runId, flow, tabId, step) {
   await waitForLoad(runId, tabId, () => true, '');
@@ -459,8 +496,88 @@ async function runInPage(runId, flow, tabId, step) {
       throw new Halted(confirmPauseNote(confirmText));
     }
   }
-  await requestPage(runId, tabId, { kind: 'runner/step', step, timeoutMs: ELEMENT_TIMEOUT_MS });
-  return documentId;
+  const response = await requestPage(runId, tabId, {
+    kind: 'runner/step',
+    step,
+    timeoutMs: ELEMENT_TIMEOUT_MS,
+  });
+  return { documentId, response };
+}
+
+/**
+ * 表示中のページを PDF にして、ダウンロード先フォルダーに保存します（#16）。
+ * PDF は chrome.debugger の Page.printToPDF で作ります。印刷用の表示で作ります（#73 で画面の表示を加えます）。
+ * @param {string} runId
+ * @param {Flow} flow
+ * @param {number} tabId
+ * @param {import('../shared/flow.js').SavePdfStep} step
+ * @param {Record<string, string>} pathValues 保存先に埋め込む値
+ * @returns {Promise<string>} 保存したファイルのパス
+ */
+async function savePdf(runId, flow, tabId, step, pathValues) {
+  await waitForLoad(runId, tabId, () => true, '');
+  const tab = await chrome.tabs.get(tabId);
+  // 別のサイトのページを、このフローの書類として保存しないよう停止します。
+  if (!tab.url || new URL(tab.url).origin !== flow.origin) {
+    throw new Error(`フローのサイト（${flow.origin}）とは別のページに移動したため、停止しました。`);
+  }
+  const built = buildSavePath(step.path ?? DEFAULT_SAVE_PATH, pathValues);
+  if (!built.ok) {
+    throw new Error(built.error);
+  }
+
+  const target = { tabId };
+  try {
+    await chrome.debugger.attach(target, '1.3');
+  } catch (error) {
+    throw new Error(
+      `PDF を作れませんでした。このタブで開発者ツールを開いている場合は、閉じてから実行してください（${String(error)}）。`,
+      { cause: error },
+    );
+  }
+  /** @type {string} */
+  let data;
+  try {
+    const result = /** @type {{ data: string }} */ (
+      await chrome.debugger.sendCommand(target, 'Page.printToPDF', { printBackground: true })
+    );
+    data = result.data;
+  } finally {
+    await chrome.debugger.detach(target).catch(() => {});
+  }
+
+  // Service Worker では URL.createObjectURL が使えないため、data: URL で渡します（#16 で作業環境で確認済み）。
+  const downloadId = await chrome.downloads.download({
+    url: `data:application/pdf;base64,${data}`,
+    filename: built.path,
+    conflictAction: step.onConflict === 'overwrite' ? 'overwrite' : 'uniquify',
+    saveAs: false,
+  });
+  return waitForDownload(runId, downloadId);
+}
+
+/**
+ * ダウンロードが終わるのを待ち、保存したファイルのパスを返します。
+ * @param {string} runId
+ * @param {number} downloadId
+ * @returns {Promise<string>}
+ */
+async function waitForDownload(runId, downloadId) {
+  const deadline = Date.now() + DOWNLOAD_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const [item] = await chrome.downloads.search({ id: downloadId });
+    if (item?.state === 'complete') {
+      return item.filename;
+    }
+    if (item?.state === 'interrupted') {
+      throw new Error(`PDF を保存できませんでした（${item.error ?? '理由は不明です'}）。`);
+    }
+    await throwIfStopRequested(runId);
+    await sleep(STOP_CHECK_INTERVAL_MS);
+  }
+  throw new Error(
+    `${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)} 秒待ちましたが、PDF の保存が終わりませんでした。`,
+  );
 }
 
 /**

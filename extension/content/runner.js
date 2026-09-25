@@ -103,7 +103,7 @@
    * @param {{ type: string, target: { selectors: string[], tag: string, text?: string }, value?: string, values?: string[], labels?: string[] }} step
    *   値の中のパラメータは、Service Worker で置き換え済みです。
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+   * @returns {Promise<{ ok: true, text?: string } | { ok: false, error: string }>}
    */
   async function runStep(step, timeoutMs) {
     /** @type {Element} */
@@ -156,9 +156,30 @@
       case 'select':
         return selectOptions(element, step.values ?? [], step.labels ?? []);
 
+      case 'extract':
+        // 読み取るだけで、ページは変更しません（#16）。入力欄と選択肢は、表示している値を読み取ります。
+        return { ok: true, text: readText(element) };
+
       default:
         return { ok: false, error: `この手順の種類（${step.type}）はページでは実行できません。` };
     }
+  }
+
+  /**
+   * 要素の表示文字列を、空白をまとめて 1 行にして返します。
+   * @param {Element} element
+   * @returns {string}
+   */
+  function readText(element) {
+    const raw =
+      element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+        ? element.value
+        : element instanceof HTMLSelectElement
+          ? (element.selectedOptions[0]?.label ?? '')
+          : element instanceof HTMLElement
+            ? element.innerText
+            : (element.textContent ?? '');
+    return raw.replace(/\s+/g, ' ').trim();
   }
 
   /**
