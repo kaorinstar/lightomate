@@ -1,130 +1,97 @@
+/* 管理画面だけの指定です。共通の指定は shared/base.css にあります。 */
+
 body {
-  max-width: 1100px;
-  margin: 0 auto;
+  background: var(--tblr-bg-surface-secondary);
 }
 
-h2 {
-  margin: 0 0 8px;
-  font-size: 1rem;
+.lm-page {
+  padding-block: 1.5rem;
 }
 
-.layout {
+.lm-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+/* 一覧と詳細を左右に並べます。幅が狭い場合は 1 列にします。 */
+.lm-layout {
   display: grid;
-  grid-template-columns: minmax(200px, 280px) 1fr;
-  gap: 24px;
-  margin-top: 16px;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
 }
 
 @media (width <= 700px) {
-  .layout {
-    grid-template-columns: 1fr;
+  .lm-layout {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.note {
-  margin: 0 0 8px;
-  font-size: 0.85rem;
+.lm-detail-header {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: space-between;
 }
 
-.message {
-  min-height: 1.4em;
-  margin: 8px 0 0;
-  font-size: 0.9rem;
-  white-space: pre-line;
+.lm-detail-title {
+  min-width: 0;
 }
 
-.message.error {
-  color: #d93025;
-}
-
-.flows {
+.lm-detail-title .card-title,
+.lm-detail-header .card-title {
   margin: 0;
-  padding: 0;
-  list-style: none;
+  overflow-wrap: anywhere;
 }
 
-.flows button {
-  display: block;
-  width: 100%;
-  margin-bottom: 4px;
-  padding: 6px 8px;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
+.lm-list .list-group-item {
+  overflow-wrap: anywhere;
 }
 
-.flows button[aria-current='true'] {
-  outline: 2px solid #1a73e8;
+/* 一覧の中の、サイトごとの見出しです。 */
+.lm-list-heading {
+  padding-block: 0.25rem;
+  background: var(--tblr-bg-surface-secondary);
+  color: var(--tblr-secondary);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
 }
 
-.flows small {
-  display: block;
-  opacity: 0.7;
-  word-break: break-all;
+#list-notice {
+  margin: 0.75rem 1rem;
 }
 
-textarea {
-  box-sizing: border-box;
-  width: 100%;
-  font:
-    0.8rem/1.4 ui-monospace,
-    monospace;
+.lm-list > .list-group,
+.lm-list .list-group > .list-group-item:first-child {
+  border-top: 0;
 }
 
-.buttons {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
+#empty[hidden],
+#stop-empty[hidden] {
+  display: none;
 }
 
-button {
-  padding: 6px 14px;
-  font: inherit;
-  cursor: pointer;
+#json {
+  min-height: 20rem;
 }
 
-button.danger {
-  border: 1px solid #d93025;
-  background: #d93025;
-  color: #fff;
+.lm-section {
+  margin-top: 2.5rem;
 }
 
-input[type='file'] {
-  margin-bottom: 8px;
+.lm-section-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.125rem;
 }
 
-.stop-rules {
-  margin-top: 32px;
-  padding-top: 16px;
-  border-top: 1px solid rgb(128 128 128 / 30%);
+.lm-section-note {
+  max-width: 60rem;
+  margin-bottom: 1rem;
 }
 
-.stop-list {
-  margin: 0 0 8px;
-  padding: 0;
-  list-style: none;
-}
-
-.stop-list button {
-  margin-bottom: 4px;
-  padding: 6px 8px;
-  text-align: left;
-}
-
-.stop-list small {
-  margin-left: 8px;
-  opacity: 0.7;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 8px;
-  font-size: 0.85rem;
-}
-
-.field input[type='text'] {
-  padding: 4px 6px;
-  font: inherit;
+.lm-footer {
+  margin-top: 2.5rem;
 }

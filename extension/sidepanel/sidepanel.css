@@ -1,162 +1,149 @@
-section {
-  margin-top: 20px;
+/* サイドパネルだけの指定です。共通の指定は shared/base.css にあります。 */
+
+body {
+  padding: 0.75rem;
+  background: var(--tblr-bg-surface-secondary);
+  font-size: 0.875rem;
 }
 
-h2 {
-  margin: 0 0 8px;
+.lm-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.lm-stack[hidden] {
+  display: none;
+}
+
+.lm-header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.lm-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.lm-title {
+  margin: 0;
   font-size: 1rem;
 }
 
-.page {
-  margin: 0 0 8px;
-  font-size: 0.85rem;
-  word-break: break-all;
+.lm-header .lm-sub {
+  margin: 0;
 }
 
-.buttons {
+.card-title {
+  font-size: 0.9375rem;
+}
+
+.lm-row {
   display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-button {
-  padding: 6px 14px;
-  font: inherit;
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: default;
-}
-
-button.danger {
-  border: 1px solid #d93025;
-  background: #d93025;
-  color: #fff;
-}
-
-.message {
-  min-height: 1.4em;
-  margin: 8px 0 0;
-  font-size: 0.85rem;
-}
-
-.message.error {
-  color: #d93025;
-}
-
-.steps {
-  margin: 0;
-  padding-left: 1.6em;
-  font-size: 0.85rem;
-}
-
-.steps li {
-  margin-bottom: 4px;
-  word-break: break-all;
-}
-
-textarea {
-  box-sizing: border-box;
-  width: 100%;
-  font:
-    0.8rem/1.4 ui-monospace,
-    monospace;
-}
-
-.note {
-  margin: 8px 0 0;
-  font-size: 0.85rem;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 8px;
-  font-size: 0.85rem;
-}
-
-.field input,
-.field select {
-  padding: 4px 6px;
-  font: inherit;
-}
-
-.fields {
-  margin-bottom: 8px;
-}
-
-#run-section,
-#form-section {
-  padding: 12px;
-  border: 1px solid #1a73e8;
-  border-radius: 6px;
-}
-
-.runs {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.runs li + li {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgb(128 128 128 / 30%);
-}
-
-.run-status {
-  margin: 0;
-  font-size: 0.9rem;
-  word-break: break-all;
-}
-
-.run-status.error {
-  color: #d93025;
-}
-
-.flows {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.flows li {
-  padding: 8px 0;
-  border-bottom: 1px solid rgb(128 128 128 / 30%);
-}
-
-.flow-name {
-  display: block;
-  font-weight: bold;
-}
-
-.flow-detail {
-  display: block;
-  font-size: 0.8rem;
-  opacity: 0.7;
-}
-
-.flow-blocked,
-.flow-confirm {
-  margin: 4px 0 0;
-  font-size: 0.8rem;
-  word-break: break-all;
-}
-
-.flow-blocked {
-  opacity: 0.8;
-}
-
-.flow-confirm {
-  color: #d93025;
-}
-
-.flows .buttons {
+  gap: 0.5rem;
   align-items: center;
 }
 
-details {
-  margin-top: 12px;
+.lm-card-header {
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-block: 0.5rem;
+}
+
+.lm-card-header .card-title {
+  margin: 0;
+}
+
+.lm-card-recording,
+.lm-card-failed {
+  border-color: var(--tblr-danger);
+}
+
+.lm-rec-dot {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--tblr-danger);
+}
+
+.btn .lm-rec-dot {
+  margin-inline-end: 0.5rem;
+}
+
+.btn:disabled .lm-rec-dot {
+  background: currentcolor;
+}
+
+.lm-steps {
+  max-height: 12rem;
+  margin: 0;
+  padding-inline-start: 1.5em;
+  overflow-y: auto;
+  color: var(--tblr-secondary);
+  font-size: 0.8125rem;
+}
+
+.lm-steps li {
+  overflow-wrap: anywhere;
+}
+
+#flows-notice {
+  margin: 0.75rem 1rem;
+}
+
+/* 見出しの下線と、一覧の先頭の線が重ならないようにします。 */
+.card > .lm-flows,
+.lm-flows > .list-group-item:first-child {
+  border-top: 0;
+}
+
+#flows-empty[hidden] {
+  display: none;
+}
+
+/* フローの一覧の 1 行です。右端に「実行」と「その他」を置きます。 */
+.lm-flow-main {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.lm-flow-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lm-flow-name {
+  font-weight: 500;
+}
+
+.lm-flow-actions {
+  display: flex;
+  flex: none;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.lm-more-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+
+.lm-flow-reason {
+  margin: 0.25rem 0 0;
+}
+
+/* 実行する値の入力欄です。項目名の下に入力欄を置きます。 */
+.lm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
 }

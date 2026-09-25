@@ -1,5 +1,7 @@
 // フローの管理画面です。保存したフローの JSON の編集、書き出し、削除と、JSON からの追加を行います。
 // ビジュアルエディタ（#9）ができるまでは、JSON を直接編集します。
+// 配置と、知らせを出す場所は docs/design-guidelines.md に従います。知らせは画面の上部にまとめず、
+// 操作した区画の中に出します。
 
 import { deleteFlow, getFlow, listFlows, onFlowsChanged, saveFlow } from '../common/flow-store.js';
 import {
@@ -10,19 +12,29 @@ import {
 } from '../common/stop-rules-store.js';
 import { isWebOrigin, orderFlow, validateFlow } from '../shared/flow.js';
 import { parseLines, validateStopRule } from '../shared/stop-rules.js';
+import { confirmInline, followColorScheme, showFieldError, showNotice } from '../shared/ui.js';
+
+/** @typedef {import('../common/flow-store.js').StoredFlow} StoredFlow */
 
 const elements = {
-  message: byId('message'),
+  version: byId('version'),
+  listNotice: byId('list-notice'),
   flows: byId('flows'),
   empty: byId('empty'),
   newFlow: byId('new'),
+  placeholder: byId('placeholder'),
   editor: byId('editor'),
   editorHeading: byId('editor-heading'),
+  editorOrigin: byId('editor-origin'),
+  editorConfirm: byId('editor-confirm'),
+  editorNotice: byId('editor-notice'),
   json: /** @type {HTMLTextAreaElement} */ (byId('json')),
   save: byId('save'),
   exportFlow: byId('export'),
   deleteFlow: byId('delete'),
   importer: byId('importer'),
+  importNotice: byId('import-notice'),
+  importConfirm: byId('import-confirm'),
   file: /** @type {HTMLInputElement} */ (byId('file')),
   importJson: /** @type {HTMLTextAreaElement} */ (byId('import-json')),
   importFlow: byId('import'),
@@ -30,35 +42,67 @@ const elements = {
   stopEmpty: byId('stop-empty'),
   stopForm: /** @type {HTMLFormElement} */ (byId('stop-form')),
   stopOrigin: /** @type {HTMLInputElement} */ (byId('stop-origin')),
+  stopOriginFeedback: byId('stop-origin-feedback'),
   stopOrigins: byId('stop-origins'),
   stopSelectors: /** @type {HTMLTextAreaElement} */ (byId('stop-selectors')),
   stopPaths: /** @type {HTMLTextAreaElement} */ (byId('stop-paths')),
   stopClear: byId('stop-clear'),
   stopDelete: byId('stop-delete'),
-  stopMessage: byId('stop-message'),
+  stopConfirm: byId('stop-confirm'),
+  stopNotice: byId('stop-notice'),
 };
+
+/** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
+const notices = [
+  elements.listNotice,
+  elements.editorNotice,
+  elements.importNotice,
+  elements.stopNotice,
+];
 
 /** 編集中のフローの id です。URL の # 以降にも書き、再読み込みしても同じフローを開きます。 */
 let selectedId = decodeURIComponent(location.hash.slice(1));
 
+elements.version.textContent = chrome.runtime.getManifest().version;
+followColorScheme(document.documentElement, matchMedia('(prefers-color-scheme: dark)'));
+
+/** 前の操作の知らせを消します。操作を始めるときに呼びます。 */
+function clearNotices() {
+  for (const notice of notices) {
+    showNotice(notice, '');
+  }
+  // JSON の誤りの説明は知らせの欄にあるため、知らせと同時に編集欄の誤りの印も消します。
+  for (const textarea of [elements.json, elements.importJson]) {
+    textarea.classList.remove('is-invalid');
+    textarea.removeAttribute('aria-invalid');
+  }
+}
+
 elements.newFlow.addEventListener('click', () => {
   select('');
   elements.importer.hidden = false;
+  elements.placeholder.hidden = true;
+  elements.importJson.focus();
 });
 
 elements.save.addEventListener('click', async () => {
-  const flow = parse(elements.json.value);
+  clearNotices();
+  const flow = parse(elements.json, elements.editorNotice);
   if (!flow) {
     return;
   }
   const result = await saveFlow(flow, selectedId);
   if (!result.ok) {
-    showMessage(`形式に誤りがあるため、保存しませんでした。\n${result.errors.join('\n')}`, true);
+    showJsonErrors(
+      elements.json,
+      elements.editorNotice,
+      `形式に誤りがあるため、保存しませんでした。\n${result.errors.join('\n')}`,
+    );
     return;
   }
   const { name } = /** @type {{ name: string }} */ (flow);
   if (result.name === name) {
-    showMessage('保存しました。', false);
+    showNotice(elements.editorNotice, '保存しました。', 'success');
     return;
   }
   // 同じサイトに同じ名前のフローがあり、番号を付けて保存した場合は、編集欄の名前も合わせます。
@@ -67,10 +111,15 @@ elements.save.addEventListener('click', async () => {
     null,
     2,
   );
-  showMessage(`同じサイトに「${name}」があるため、「${result.name}」として保存しました。`, false);
+  showNotice(
+    elements.editorNotice,
+    `同じサイトに「${name}」があるため、「${result.name}」として保存しました。`,
+    'success',
+  );
 });
 
 elements.exportFlow.addEventListener('click', async () => {
+  clearNotices();
   const stored = await getFlow(selectedId);
   if (!stored) {
     return;
@@ -85,16 +134,22 @@ elements.exportFlow.addEventListener('click', async () => {
 });
 
 elements.deleteFlow.addEventListener('click', async () => {
+  clearNotices();
   const stored = await getFlow(selectedId);
   if (
     !stored ||
-    !confirm(`「${stored.flow.name}」を削除します。元に戻せません。よろしいですか？`)
+    !(await confirmInline(elements.editorConfirm, {
+      message: `「${stored.flow.name}」を削除します。元に戻せません。`,
+      confirmLabel: '削除する',
+      danger: true,
+    }))
   ) {
     return;
   }
-  await deleteFlow(selectedId);
+  await deleteFlow(stored.id);
   select('');
-  showMessage(`「${stored.flow.name}」を削除しました。`, false);
+  // 詳細の区画は閉じるため、一覧の区画に知らせます。
+  showNotice(elements.listNotice, `「${stored.flow.name}」を削除しました。`, 'success');
 });
 
 elements.file.addEventListener('change', async () => {
@@ -105,38 +160,46 @@ elements.file.addEventListener('change', async () => {
 });
 
 elements.importFlow.addEventListener('click', async () => {
-  const flow = parse(elements.importJson.value);
+  clearNotices();
+  const flow = parse(elements.importJson, elements.importNotice);
   if (!flow) {
     return;
   }
   const errors = validateFlow(flow);
   if (errors.length > 0) {
-    showMessage(`形式に誤りがあるため、追加しませんでした。\n${errors.join('\n')}`, true);
+    showJsonErrors(
+      elements.importJson,
+      elements.importNotice,
+      `形式に誤りがあるため、追加しませんでした。\n${errors.join('\n')}`,
+    );
     return;
   }
   const { name, origin } = /** @type {{ name: string, origin: string }} */ (flow);
   // 他人から受け取ったフローは、ログイン中のサイトで意図しない操作を行う可能性があります（#14）。
-  if (
-    !confirm(
-      `「${name}」は ${origin} を操作するフローです。\n` +
-        '内容を確認し、信頼できるフローだけを追加してください。追加しますか？',
-    )
-  ) {
+  const confirmed = await confirmInline(elements.importConfirm, {
+    message:
+      `「${name}」は ${origin} を操作するフローです。` +
+      '内容を確認し、信頼できるフローだけを追加してください。',
+    confirmLabel: '追加する',
+  });
+  if (!confirmed) {
     return;
   }
   const result = await saveFlow(flow);
   if (!result.ok) {
-    showMessage(result.errors.join('\n'), true);
+    showNotice(elements.importNotice, result.errors.join('\n'), 'error');
     return;
   }
   elements.importJson.value = '';
   elements.file.value = '';
   select(result.id);
-  showMessage(
+  // 追加したフローは詳細の区画で開くため、その区画に知らせます。
+  showNotice(
+    elements.editorNotice,
     result.name === name
       ? `「${name}」を追加しました。`
       : `同じサイトに「${name}」があるため、「${result.name}」として追加しました。`,
-    false,
+    'success',
   );
 });
 
@@ -150,16 +213,22 @@ render().catch(console.error);
 
 elements.stopForm.addEventListener('submit', (event) => {
   event.preventDefault();
-  onSaveStopRule().catch((error) => showStopMessage(String(error), true));
+  clearNotices();
+  onSaveStopRule().catch((error) => showStopNotice(String(error), 'error'));
 });
 
 elements.stopClear.addEventListener('click', () => {
+  clearNotices();
   editStopRule('', { selectors: [], paths: [] });
-  showStopMessage('', false);
 });
 
 elements.stopDelete.addEventListener('click', () => {
-  onDeleteStopRule().catch((error) => showStopMessage(String(error), true));
+  clearNotices();
+  onDeleteStopRule().catch((error) => showStopNotice(String(error), 'error'));
+});
+
+elements.stopOrigin.addEventListener('input', () => {
+  showFieldError(elements.stopOrigin, elements.stopOriginFeedback, '');
 });
 
 onStopRulesChanged(() => {
@@ -171,14 +240,13 @@ renderStopRules().catch(console.error);
  * 「必ず止まる場所」の結果と誤りを、保存のボタンの下に表示します。
  * 画面の上部の表示欄では、下部の入力欄を操作している間に見えないためです。
  * @param {string} text
- * @param {boolean} isError
+ * @param {import('../shared/ui.js').NoticeKind} kind
  */
-function showStopMessage(text, isError) {
-  elements.stopMessage.textContent = text;
-  elements.stopMessage.classList.toggle('error', isError);
+function showStopNotice(text, kind) {
+  showNotice(elements.stopNotice, text, kind);
   if (text) {
     // 保存のボタンが画面の下端にある場合も、表示が見える位置まで移動します。
-    elements.stopMessage.scrollIntoView({ block: 'nearest' });
+    elements.stopNotice.scrollIntoView({ block: 'nearest' });
   }
 }
 
@@ -186,34 +254,44 @@ function showStopMessage(text, isError) {
 async function onSaveStopRule() {
   const origin = elements.stopOrigin.value.trim().replace(/\/+$/, '');
   if (!isWebOrigin(origin)) {
-    showStopMessage(
+    showFieldError(
+      elements.stopOrigin,
+      elements.stopOriginFeedback,
       'サイトは https:// または http:// で始まるオリジン（例：https://www.amazon.co.jp）で入力してください。',
-      true,
     );
+    elements.stopOrigin.focus();
     return;
   }
+  showFieldError(elements.stopOrigin, elements.stopOriginFeedback, '');
   const rule = {
     selectors: parseLines(elements.stopSelectors.value),
     paths: parseLines(elements.stopPaths.value),
   };
   const errors = [...validateStopRule(rule), ...selectorSyntaxErrors(rule.selectors)];
   if (errors.length > 0) {
-    showStopMessage(`指定に誤りがあるため、保存しませんでした。\n${errors.join('\n')}`, true);
+    showStopNotice(`指定に誤りがあるため、保存しませんでした。\n${errors.join('\n')}`, 'error');
     return;
   }
   const removing = rule.selectors.length === 0 && rule.paths.length === 0;
-  if (removing && !confirm(`${origin} の指定を削除します。よろしいですか？`)) {
+  if (
+    removing &&
+    !(await confirmInline(elements.stopConfirm, {
+      message: `要素と画面の指定が空のため、${origin} の指定を削除します。元に戻せません。`,
+      confirmLabel: '削除する',
+      danger: true,
+    }))
+  ) {
     return;
   }
   const result = await saveStopRule(origin, rule);
   if (!result.ok) {
-    showStopMessage(`保存できませんでした。\n${result.errors.join('\n')}`, true);
+    showStopNotice(`保存できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
   elements.stopOrigin.value = origin;
-  showStopMessage(
+  showStopNotice(
     removing ? `${origin} の指定を削除しました。` : `${origin} の指定を保存しました。`,
-    false,
+    'success',
   );
 }
 
@@ -222,24 +300,30 @@ async function onDeleteStopRule() {
   const origin = elements.stopOrigin.value.trim().replace(/\/+$/, '');
   const exists = (await listStopRules()).some((entry) => entry.origin === origin);
   if (!exists) {
-    showStopMessage(
+    showStopNotice(
       origin
         ? `${origin} の指定はありません。削除するサイトを一覧から選んでください。`
         : '削除するサイトを一覧から選んでください。',
-      true,
+      'error',
     );
     return;
   }
-  if (!confirm(`${origin} の指定を削除します。元に戻せません。よろしいですか？`)) {
+  if (
+    !(await confirmInline(elements.stopConfirm, {
+      message: `${origin} の指定を削除します。元に戻せません。`,
+      confirmLabel: '削除する',
+      danger: true,
+    }))
+  ) {
     return;
   }
   const result = await saveStopRule(origin, { selectors: [], paths: [] });
   if (!result.ok) {
-    showStopMessage(`削除できませんでした。\n${result.errors.join('\n')}`, true);
+    showStopNotice(`削除できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
   editStopRule('', { selectors: [], paths: [] });
-  showStopMessage(`${origin} の指定を削除しました。`, false);
+  showStopNotice(`${origin} の指定を削除しました。`, 'success');
 }
 
 /**
@@ -265,6 +349,7 @@ function selectorSyntaxErrors(selectors) {
  * @param {{ selectors: string[], paths: string[] }} rule
  */
 function editStopRule(origin, rule) {
+  showFieldError(elements.stopOrigin, elements.stopOriginFeedback, '');
   elements.stopOrigin.value = origin;
   elements.stopSelectors.value = rule.selectors.join('\n');
   elements.stopPaths.value = rule.paths.join('\n');
@@ -277,19 +362,17 @@ async function renderStopRules() {
   elements.stopEmpty.hidden = rules.length > 0;
   elements.stopList.replaceChildren(
     ...rules.map(({ origin, rule }) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      const count = document.createElement('small');
+      const count = document.createElement('div');
+      count.className = 'lm-sub';
       count.textContent = `要素 ${rule.selectors.length} 件・画面 ${rule.paths.length} 件`;
-      button.append(origin, count);
+      const button = listButton(origin, count);
       button.addEventListener('click', () => {
+        clearNotices();
         getStopRule(origin)
           .then((current) => editStopRule(origin, current))
           .catch(console.error);
       });
-      const item = document.createElement('li');
-      item.append(button);
-      return item;
+      return button;
     }),
   );
 
@@ -311,7 +394,12 @@ function select(id) {
   selectedId = id;
   history.replaceState(null, '', id ? `#${encodeURIComponent(id)}` : location.pathname);
   elements.importer.hidden = true;
-  showMessage('', false);
+  // 別のフローを選んだら、前のフローへの確認と誤りの表示を消します。
+  for (const container of [elements.importConfirm, elements.editorConfirm]) {
+    container.replaceChildren();
+    container.hidden = true;
+  }
+  clearNotices();
   render().catch(console.error);
 }
 
@@ -319,23 +407,11 @@ function select(id) {
 async function render() {
   const flows = await listFlows();
   elements.empty.hidden = flows.length > 0;
-  elements.flows.replaceChildren(
-    ...flows.map((stored) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.setAttribute('aria-current', String(stored.id === selectedId));
-      const origin = document.createElement('small');
-      origin.textContent = stored.flow.origin;
-      button.append(stored.flow.name, origin);
-      button.addEventListener('click', () => select(stored.id));
-      const item = document.createElement('li');
-      item.append(button);
-      return item;
-    }),
-  );
+  elements.flows.replaceChildren(...flowListItems(flows));
 
   const stored = selectedId ? await getFlow(selectedId) : undefined;
   elements.editor.hidden = !stored;
+  elements.placeholder.hidden = Boolean(stored) || !elements.importer.hidden;
   if (stored && elements.editor.dataset.id !== stored.id) {
     // 編集中の内容を上書きしないよう、別のフローを選んだときだけ JSON を入れ替えます。
     elements.editor.dataset.id = stored.id;
@@ -343,32 +419,89 @@ async function render() {
   }
   if (stored) {
     elements.editorHeading.textContent = stored.flow.name;
+    elements.editorOrigin.textContent = stored.flow.origin;
   } else {
     delete elements.editor.dataset.id;
   }
 }
 
 /**
- * JSON を読み取ります。誤りがある場合は、その内容を表示して null を返します。
- * @param {string} text
+ * フローの一覧を、サイトごとに見出しを付けて作ります。
+ * @param {StoredFlow[]} flows
+ * @returns {HTMLElement[]}
+ */
+function flowListItems(flows) {
+  /** @type {Map<string, StoredFlow[]>} */
+  const byOrigin = new Map();
+  for (const stored of flows) {
+    byOrigin.set(stored.flow.origin, [...(byOrigin.get(stored.flow.origin) ?? []), stored]);
+  }
+  return [...byOrigin.keys()].sort().flatMap((origin) => {
+    const heading = document.createElement('div');
+    heading.className = 'list-group-item lm-list-heading';
+    heading.textContent = origin;
+    const items = (byOrigin.get(origin) ?? []).map((stored) => {
+      const detail = document.createElement('div');
+      detail.className = 'lm-sub';
+      detail.textContent = `手順 ${stored.flow.steps.length} 件`;
+      const button = listButton(stored.flow.name, detail);
+      const current = stored.id === selectedId;
+      button.classList.toggle('active', current);
+      if (current) {
+        button.setAttribute('aria-current', 'true');
+      }
+      button.addEventListener('click', () => select(stored.id));
+      return button;
+    });
+    return [heading, ...items];
+  });
+}
+
+/**
+ * 一覧の 1 行のボタンです。
+ * @param {string} title
+ * @param {HTMLElement} detail
+ * @returns {HTMLButtonElement}
+ */
+function listButton(title, detail) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'list-group-item list-group-item-action';
+  const name = document.createElement('div');
+  name.textContent = title;
+  button.append(name, detail);
+  return button;
+}
+
+/**
+ * JSON を読み取ります。誤りがある場合は、その内容を区画の中に表示して null を返します。
+ * @param {HTMLTextAreaElement} textarea
+ * @param {HTMLElement} notice 誤りを表示する欄
  * @returns {unknown}
  */
-function parse(text) {
+function parse(textarea, notice) {
   try {
-    return JSON.parse(text);
+    const value = JSON.parse(textarea.value);
+    textarea.classList.remove('is-invalid');
+    textarea.removeAttribute('aria-invalid');
+    return value;
   } catch (error) {
-    showMessage(`JSON として読み取れません：${String(error)}`, true);
+    showJsonErrors(textarea, notice, `JSON として読み取れません。${String(error)}`);
     return null;
   }
 }
 
 /**
+ * JSON の誤りを、編集欄の上の表示欄に一覧で表示し、編集欄に誤りの印を付けます。
+ * JSON の誤りは入力欄の一部を指せないため、入力欄の直下ではなく、編集欄の上にまとめます。
+ * @param {HTMLTextAreaElement} textarea
+ * @param {HTMLElement} notice
  * @param {string} text
- * @param {boolean} isError
  */
-function showMessage(text, isError) {
-  elements.message.textContent = text;
-  elements.message.classList.toggle('error', isError);
+function showJsonErrors(textarea, notice, text) {
+  showNotice(notice, text, 'error');
+  textarea.classList.add('is-invalid');
+  textarea.setAttribute('aria-invalid', 'true');
 }
 
 /**

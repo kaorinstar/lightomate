@@ -72,6 +72,8 @@ Prettier の対象はコードと設定ファイルだけです。Markdown と `
 | `scripts/` | 開発とリリース用のスクリプト（Node.js）。拡張機能には含めません |
 | `tools/` | 利用者に配るファイル。`lightomate-update.bat` はリリースに添付します |
 | `docs/flow-format.md` | フロー定義（JSON）の形式の説明。`extension/shared/flow.js` と同時に変更します |
+| `docs/design-guidelines.md` | 画面の配置、見た目、知らせの出し方の規則。画面を変更するときはこれに従います |
+| `extension/vendor/` | 同梱した外部のファイル（Tabler の CSS）。`npm run vendor` で `node_modules` から複写します。手で編集しません |
 
 - content script は `manifest.json` で宣言せず、記録中のタブにだけ Service Worker が
   `chrome.scripting.executeScript` で読み込みます。同じページに 2 回読み込まれても誤りにならないよう、
@@ -81,6 +83,8 @@ Prettier の対象はコードと設定ファイルだけです。Markdown と `
   検出できるようになるためです。検証などの共通処理は Service Worker で行い、content script とは
   `chrome.runtime` のメッセージでやり取りします。
 - `extension/shared/` では `chrome.*` を使いません。Node.js のテストから読み込むためです。
+- 画面（`extension/sidepanel/`、`extension/options/`）の部品は Tabler の CSS を使い、知らせは
+  `extension/shared/ui.js` の関数で、操作した場所に出します。規則は `docs/design-guidelines.md` にあります。
 - `manifest.json` の権限、CSP、`key` を変更する場合は、`test/manifest.test.js` と `SECURITY.md` の
   「拡張機能が行うこと」を同時に変更します。
 - `manifest.json` の `key` は拡張機能の ID を決める公開鍵です。変更すると ID が変わり、利用者が保存した

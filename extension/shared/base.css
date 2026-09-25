@@ -1,20 +1,113 @@
-:root {
-  color-scheme: light dark;
-  font-family: system-ui, sans-serif;
+/*
+ * Tabler（extension/vendor/tabler/tabler.min.css）の上に重ねる、両画面で共通の指定です。
+ * 規則は docs/design-guidelines.md に記載しています。色は Tabler の CSS 変数だけを使い、色コードを直書きしません。
+ * 独自のクラスには lm-（Lightomate）を付け、Tabler のクラスと区別します。
+ */
+
+/*
+ * Tabler は、入力欄の誤りの印とセレクトボックスの矢印を data: の画像で描きます。拡張機能の CSP は
+ * data: の画像を許可していないため、これらを使わない指定に置き換えます。誤りは赤枠と文言で示します。
+ */
+.form-control.is-invalid {
+  padding-inline-end: 0.75rem;
+  background-image: none;
 }
 
-body {
-  margin: 0;
-  padding: 16px;
+.form-select {
+  padding-inline-end: 0.75rem;
+  background-image: none;
+  appearance: auto;
 }
 
-h1 {
-  margin: 0;
-  font-size: 1.25rem;
+/*
+ * 知らせと誤りの文字を、背景に対して読める濃さ（コントラスト比 4.5:1 以上。WCAG 2.2 の 1.4.3）にします。
+ * Tabler の標準の色では、明るい表示の黄色の知らせが約 2:1 と読みにくいためです。
+ * 明るい表示では役割の色に黒を、暗い表示では白を混ぜます。測定の方法は docs/design-guidelines.md にあります。
+ */
+.alert {
+  --tblr-alert-color: color-mix(in oklab, var(--tblr-alert-variant-color) 55%, black);
 }
 
-.version {
-  margin: 4px 0 0;
-  font-size: 0.8rem;
-  opacity: 0.7;
+.invalid-feedback,
+.lm-text-danger {
+  color: color-mix(in oklab, var(--tblr-danger) 85%, black);
+}
+
+[data-bs-theme='dark'] .alert {
+  --tblr-alert-color: color-mix(in oklab, var(--tblr-alert-variant-color) 45%, white);
+}
+
+[data-bs-theme='dark'] .invalid-feedback,
+[data-bs-theme='dark'] .lm-text-danger,
+[data-bs-theme='dark'] .btn-ghost-danger:not(:hover, :active, :focus) {
+  color: color-mix(in oklab, var(--tblr-danger) 55%, white);
+}
+
+/* 知らせと確認の表示欄です（extension/shared/ui.js の showNotice と confirmInline）。 */
+.lm-notice,
+.lm-confirm {
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.lm-notice:first-child,
+.lm-confirm:first-child {
+  margin-top: 0;
+}
+
+.lm-notice:last-child,
+.lm-confirm:last-child {
+  margin-bottom: 0;
+}
+
+/* 色だけで伝えないよう、知らせの先頭に記号を付けます。 */
+.lm-notice::before {
+  display: inline-grid;
+  place-items: center;
+  width: 1.1em;
+  height: 1.1em;
+  margin-inline-end: 0.4em;
+  border: 1.5px solid currentcolor;
+  border-radius: 50%;
+  font-size: 0.85em;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: -0.1em;
+}
+
+.lm-notice.alert-danger::before {
+  content: '!';
+}
+
+.lm-notice.alert-warning::before {
+  content: '!';
+}
+
+.lm-notice.alert-success::before {
+  content: '✓';
+}
+
+.lm-notice.alert-info::before {
+  content: 'i';
+}
+
+.lm-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* 補足の文字です。見出し・本文・補足の 3 段階のうち、最も小さいものです。 */
+.lm-sub {
+  color: var(--tblr-secondary);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.lm-code {
+  font-family: var(--tblr-font-monospace);
+  font-size: 0.8125rem;
 }

@@ -3,98 +3,172 @@
   <head>
     <meta charset="utf-8" />
     <title>Lightomate のフローの管理</title>
+    <link rel="stylesheet" href="../vendor/tabler/tabler.min.css" />
     <link rel="stylesheet" href="../shared/base.css" />
     <link rel="stylesheet" href="options.css" />
     <script type="module" src="options.js"></script>
   </head>
+  <!--
+    配置は docs/design-guidelines.md の「管理画面」に従います。
+    各節は、左に一覧、右に選んだ項目の詳細を置く構成（list-detail）です。幅が狭い場合は 1 列にします。
+  -->
   <body>
-    <h1>Lightomate のフローの管理</h1>
-    <p id="message" class="message" role="status"></p>
-
-    <div class="layout">
-      <nav aria-labelledby="list-heading">
-        <h2 id="list-heading">保存したフロー</h2>
-        <p id="empty" class="note">保存したフローはまだありません。</p>
-        <ul id="flows" class="flows"></ul>
-        <div class="buttons">
-          <button type="button" id="new">JSON からフローを追加</button>
+    <div class="container-xl lm-page">
+      <header class="lm-page-header">
+        <div>
+          <div class="page-pretitle">Lightomate</div>
+          <h1 class="page-title">フローの管理</h1>
         </div>
-      </nav>
+        <button type="button" class="btn" id="new">JSON からフローを追加</button>
+      </header>
 
-      <main>
-        <section id="editor" hidden aria-labelledby="editor-heading">
-          <h2 id="editor-heading"></h2>
-          <p class="note">
-            フロー定義の JSON を直接編集できます。形式は、リポジトリの docs/flow-format.md
-            に記載しています。保存する前に形式を検証し、誤りがあれば保存しません。
-          </p>
-          <textarea id="json" rows="30" spellcheck="false"></textarea>
-          <div class="buttons">
-            <button type="button" id="save">保存</button>
-            <button type="button" id="export">ファイルに書き出し</button>
-            <button type="button" id="delete" class="danger">削除</button>
+      <section class="lm-layout" aria-labelledby="list-heading">
+        <nav class="card lm-list" aria-labelledby="list-heading">
+          <div class="card-header">
+            <h2 id="list-heading" class="card-title">保存したフロー</h2>
           </div>
-        </section>
+          <p id="list-notice" hidden></p>
+          <p id="empty" class="lm-sub m-3">保存したフローはまだありません。</p>
+          <div id="flows" class="list-group list-group-flush"></div>
+        </nav>
 
-        <section id="importer" hidden aria-labelledby="import-heading">
-          <h2 id="import-heading">JSON からフローを追加</h2>
-          <p class="note">
-            フロー定義の JSON を貼り付けるか、ファイルを選んでください。追加する前に、
-            フローが操作するサイトを確認します。
-          </p>
-          <input type="file" id="file" accept="application/json,.json" />
-          <textarea id="import-json" rows="20" spellcheck="false"></textarea>
-          <div class="buttons">
-            <button type="button" id="import">追加</button>
+        <div class="lm-detail">
+          <div id="placeholder" class="card card-body lm-sub">
+            左の一覧からフローを選ぶと、ここで JSON を編集できます。
           </div>
-        </section>
-      </main>
+
+          <section id="editor" class="card" hidden aria-labelledby="editor-heading">
+            <div class="card-header lm-detail-header">
+              <div class="lm-detail-title">
+                <h2 id="editor-heading" class="card-title"></h2>
+                <div id="editor-origin" class="lm-sub"></div>
+              </div>
+              <div class="lm-buttons">
+                <button type="button" class="btn btn-primary" id="save">保存</button>
+                <button type="button" class="btn" id="export">ファイルに書き出し</button>
+                <button type="button" class="btn btn-ghost-danger" id="delete">削除</button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div id="editor-confirm" hidden></div>
+              <p id="editor-notice" hidden></p>
+              <p class="lm-sub">
+                フロー定義の JSON を直接編集できます。形式は、リポジトリの docs/flow-format.md
+                に記載しています。保存する前に形式を検証し、誤りがあれば保存しません。
+              </p>
+              <textarea
+                id="json"
+                class="form-control lm-code"
+                rows="28"
+                spellcheck="false"
+                aria-label="フロー定義の JSON"
+              ></textarea>
+            </div>
+          </section>
+
+          <section id="importer" class="card" hidden aria-labelledby="import-heading">
+            <div class="card-header">
+              <h2 id="import-heading" class="card-title">JSON からフローを追加</h2>
+            </div>
+            <div class="card-body">
+              <p id="import-notice" hidden></p>
+              <p class="lm-sub">
+                フロー定義の JSON を貼り付けるか、ファイルを選んでください。追加する前に、
+                フローが操作するサイトを確認します。
+              </p>
+              <input
+                type="file"
+                class="form-control mb-3"
+                id="file"
+                accept="application/json,.json"
+                aria-label="フロー定義のファイル"
+              />
+              <textarea
+                id="import-json"
+                class="form-control lm-code mb-3"
+                rows="18"
+                spellcheck="false"
+                aria-label="追加するフロー定義の JSON"
+              ></textarea>
+              <div id="import-confirm" hidden></div>
+              <div class="lm-buttons">
+                <button type="button" class="btn btn-primary" id="import">追加</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="lm-section" aria-labelledby="stop-heading">
+        <h2 id="stop-heading" class="lm-section-title">必ず止まる場所（サイトごと）</h2>
+        <p class="lm-sub lm-section-note">
+          確定ボタンの文言で判定できないボタンや画面を、サイトごとに指定します。<wbr />指定したサイトのすべてのフローで、実行はその手前で止まります。<wbr />記録中にクリックした場合は、一時停止として記録します。
+        </p>
+
+        <div class="lm-layout">
+          <div class="card lm-list">
+            <div class="card-header lm-detail-header">
+              <h3 class="card-title">指定したサイト</h3>
+              <button type="button" class="btn btn-sm" id="stop-clear">新しいサイト</button>
+            </div>
+            <p id="stop-empty" class="lm-sub m-3">指定はまだありません。</p>
+            <div id="stop-list" class="list-group list-group-flush"></div>
+          </div>
+
+          <form id="stop-form" class="card lm-detail" novalidate>
+            <div class="card-body">
+              <div class="mb-3">
+                <label class="form-label" for="stop-origin"
+                  >サイト（https:// または http:// から始まるオリジン）</label
+                >
+                <input
+                  type="text"
+                  class="form-control"
+                  id="stop-origin"
+                  list="stop-origins"
+                  placeholder="https://www.amazon.co.jp"
+                />
+                <div class="invalid-feedback" id="stop-origin-feedback"></div>
+                <datalist id="stop-origins"></datalist>
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="stop-selectors"
+                  >止める要素（CSS セレクター。1 行に 1 件）</label
+                >
+                <textarea
+                  id="stop-selectors"
+                  class="form-control lm-code"
+                  rows="4"
+                  spellcheck="false"
+                  placeholder="#placeOrder"
+                ></textarea>
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="stop-paths"
+                  >止める画面（URL のパス。1 行に 1 件。* は任意の文字列）</label
+                >
+                <textarea
+                  id="stop-paths"
+                  class="form-control lm-code"
+                  rows="4"
+                  spellcheck="false"
+                  placeholder="/checkout/*"
+                ></textarea>
+              </div>
+              <div id="stop-confirm" hidden></div>
+              <div class="lm-buttons">
+                <button type="submit" class="btn btn-primary">このサイトの指定を保存</button>
+                <button type="button" class="btn btn-ghost-danger" id="stop-delete">
+                  このサイトの指定を削除
+                </button>
+              </div>
+              <p id="stop-notice" hidden></p>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <footer class="lm-sub lm-footer">Lightomate バージョン <span id="version"></span></footer>
     </div>
-
-    <section class="stop-rules" aria-labelledby="stop-heading">
-      <h2 id="stop-heading">必ず止まる場所（サイトごと）</h2>
-      <p class="note">
-        確定ボタンの文言で判定できないボタンや画面を、サイトごとに指定します。<wbr />指定したサイトのすべてのフローで、実行はその手前で止まります。<wbr />記録中にクリックした場合は、一時停止として記録します。
-      </p>
-      <ul id="stop-list" class="stop-list"></ul>
-      <p id="stop-empty" class="note">指定はまだありません。</p>
-
-      <form id="stop-form" class="stop-form">
-        <label class="field">
-          サイト（https:// または http:// から始まるオリジン）
-          <input
-            type="text"
-            id="stop-origin"
-            list="stop-origins"
-            placeholder="https://www.amazon.co.jp"
-          />
-          <datalist id="stop-origins"></datalist>
-        </label>
-        <label class="field">
-          止める要素（CSS セレクター。1 行に 1 件）
-          <textarea
-            id="stop-selectors"
-            rows="4"
-            spellcheck="false"
-            placeholder="#placeOrder"
-          ></textarea>
-        </label>
-        <label class="field">
-          止める画面（URL のパス。1 行に 1 件。* は任意の文字列）
-          <textarea
-            id="stop-paths"
-            rows="4"
-            spellcheck="false"
-            placeholder="/checkout/*"
-          ></textarea>
-        </label>
-        <div class="buttons">
-          <button type="submit">このサイトの指定を保存</button>
-          <button type="button" id="stop-clear">新しいサイト</button>
-          <button type="button" id="stop-delete" class="danger">このサイトの指定を削除</button>
-        </div>
-        <p id="stop-message" class="message" role="status"></p>
-      </form>
-    </section>
   </body>
 </html>

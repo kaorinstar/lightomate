@@ -3,79 +3,119 @@
   <head>
     <meta charset="utf-8" />
     <title>Lightomate</title>
+    <link rel="stylesheet" href="../vendor/tabler/tabler.min.css" />
     <link rel="stylesheet" href="../shared/base.css" />
     <link rel="stylesheet" href="sidepanel.css" />
     <script type="module" src="sidepanel.js"></script>
   </head>
+  <!--
+    配置は docs/design-guidelines.md の「サイドパネル」に従います。
+    上から、見出し、進行中の作業（該当する状態のときだけ）、このサイトのフローの順です。
+  -->
   <body>
-    <header>
-      <h1>Lightomate</h1>
-      <p class="version">バージョン <span id="version"></span></p>
+    <header class="lm-header">
+      <div class="lm-header-text">
+        <h1 class="lm-title">Lightomate</h1>
+        <p class="lm-sub" id="page-origin">確認中です</p>
+      </div>
+      <a class="btn btn-sm btn-ghost-secondary" href="../options/options.html" target="_blank"
+        >フローの管理</a
+      >
     </header>
 
-    <main>
-      <p id="message" class="message" role="status"></p>
-
-      <section id="run-section" aria-labelledby="run-heading" hidden>
-        <h2 id="run-heading">フローの実行</h2>
-        <ul id="runs" class="runs"></ul>
+    <main class="lm-stack">
+      <section id="run-section" class="lm-stack" aria-labelledby="run-heading" hidden>
+        <h2 id="run-heading" class="visually-hidden">実行の状態</h2>
+        <div id="runs" class="lm-stack"></div>
       </section>
 
-      <section id="form-section" aria-labelledby="form-heading" hidden>
-        <h2 id="form-heading">実行する値の入力</h2>
-        <p class="note">
-          <span id="form-flow-name"></span> を実行します。入力した値は保存しません。
-        </p>
-        <form id="run-form">
-          <div id="form-fields" class="fields"></div>
-          <div class="buttons">
-            <button type="submit">この値で実行</button>
-            <button type="button" id="form-cancel">キャンセル</button>
-          </div>
-        </form>
-      </section>
-
-      <section aria-labelledby="record-heading">
-        <h2 id="record-heading">操作の記録</h2>
-        <p class="page">記録するページ：<span id="page-origin">確認中です</span></p>
-        <div class="buttons">
-          <button type="button" id="start" disabled>記録開始</button>
-          <button type="button" id="stop" class="danger" hidden>記録停止</button>
+      <section id="form-section" class="card" aria-labelledby="form-heading" hidden>
+        <div class="card-body">
+          <h2 id="form-heading" class="card-title">実行する値の入力</h2>
+          <p class="lm-sub mb-3">
+            <span id="form-flow-name"></span> を実行します。入力した値は保存しません。
+          </p>
+          <form id="run-form">
+            <div id="form-fields" class="lm-stack mb-3"></div>
+            <div class="lm-buttons">
+              <button type="submit" class="btn btn-primary">この値で実行</button>
+              <button type="button" class="btn" id="form-cancel">キャンセル</button>
+            </div>
+            <p id="form-notice" hidden></p>
+          </form>
         </div>
       </section>
 
-      <section id="steps-section" aria-labelledby="steps-heading" hidden>
-        <h2 id="steps-heading">記録した手順（<span id="step-count">0</span> 件）</h2>
-        <ol id="steps" class="steps"></ol>
-      </section>
-
-      <section id="result-section" aria-labelledby="result-heading" hidden>
-        <h2 id="result-heading">記録したフローの保存</h2>
-        <label class="field">
-          フロー名
-          <input type="text" id="flow-name" maxlength="200" />
-        </label>
-        <div class="buttons">
-          <button type="button" id="save-flow">フローとして保存</button>
-        </div>
-        <details>
-          <summary>記録した内容（JSON）</summary>
-          <textarea id="result" readonly rows="12" spellcheck="false"></textarea>
-          <div class="buttons">
-            <button type="button" id="copy">コピー</button>
-            <button type="button" id="save">ファイルに保存</button>
+      <section
+        id="recording-section"
+        class="card lm-card-recording"
+        aria-labelledby="recording-heading"
+        hidden
+      >
+        <div class="card-body">
+          <div class="lm-row mb-2">
+            <span class="lm-rec-dot" aria-hidden="true"></span>
+            <h2 id="recording-heading" class="card-title m-0">記録中</h2>
+            <span class="lm-sub">手順 <span id="step-count">0</span> 件</span>
+            <button type="button" id="stop" class="btn btn-sm btn-danger ms-auto">記録停止</button>
           </div>
-        </details>
+          <p class="lm-sub mb-2" id="recording-origin"></p>
+          <ol id="steps" class="lm-steps"></ol>
+          <p id="recording-notice" hidden></p>
+        </div>
       </section>
 
-      <section aria-labelledby="flows-heading">
-        <h2 id="flows-heading">このサイトのフロー</h2>
-        <p id="flows-empty" class="note"></p>
-        <ul id="flows" class="flows"></ul>
-        <p class="note">
-          ほかのサイトのフローは、<a href="../options/options.html" target="_blank">フローの管理</a
-          >で確認できます（JSON の編集、読み込み、削除）。
-        </p>
+      <section id="result-section" class="card" aria-labelledby="result-heading" hidden>
+        <div class="card-body">
+          <h2 id="result-heading" class="card-title">記録したフローの保存</h2>
+          <p id="result-notice" hidden></p>
+          <div class="mb-3">
+            <label class="form-label" for="flow-name">フロー名</label>
+            <input type="text" class="form-control" id="flow-name" maxlength="200" />
+            <div class="invalid-feedback" id="flow-name-feedback"></div>
+          </div>
+          <div class="lm-buttons">
+            <button type="button" class="btn btn-primary" id="save-flow">フローとして保存</button>
+            <button type="button" class="btn" id="discard">破棄</button>
+          </div>
+          <div id="result-confirm" hidden></div>
+          <details class="mt-3">
+            <summary class="lm-sub">
+              記録した手順（<span id="result-step-count">0</span> 件）
+            </summary>
+            <ol id="result-steps" class="lm-steps mt-2"></ol>
+          </details>
+          <details class="mt-2">
+            <summary class="lm-sub">記録した内容（JSON）</summary>
+            <textarea
+              id="result"
+              class="form-control lm-code mt-2"
+              readonly
+              rows="12"
+              spellcheck="false"
+            ></textarea>
+            <div class="lm-buttons mt-2">
+              <button type="button" class="btn btn-sm" id="copy">コピー</button>
+              <button type="button" class="btn btn-sm" id="save">ファイルに保存</button>
+            </div>
+            <p id="json-notice" hidden></p>
+          </details>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="flows-heading">
+        <div class="card-header lm-card-header">
+          <h2 id="flows-heading" class="card-title">このサイトのフロー</h2>
+          <button type="button" class="btn btn-sm" id="start" disabled>
+            <span class="lm-rec-dot" aria-hidden="true"></span>記録開始
+          </button>
+        </div>
+        <p id="flows-notice" hidden></p>
+        <p id="flows-empty" class="lm-sub m-3"></p>
+        <ul id="flows" class="list-group list-group-flush lm-flows"></ul>
+        <div class="card-footer lm-sub">
+          ほかのサイトのフローの確認、JSON の編集と読み込みは「フローの管理」で行います。
+        </div>
       </section>
     </main>
   </body>
