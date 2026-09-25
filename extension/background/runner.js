@@ -509,7 +509,8 @@ async function runInPage(runId, flow, tabId, step) {
 
 /**
  * 表示中のページを PDF にして、ダウンロード先フォルダーに保存します（#16）。
- * PDF は chrome.debugger の Page.printToPDF で作ります。印刷用の表示で作ります（#73 で画面の表示を加えます）。
+ * PDF は chrome.debugger の Page.printToPDF で作ります。既定は印刷用の表示で、mode が screen の場合は
+ * 画面の表示で作ります（#73）。
  * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
@@ -529,25 +530,7 @@ async function savePdf(runId, flow, tabId, step, pathValues) {
     throw new Error(built.error);
   }
 
-  const target = { tabId };
-  try {
-    await chrome.debugger.attach(target, '1.3');
-  } catch (error) {
-    throw new Error(
-      `PDF を作れませんでした。このタブで開発者ツールを開いている場合は、閉じてから実行してください（${String(error)}）。`,
-      { cause: error },
-    );
-  }
-  /** @type {string} */
-  let data;
-  try {
-    const result = /** @type {{ data: string }} */ (
-      await chrome.debugger.sendCommand(target, 'Page.printToPDF', { printBackground: true })
-    );
-    data = result.data;
-  } finally {
-    await chrome.debugger.detach(target).catch(() => {});
-  }
+  const data = await printPage(tabId, step.mode === 'screen');
 
   // Service Worker では URL.createObjectURL が使えないため、data: URL で渡します（#16 で作業環境で確認済み）。
   const downloadId = await chrome.downloads.download({
@@ -557,6 +540,56 @@ async function savePdf(runId, flow, tabId, step, pathValues) {
     saveAs: false,
   });
   return waitForDownload(runId, downloadId);
+}
+
+/**
+ * タブのページを PDF にし、その内容（Base64）を返します。
+ * @param {number} tabId
+ * @param {boolean} screen 画面の表示で作るか（#73）。false の場合は印刷用の表示で作ります
+ * @returns {Promise<string>}
+ */
+async function printPage(tabId, screen) {
+  const target = { tabId };
+  try {
+    await chrome.debugger.attach(target, '1.3');
+  } catch (error) {
+    throw new Error(
+      `PDF を作れませんでした。このタブで開発者ツールを開いている場合は、閉じてから実行してください（${String(error)}）。`,
+      { cause: error },
+    );
+  }
+  try {
+    if (screen) {
+      // 実行中の枠と文字は @media print でだけ隠れるため、画面の表示では PDF に写らないよう隠します。
+      await setOverlayHidden(tabId, true);
+      await chrome.debugger.sendCommand(target, 'Emulation.setEmulatedMedia', { media: 'screen' });
+    }
+    const result = /** @type {{ data: string }} */ (
+      await chrome.debugger.sendCommand(target, 'Page.printToPDF', { printBackground: true })
+    );
+    return result.data;
+  } finally {
+    if (screen) {
+      // 切り離すと上書きも解除されると考えられますが、確かめていないため、明示的に戻します。
+      await chrome.debugger
+        .sendCommand(target, 'Emulation.setEmulatedMedia', { media: '' })
+        .catch(() => {});
+      await setOverlayHidden(tabId, false);
+    }
+    await chrome.debugger.detach(target).catch(() => {});
+  }
+}
+
+/**
+ * 実行中の枠と文字を、隠すか表示し直します（#73）。
+ * ページを移動した後は content script がまだ読み込まれておらず、枠もないため、届かなくても誤りにしません。
+ * @param {number} tabId
+ * @param {boolean} hidden
+ */
+async function setOverlayHidden(tabId, hidden) {
+  await chrome.tabs
+    .sendMessage(tabId, { kind: 'runner/overlay', hidden }, { frameId: 0 })
+    .catch(() => {});
 }
 
 /**

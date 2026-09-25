@@ -306,6 +306,18 @@ test('savePdf は path と onConflict を省略でき、値を検証する', () 
   assert.ok(validateStep({ type: 'savePdf', path: 'C:/Users/a.pdf' }).length > 0);
 });
 
+test('savePdf の mode は省略でき、print か screen だけを受け付ける（#73）', () => {
+  assert.deepEqual(validateStep({ type: 'savePdf', mode: 'print' }), []);
+  assert.deepEqual(validateStep({ type: 'savePdf', mode: 'screen' }), []);
+  for (const mode of ['SCREEN', 'pdf', '', 1, null, true]) {
+    assert.deepEqual(
+      validateStep({ type: 'savePdf', mode }),
+      ['mode が print または screen ではありません。'],
+      `mode: ${JSON.stringify(mode)}`,
+    );
+  }
+});
+
 test('extract は要素と名前を持ち、組み込みの値の名前は使えない', () => {
   assert.deepEqual(
     validateStep({ type: 'extract', target: extractTarget, name: 'orderNumber' }),
