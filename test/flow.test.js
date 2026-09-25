@@ -45,6 +45,31 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
+test('版 1 のフローは、そのまま版 2 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 2);
+  assert.deepEqual(validateFlow({ ...validFlow, schemaVersion: 1 }), []);
+});
+
+test('一時停止の手順は、説明を省略でき、説明は文字列に限る', () => {
+  assert.deepEqual(validateStep({ type: 'pause' }), []);
+  assert.deepEqual(validateStep({ type: 'pause', note: '確定の手前です。' }), []);
+  assert.equal(validateStep({ type: 'pause', note: 1 }).length, 1);
+  assert.deepEqual(
+    validateFlow({ ...validFlow, steps: [...validFlow.steps, { type: 'pause' }] }),
+    [],
+  );
+});
+
+test('版 1 のフローに一時停止の手順がある場合は誤りを報告する', () => {
+  const errors = validateFlow({
+    ...validFlow,
+    schemaVersion: 1,
+    steps: [...validFlow.steps, { type: 'pause' }],
+  });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /schemaVersion が 2 以上/);
+});
+
 test('フロー名が空の場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, name: '   ' }).length, 1);
 });

@@ -7,7 +7,13 @@
 import { validateParams, validateReferences, withPlaceholders } from './params.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
+
+/**
+ * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
+ * 版 1 のフローは、変換せずにそのまま版 2 として扱えます。
+ */
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2];
 
 /** 1 つのフローに含められる手順の数の上限です。保存領域を使い切ることを防ぎます。 */
 export const MAX_STEPS = 1000;
@@ -58,7 +64,14 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string[]} labels 選んだ選択肢の表示文字列
  */
 
-/** @typedef {NavigateStep | ClickStep | InputStep | SelectStep} Step */
+/**
+ * 一時停止です。実行はこの手順で終了し、以降の操作は人が行います（#29）。版 2 で加えました。
+ * @typedef {object} PauseStep
+ * @property {'pause'} type
+ * @property {string} [note] 止まる理由の説明
+ */
+
+/** @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep} Step */
 
 /** @typedef {import('./params.js').Param} Param */
 
@@ -113,8 +126,11 @@ export function validateFlow(value) {
   /** @type {string[]} */
   const errors = [];
 
-  if (value.schemaVersion !== SCHEMA_VERSION) {
-    errors.push(`schemaVersion が ${SCHEMA_VERSION} ではありません。`);
+  if (!SUPPORTED_SCHEMA_VERSIONS.includes(/** @type {number} */ (value.schemaVersion))) {
+    errors.push(
+      `schemaVersion が ${SUPPORTED_SCHEMA_VERSIONS.join(' または ')} ではありません。` +
+        '新しい版のフローの場合は、拡張機能を更新してください。',
+    );
   }
 
   if (!isText(value.name) || value.name.trim() === '') {
@@ -136,6 +152,11 @@ export function validateFlow(value) {
     value.steps.forEach((step, index) => {
       for (const error of validateStep(step)) {
         errors.push(`steps[${index}]: ${error}`);
+      }
+      if (isRecord(step) && step.type === 'pause' && value.schemaVersion === 1) {
+        errors.push(
+          `steps[${index}]: pause の手順は、schemaVersion が 2 以上のフローでだけ使えます。`,
+        );
       }
       // パラメータの定義に誤りがある場合、参照の検証は定義を直してから行います。
       if (paramErrors.length === 0) {
@@ -203,8 +224,13 @@ export function validateStep(step) {
       return errors;
     }
 
+    case 'pause':
+      return step.note === undefined || isText(step.note) ? [] : ['note が文字列ではありません。'];
+
     default:
-      return ['手順の種類（type）が navigate、click、input、select のいずれでもありません。'];
+      return [
+        '手順の種類（type）が navigate、click、input、select、pause のいずれでもありません。',
+      ];
   }
 }
 

@@ -20,6 +20,7 @@ import {
   runStatesFrom,
 } from '../shared/flow-list.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
+import { confirmPauseNote, findConfirmText } from '../shared/purchase-guard.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -35,8 +36,9 @@ import { renderTemplate, resolveParams } from '../shared/params.js';
  * @property {number} stepIndex 実行中の手順の番号（0 から数えます）。完了後は最後の手順の番号、
  *   失敗後は失敗した手順の番号、停止後は停止した時点で完了していた手順の数です。
  * @property {number} total 手順の数
- * @property {'running' | 'stopping' | 'done' | 'failed' | 'stopped'} status
- * @property {string} [error] 失敗した理由
+ * @property {'running' | 'stopping' | 'done' | 'failed' | 'stopped' | 'halted'} status
+ *   halted は、確定ボタンの手前、または一時停止の手順で実行を終えたことを示します（#29）。
+ * @property {string} [error] 失敗した理由。halted の場合は、止まった理由の説明です。
  * @property {string} startedAt
  */
 
@@ -50,13 +52,24 @@ const NAVIGATION_TIMEOUT_MS = 30_000;
 const STEP_INTERVAL_MS = 500;
 
 /** 実行中のページへ読み込むスクリプトです。overlay.js と finder.js の関数を runner.js が使います。 */
-const CONTENT_FILES = ['content/overlay.js', 'content/finder.js', 'content/runner.js'];
+const CONTENT_FILES = [
+  'content/overlay.js',
+  'content/finder.js',
+  'content/element-text.js',
+  'content/runner.js',
+];
 
 /** 停止の指示を確かめる間隔です。要素やページの読み込みを待っている間も、この間隔で確かめます。 */
 const STOP_CHECK_INTERVAL_MS = 250;
 
 /** サイドパネルから停止を指示されたことを示す誤りです。失敗ではなく停止として扱います。 */
 class StopRequested extends Error {}
+
+/**
+ * 確定ボタンの手前、または一時停止の手順で実行を終えることを示すものです（#29）。
+ * 失敗ではなく、以降の操作を人に任せる終わり方として扱います。
+ */
+class Halted extends Error {}
 
 /**
  * この Service Worker で実行中の実行の id と、そのオリジンです。停止すると失われるため、
@@ -303,6 +316,8 @@ async function runSteps(flow, steps, tabId, runId) {
         await waitForNewPage(runId, tabId, documentBefore, step.url);
         index = lastPageNavigationIndex(steps, index);
         documentBefore = await getDocumentId(tabId);
+      } else if (step.type === 'pause') {
+        throw new Halted(step.note ?? '一時停止の手順です。以降の操作は手で行ってください。');
       } else if (step.type === 'navigate') {
         if (index > 0) {
           await chrome.tabs.update(tabId, { url: step.url });
@@ -321,6 +336,10 @@ async function runSteps(flow, steps, tabId, runId) {
     if (error instanceof StopRequested) {
       // stepIndex は、停止した時点で完了していた手順の数と同じです。
       await updateRunState(runId, { status: 'stopped', stepIndex: index });
+      return;
+    }
+    if (error instanceof Halted) {
+      await updateRunState(runId, { status: 'halted', stepIndex: index, error: error.message });
       return;
     }
     await updateRunState(runId, {
@@ -346,6 +365,9 @@ async function showRunBadge(tabId) {
 
 /**
  * クリック・入力・選択を、ページの content script に依頼します。
+ *
+ * クリックは、先に対象の要素の文言を確かめます。確定ボタンであればクリックせずに実行を終えます（#29）。
+ * 記録時の置き換えだけでは、JSON の直接編集で加えた手順を防げないためです。
  * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
@@ -364,17 +386,41 @@ async function runInPage(runId, flow, tabId, step) {
 
   await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
 
+  if (step.type === 'click') {
+    const inspected = await requestPage(runId, tabId, {
+      kind: 'runner/inspect',
+      step,
+      timeoutMs: ELEMENT_TIMEOUT_MS,
+    });
+    const texts = Array.isArray(inspected.texts)
+      ? inspected.texts.filter((/** @type {unknown} */ text) => typeof text === 'string')
+      : [];
+    const confirmText = findConfirmText([
+      ...texts,
+      step.target.label,
+      ...(step.target.text ? [step.target.text] : []),
+    ]);
+    if (confirmText !== undefined) {
+      throw new Halted(confirmPauseNote(confirmText));
+    }
+  }
+  await requestPage(runId, tabId, { kind: 'runner/step', step, timeoutMs: ELEMENT_TIMEOUT_MS });
+  return documentId;
+}
+
+/**
+ * ページの content script に依頼し、応答を返します。応答が失敗を示す場合は例外を投げます。
+ * @param {string} runId
+ * @param {number} tabId
+ * @param {object} message
+ * @returns {Promise<Record<string, any>>}
+ */
+async function requestPage(runId, tabId, message) {
   // 要素を待っている間（最大 10 秒）も停止の指示に応じられるよう、応答を待ちながら指示を確かめます。
-  const reply = chrome.tabs
-    .sendMessage(
-      tabId,
-      { kind: 'runner/step', step, timeoutMs: ELEMENT_TIMEOUT_MS },
-      { frameId: 0 },
-    )
-    .then(
-      (response) => ({ response, error: undefined }),
-      (error) => ({ response: undefined, error }),
-    );
+  const reply = chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).then(
+    (response) => ({ response, error: undefined }),
+    (error) => ({ response: undefined, error }),
+  );
   let result;
   while (!(result = await Promise.race([reply, sleep(STOP_CHECK_INTERVAL_MS).then(() => null)]))) {
     try {
@@ -396,7 +442,7 @@ async function runInPage(runId, flow, tabId, step) {
   if (!response?.ok) {
     throw new Error(response?.error ?? 'ページから応答がありませんでした。');
   }
-  return documentId;
+  return response;
 }
 
 /**

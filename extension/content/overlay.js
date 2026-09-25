@@ -3,7 +3,7 @@
 // content script は ES モジュールとして読み込めないため、通常のスクリプトとして読み込みます。
 // 同じページに 2 回読み込まれても誤りにならないよう、最上位には関数の宣言だけを置きます。
 
-/* exported showStatusOverlay */
+/* exported showNotice, showStatusOverlay */
 
 /**
  * 指定した色の枠で画面を囲み、左上に文字を表示します。
@@ -46,4 +46,36 @@ function showStatusOverlay(text, color, textColor) {
   shadow.append(style, frame, badge);
   document.documentElement.append(host);
   return host;
+}
+
+/**
+ * 画面の下部に、知らせる文を一定の時間だけ表示します。
+ * 枠と同じく、閉じた Shadow DOM の中に置き、クリックを通り抜けさせ、印刷用の表示では非表示にします。
+ * @param {string} text
+ */
+function showNotice(text) {
+  const host = document.createElement('lightomate-notice');
+  host.style.cssText =
+    'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';
+  const shadow = host.attachShadow({ mode: 'closed' });
+
+  const style = document.createElement('style');
+  style.textContent = `
+    :host { pointer-events: none; }
+    .notice {
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      max-width: min(90vw, 560px); padding: 10px 16px; border-radius: 6px;
+      background: #202124; color: #fff; pointer-events: none;
+      font: 14px/1.5 system-ui, sans-serif; box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+    }
+    @media print { :host { display: none !important; } }
+  `;
+  const notice = document.createElement('div');
+  notice.className = 'notice';
+  notice.setAttribute('role', 'status');
+  notice.textContent = text;
+
+  shadow.append(style, notice);
+  document.documentElement.append(host);
+  setTimeout(() => host.remove(), 8000);
 }
