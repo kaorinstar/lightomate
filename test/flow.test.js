@@ -6,9 +6,11 @@ import {
   SCHEMA_VERSION,
   formatFlowJson,
   orderFlow,
+  replaceJsonFields,
   replaceJsonName,
   validateFlow,
   validateStep,
+  withInterval,
 } from '../extension/shared/flow.js';
 
 const target = { selectors: ['#login'], tag: 'button', label: 'ログイン', text: 'ログイン' };
@@ -47,10 +49,77 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1 と版 2 のフローは、そのまま版 3 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 3);
-  assert.deepEqual(validateFlow({ ...validFlow, schemaVersion: 1 }), []);
-  assert.deepEqual(validateFlow({ ...validFlow, schemaVersion: 2 }), []);
+test('版 1〜3 のフローは、そのまま版 4 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 4);
+  for (const schemaVersion of [1, 2, 3]) {
+    assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
+  }
+});
+
+test('手順の間隔（interval）は、0〜60,000 の整数で、min が max 以下の場合だけ通る（#15）', () => {
+  assert.deepEqual(validateFlow({ ...validFlow, interval: { min: 0, max: 0 } }), []);
+  assert.deepEqual(validateFlow({ ...validFlow, interval: { min: 1000, max: 60000 } }), []);
+  for (const interval of [
+    { min: -1, max: 1000 },
+    { min: 1000, max: 60001 },
+    { min: 1.5, max: 2000 },
+    { min: 3000, max: 1000 },
+    { min: '1000', max: 1000 },
+    { min: 1000 },
+    [1000, 2000],
+    null,
+  ]) {
+    assert.equal(
+      validateFlow({ ...validFlow, interval }).length,
+      1,
+      `値: ${JSON.stringify(interval)}`,
+    );
+  }
+});
+
+test('待機の手順（wait）は、1〜300,000 の整数のミリ秒だけ通る（#15）', () => {
+  assert.deepEqual(validateStep({ type: 'wait', ms: 1 }), []);
+  assert.deepEqual(validateStep({ type: 'wait', ms: 300000 }), []);
+  for (const ms of [0, -1, 300001, 1.5, '3000', undefined]) {
+    assert.equal(validateStep({ type: 'wait', ms }).length, 1, `値: ${String(ms)}`);
+  }
+});
+
+test('版 3 以前のフローに interval と wait がある場合は、版 4 が必要である旨の誤りを報告する', () => {
+  const errors = validateFlow({
+    ...validFlow,
+    schemaVersion: 3,
+    interval: { min: 1000, max: 2000 },
+    steps: [...validFlow.steps, { type: 'wait', ms: 3000 }],
+  });
+  assert.equal(errors.length, 2);
+  assert.ok(errors.every((error) => error.includes('4 以上')));
+});
+
+test('withInterval は間隔を加え、古い版は版 4 にし、undefined で削除する。元のフローは変えない', () => {
+  const old = /** @type {import('../extension/shared/flow.js').Flow} */ ({
+    ...validFlow,
+    schemaVersion: 2,
+  });
+  const changed = withInterval(old, { min: 1000, max: 3000 });
+  assert.equal(changed.schemaVersion, 4);
+  assert.deepEqual(changed.interval, { min: 1000, max: 3000 });
+  assert.deepEqual(validateFlow(changed), []);
+  assert.equal('interval' in old, false);
+
+  const cleared = withInterval(changed, undefined);
+  assert.equal('interval' in cleared, false);
+  assert.equal(cleared.schemaVersion, 4);
+  assert.deepEqual(changed.interval, { min: 1000, max: 3000 });
+});
+
+test('replaceJsonFields は指定した項目だけを書き換え、undefined の項目は削除する', () => {
+  const text = JSON.stringify({ schemaVersion: 3, name: 'a', interval: { min: 1, max: 2 } });
+  assert.equal(
+    replaceJsonFields(text, { schemaVersion: 4, interval: undefined }),
+    JSON.stringify({ schemaVersion: 4, name: 'a' }, null, 2),
+  );
+  assert.equal(replaceJsonFields('{', { name: 'b' }), null);
 });
 
 test('一時停止の手順は、説明を省略でき、説明は文字列に限る', () => {

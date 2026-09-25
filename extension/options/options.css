@@ -277,3 +277,27 @@ body {
   color: var(--tblr-warning-text-emphasis, var(--tblr-warning));
   font-weight: 600;
 }
+
+/*
+  実行の速度の欄です（#15）。最短・最長・［速度を保存］を 1 行に並べ、狭い幅では折り返します。
+  誤りは行の直下に 1 つだけ出します。欄が横に並ぶため、各欄の直下には置けないためです。
+*/
+.lm-speed-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.lm-speed-row .lm-seconds {
+  width: 4.5rem;
+  text-align: end;
+}
+
+.lm-speed-feedback {
+  display: block;
+}
+
+.lm-speed-feedback:empty {
+  display: none;
+}

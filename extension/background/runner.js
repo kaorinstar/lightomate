@@ -25,6 +25,7 @@ import { renderTemplate, resolveParams } from '../shared/params.js';
 import { confirmPauseNote, findConfirmText } from '../shared/purchase-guard.js';
 import { findStopPath, stopRuleNote } from '../shared/stop-rules.js';
 import { DEFAULT_SAVE_PATH, buildSavePath, builtinValues } from '../shared/save-path.js';
+import { pickDelay, stepInterval } from '../shared/speed.js';
 import { getStopRule } from '../common/stop-rules-store.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
@@ -52,9 +53,6 @@ const ELEMENT_TIMEOUT_MS = 10_000;
 
 /** ページの移動と読み込みを待つ上限です。 */
 const NAVIGATION_TIMEOUT_MS = 30_000;
-
-/** 手順と手順の間に空ける時間です。実行速度の設定（#15）ができるまでの仮の値です。 */
-const STEP_INTERVAL_MS = 500;
 
 /** 実行中のページへ読み込むスクリプトです。overlay.js と finder.js の関数を runner.js が使います。 */
 const CONTENT_FILES = [
@@ -377,6 +375,8 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
         await waitForNewPage(runId, tabId, documentBefore, step.url);
         index = lastPageNavigationIndex(steps, index);
         documentBefore = await getDocumentId(tabId);
+      } else if (step.type === 'wait') {
+        await waitWithStopCheck(runId, step.ms);
       } else if (step.type === 'pause') {
         throw new Halted(step.note ?? '一時停止の手順です。以降の操作は手で行ってください。');
       } else if (step.type === 'navigate') {
@@ -404,7 +404,10 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       }
 
       index += 1;
-      await sleep(STEP_INTERVAL_MS);
+      // 手順と手順の間に、フローの設定の範囲から毎回決めた時間だけ待ちます（#15）。最後の手順の後には待ちません。
+      if (index < steps.length) {
+        await waitWithStopCheck(runId, pickDelay(stepInterval(flow)));
+      }
     }
     await finishRun(runId, { status: 'done', stepIndex: steps.length - 1 });
   } catch (error) {
@@ -794,6 +797,23 @@ async function throwIfStopRequested(runId) {
   if (!state || state.status === 'stopping') {
     throw new StopRequested('停止を指示されました。');
   }
+}
+
+/**
+ * 指定した時間だけ待ちます（#15）。待っている間も停止の指示を確かめ、指示があれば StopRequested を投げます。
+ * 確かめるたびに chrome.storage を読むため、Service Worker は長い待機の間も停止しません
+ * （拡張機能の API の呼び出しで、停止までの時間が数え直されます）。
+ * https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle
+ * @param {string} runId
+ * @param {number} ms
+ */
+async function waitWithStopCheck(runId, ms) {
+  const deadline = Date.now() + ms;
+  for (let rest = ms; rest > 0; rest = deadline - Date.now()) {
+    await throwIfStopRequested(runId);
+    await sleep(Math.min(rest, STOP_CHECK_INTERVAL_MS));
+  }
+  await throwIfStopRequested(runId);
 }
 
 /** @param {number} ms */

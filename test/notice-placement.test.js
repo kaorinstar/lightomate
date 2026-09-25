@@ -40,6 +40,7 @@ const cases = [
     notices: ['editor-confirm', 'editor-notice'],
   },
   { page: '管理画面', html: options, button: 'save', notices: ['json-notice'] },
+  { page: '管理画面', html: options, button: 'speed-save', notices: ['speed-notice'] },
   {
     page: '管理画面',
     html: options,
@@ -79,6 +80,15 @@ for (const { page, html, button, notices } of cases) {
     }
   });
 }
+
+test('管理画面：実行の速度の誤りは、最短・最長・［速度を保存］の行の直下の #interval-feedback に出す', () => {
+  const button = options.indexOf('id="speed-save"');
+  const rowEnd = options.indexOf('</div>', options.indexOf('</button>', button));
+  const next = options.slice(rowEnd + '</div>'.length).trimStart();
+  assert.ok(
+    next.startsWith('<div class="invalid-feedback lm-speed-feedback" id="interval-feedback">'),
+  );
+});
 
 test('両画面に、トーストの表示欄を role="status" で置く', () => {
   for (const html of [sidepanel, options]) {
