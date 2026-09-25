@@ -7,8 +7,13 @@
 /*
  * Tabler は、入力欄の誤りの印とセレクトボックスの矢印を data: の画像で描きます。拡張機能の CSP は
  * data: の画像を許可していないため、これらを使わない指定に置き換えます。誤りは赤枠と文言で示します。
+ * 印の分の右の余白は、Tabler が !important 付きで印の大きさの変数から計算するため、変数を変えて余白を
+ * 通常の幅（0.75rem）にします。狭い入力欄で、入力した値が余白に隠れないようにするためです。
  */
 .form-control.is-invalid {
+  --tblr-form-feedback-icon-size: 0px;
+  --tblr-form-feedback-icon-inset: 0.375rem;
+
   padding-inline-end: 0.75rem;
   background-image: none;
 }
