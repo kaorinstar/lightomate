@@ -11,6 +11,7 @@
 // 実行の状態は実行ごとに別のキー（run/<実行の id>）に保存し、ほかの実行の更新と競合しないようにします。
 
 import { getFlow } from '../common/flow-store.js';
+import { addHistory } from '../common/history-store.js';
 import { isWebUrl, validateFlow } from '../shared/flow.js';
 import {
   RUN_KEY_PREFIX,
@@ -19,6 +20,7 @@ import {
   isActiveRun,
   runStatesFrom,
 } from '../shared/flow-list.js';
+import { historyEntryFromRun } from '../shared/history.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
 import { confirmPauseNote, findConfirmText } from '../shared/purchase-guard.js';
 import { findStopPath, stopRuleNote } from '../shared/stop-rules.js';
@@ -81,6 +83,14 @@ class Halted extends Error {}
 const activeRuns = new Map();
 
 /**
+ * 実行ごとの、実行履歴に残す前に伏せる値（入力した値と、そこから作った値）です（#19）。
+ * このファイルの変数にだけ置き、保存しません。Service Worker が停止すると失われますが、
+ * その場合の履歴は、値を含まない決まった文（中断）だけを記録します。
+ * @type {Map<string, string[]>}
+ */
+const redactions = new Map();
+
+/**
  * @param {string} runId
  * @returns {Promise<RunState | undefined>}
  */
@@ -117,14 +127,33 @@ async function updateRunState(runId, update) {
 }
 
 /**
+ * 実行を終えた状態を保存し、実行履歴に記録します（#19）。
+ * 止まった理由に含まれる入力した値は、履歴では伏せます。実行の状態（chrome.storage.session）には
+ * 伏せずに残します。サイドパネルで、利用者が原因を確かめられるようにするためです。
+ * @param {string} runId
+ * @param {Partial<RunState>} update
+ */
+async function finishRun(runId, update) {
+  await updateRunState(runId, update);
+  const state = await getRunState(runId);
+  const values = redactions.get(runId) ?? [];
+  redactions.delete(runId);
+  const entry = state && historyEntryFromRun(state, new Date().toISOString(), values);
+  if (entry) {
+    await addHistory(entry).catch((error) =>
+      console.error('実行履歴を記録できませんでした。', error),
+    );
+  }
+}
+
+/**
  * Service Worker の起動時に呼び出します。実行中のまま残っている状態は、前の Service Worker が
  * 実行の途中で停止したことを示すため、中断として記録します。
  */
 export async function markInterruptedRuns() {
   for (const state of await listRunStates()) {
     if (!activeRuns.has(state.runId) && isActiveRun(state)) {
-      await setRunState({
-        ...state,
+      await finishRun(state.runId, {
         status: 'failed',
         error: '拡張機能の処理が途中で停止したため、実行を中断しました。',
       });
@@ -153,10 +182,16 @@ export async function startRun(flowId, paramInput, secretInput) {
     return { ok: false, error: `${flow.origin} を操作する許可がありません。` };
   }
 
-  const resolved = resolveSteps(flow, paramInput, secretInput, new Date());
+  const now = new Date();
+  const resolved = resolveSteps(flow, paramInput, secretInput, now);
   if (!resolved.ok) {
     return resolved;
   }
+  const values = [
+    ...Object.values(paramInput),
+    ...Object.values(secretInput),
+    ...Object.values(resolveParams(flow.params ?? [], paramInput, now).values),
+  ];
 
   // 保存した状態に加え、この Service Worker で始めたばかりの実行とも比べます。
   // 比べてから登録するまでの間に await を置かないでください。同じサイトの実行を同時に始めないためです。
@@ -174,6 +209,7 @@ export async function startRun(flowId, paramInput, secretInput) {
   }
   const runId = crypto.randomUUID();
   activeRuns.set(runId, flow.origin);
+  redactions.set(runId, values);
 
   try {
     const tabId = await openTab(flow, resolved.steps);
@@ -194,6 +230,7 @@ export async function startRun(flowId, paramInput, secretInput) {
     return { ok: true };
   } catch (error) {
     activeRuns.delete(runId);
+    redactions.delete(runId);
     return { ok: false, error: String(error) };
   }
 }
@@ -333,18 +370,18 @@ async function runSteps(flow, steps, tabId, runId) {
       index += 1;
       await sleep(STEP_INTERVAL_MS);
     }
-    await updateRunState(runId, { status: 'done', stepIndex: steps.length - 1 });
+    await finishRun(runId, { status: 'done', stepIndex: steps.length - 1 });
   } catch (error) {
     if (error instanceof StopRequested) {
       // stepIndex は、停止した時点で完了していた手順の数と同じです。
-      await updateRunState(runId, { status: 'stopped', stepIndex: index });
+      await finishRun(runId, { status: 'stopped', stepIndex: index });
       return;
     }
     if (error instanceof Halted) {
-      await updateRunState(runId, { status: 'halted', stepIndex: index, error: error.message });
+      await finishRun(runId, { status: 'halted', stepIndex: index, error: error.message });
       return;
     }
-    await updateRunState(runId, {
+    await finishRun(runId, {
       status: 'failed',
       stepIndex: index,
       error: error instanceof Error ? error.message : String(error),

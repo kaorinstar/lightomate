@@ -74,6 +74,8 @@ body {
 
 #empty[hidden],
 #no-match[hidden],
+#history-empty[hidden],
+#history-table-wrap[hidden],
 #stop-empty[hidden] {
   display: none;
 }
@@ -244,4 +246,28 @@ body {
 
 #run-reason {
   margin: 0 0 1rem;
+}
+
+/* 実行履歴の表です（#19）。止まった理由と保存したファイルは長いため、折り返します。 */
+.lm-history td {
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.lm-history .lm-nowrap {
+  white-space: nowrap;
+}
+
+/*
+  結果は文字で示し、失敗と一時停止には色も付けます。色だけで伝えないためです。
+  文字色は、明るい表示と暗い表示の両方でコントラスト比が 4.5:1 以上になる *-text-emphasis を使います。
+*/
+.lm-history td.lm-status-failed {
+  color: var(--tblr-danger-text-emphasis, var(--tblr-danger));
+  font-weight: 600;
+}
+
+.lm-history td.lm-status-halted {
+  color: var(--tblr-warning-text-emphasis, var(--tblr-warning));
+  font-weight: 600;
 }

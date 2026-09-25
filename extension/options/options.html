@@ -41,6 +41,16 @@
         >
           必ず止まる場所
         </button>
+        <button
+          type="button"
+          class="nav-link"
+          role="tab"
+          id="tab-history"
+          data-tab="history"
+          aria-controls="panel-history"
+        >
+          実行履歴
+        </button>
       </div>
 
       <section id="panel-flows" class="lm-layout" role="tabpanel" aria-labelledby="tab-flows">
@@ -265,6 +275,33 @@
               <p id="stop-notice" hidden></p>
             </div>
           </form>
+        </div>
+      </section>
+
+      <section id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+        <p class="lm-panel-note">
+          フローを実行した結果を、新しい順に最大 200 件まで残します。<wbr />実行するときに入力した値は記録しません。止まった理由の中の入力した値は「＊＊＊」に置き換えます。
+        </p>
+        <div class="card">
+          <div class="card-header lm-card-header">
+            <h2 class="card-title">実行履歴<span class="lm-count" id="history-count"></span></h2>
+            <button type="button" class="btn btn-sm" id="history-csv">CSV に書き出し</button>
+          </div>
+          <p id="history-empty" class="lm-empty">実行履歴はまだありません。</p>
+          <div class="table-responsive" id="history-table-wrap">
+            <table class="table table-vcenter card-table lm-history">
+              <thead>
+                <tr>
+                  <th scope="col">開始</th>
+                  <th scope="col">フロー</th>
+                  <th scope="col">結果</th>
+                  <th scope="col">止まった手順と理由</th>
+                  <th scope="col">保存したファイル</th>
+                </tr>
+              </thead>
+              <tbody id="history"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
