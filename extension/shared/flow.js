@@ -86,13 +86,14 @@ export const MAX_TEXT_LENGTH = 2000;
 
 /**
  * 表示中のページを PDF として保存します（#16）。版 3 で加えました。
- * 印刷用の表示で保存します。画面の表示のまま保存する方法は #73 で加えます。
  * @typedef {object} SavePdfStep
  * @property {'savePdf'} type
  * @property {string} [path] 保存先のひな形。ダウンロード先フォルダーからの相対パスです。
  *   省略した場合は save-path.js の DEFAULT_SAVE_PATH を使います。
  * @property {'rename' | 'overwrite'} [onConflict] 同じ名前のファイルがある場合の動作。
  *   rename（既定）は番号を付けて別名で保存し、overwrite は上書きします。
+ * @property {'print' | 'screen'} [mode] PDF を作るときの表示。print（既定）は印刷用の表示、
+ *   screen は画面の表示で作ります（#73）。
  */
 
 /**
@@ -357,6 +358,9 @@ export function validateStep(step) {
         step.onConflict !== 'overwrite'
       ) {
         errors.push('onConflict が rename または overwrite ではありません。');
+      }
+      if (step.mode !== undefined && step.mode !== 'print' && step.mode !== 'screen') {
+        errors.push('mode が print または screen ではありません。');
       }
       return errors;
     }

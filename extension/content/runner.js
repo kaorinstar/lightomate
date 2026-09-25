@@ -36,6 +36,13 @@
       currentStep.abort();
       return false;
     }
+    // PDF を画面の表示で作る間（#73）、枠と文字が PDF に写らないよう隠します。
+    // 印刷用の表示では @media print で隠れますが、画面の表示では隠れないためです。
+    if (message?.kind === 'runner/overlay') {
+      overlay.style.display = message.hidden ? 'none' : '';
+      sendResponse({ ok: true });
+      return false;
+    }
     if (message?.kind === 'runner/finish') {
       overlay.remove();
       scope[installedKey] = false;
