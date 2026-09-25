@@ -20,6 +20,7 @@ import {
   onStopRulesChanged,
   saveStopRule,
 } from '../common/stop-rules-store.js';
+import { listHistory, onHistoryChanged } from '../common/history-store.js';
 import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
 import { isWebOrigin, orderFlow, replaceJsonName, validateFlow } from '../shared/flow.js';
 import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
@@ -35,6 +36,7 @@ import {
   secretStepIndexes,
   showRunFieldErrors,
 } from '../shared/run-form.js';
+import { STATUS_LABELS, historyToCsv, stepText } from '../shared/history.js';
 import { parseLines, stopRuleFieldErrors } from '../shared/stop-rules.js';
 import {
   confirmInline,
@@ -112,6 +114,11 @@ const elements = {
   stopConfirm: byId('stop-confirm'),
   stopNotice: byId('stop-notice'),
   toast: byId('toast'),
+  history: byId('history'),
+  historyCount: byId('history-count'),
+  historyEmpty: byId('history-empty'),
+  historyTableWrap: byId('history-table-wrap'),
+  historyCsv: byId('history-csv'),
 };
 
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
@@ -633,6 +640,79 @@ onFlowsChanged(() => {
   renderStopRules().catch(console.error);
 });
 render().catch(console.error);
+
+// ---- 実行履歴（#19） ----
+// 履歴は Service Worker が実行の終わりに記録します。この画面は表示と CSV への書き出しだけを行います。
+
+onHistoryChanged(() => {
+  renderHistory().catch(console.error);
+});
+renderHistory().catch(console.error);
+
+elements.historyCsv.addEventListener('click', async () => {
+  clearNotices();
+  const history = await listHistory();
+  const blob = new Blob([historyToCsv(history)], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `lightomate-history-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+});
+
+/** 実行履歴の一覧を表示し直します。 */
+async function renderHistory() {
+  const history = await listHistory();
+  elements.historyCount.textContent = history.length > 0 ? String(history.length) : '';
+  elements.historyEmpty.hidden = history.length > 0;
+  elements.historyTableWrap.hidden = history.length === 0;
+  elements.historyCsv.toggleAttribute('disabled', history.length === 0);
+  elements.history.replaceChildren(
+    ...history.map((entry) => {
+      const started = document.createElement('td');
+      started.className = 'lm-nowrap';
+      started.textContent = formatDateTime(entry.startedAt);
+      const ended = document.createElement('div');
+      ended.className = 'lm-sub';
+      ended.textContent = `終了 ${formatDateTime(entry.endedAt)}`;
+      started.append(ended);
+
+      const flow = document.createElement('td');
+      const name = document.createElement('div');
+      name.textContent = entry.flowName;
+      const origin = document.createElement('div');
+      origin.className = 'lm-sub';
+      origin.textContent = entry.origin;
+      flow.append(name, origin);
+
+      const status = document.createElement('td');
+      status.className = `lm-nowrap lm-status-${entry.status}`;
+      status.textContent = STATUS_LABELS[entry.status];
+
+      const reason = document.createElement('td');
+      if (entry.stepNumber !== undefined) {
+        const step = document.createElement('div');
+        step.textContent = `手順 ${stepText(entry)}`;
+        reason.append(step);
+      }
+      if (entry.reason) {
+        const text = document.createElement('div');
+        text.className = 'lm-sub';
+        text.textContent = entry.reason;
+        reason.append(text);
+      }
+
+      const files = document.createElement('td');
+      files.className = 'lm-sub';
+      files.textContent = entry.files.join('\n');
+
+      const row = document.createElement('tr');
+      row.append(started, flow, status, reason, files);
+      return row;
+    }),
+  );
+}
 
 // ---- 必ず止まる場所（#54） ----
 
