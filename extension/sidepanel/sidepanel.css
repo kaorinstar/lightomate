@@ -30,15 +30,12 @@ body {
 
 .lm-title {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.25rem;
+  font-weight: 700;
 }
 
 .lm-header .lm-sub {
   margin: 0;
-}
-
-.card-title {
-  font-size: 0.9375rem;
 }
 
 .lm-row {
@@ -119,7 +116,8 @@ body {
 }
 
 .lm-flow-name {
-  font-weight: 500;
+  font-size: 0.9375rem;
+  font-weight: 600;
 }
 
 .lm-flow-actions {

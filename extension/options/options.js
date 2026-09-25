@@ -1,15 +1,24 @@
-// フローの管理画面です。保存したフローの JSON の編集、書き出し、削除と、JSON からの追加を行います。
-// ビジュアルエディタ（#9）ができるまでは、JSON を直接編集します。
+// フローの管理画面です。保存したフローの内容の表示、名前の変更、書き出し、削除、JSON の編集と、
+// JSON からの追加、サイトごとの「必ず止まる場所」の指定を行います。2 つはタブで分けています。
+// ビジュアルエディタ（#9）ができるまでは、手順の変更は JSON を直接編集して行います。
 // 配置と、知らせを出す場所は docs/design-guidelines.md に従います。知らせは画面の上部にまとめず、
 // 操作した区画の中に出します。
 
-import { deleteFlow, getFlow, listFlows, onFlowsChanged, saveFlow } from '../common/flow-store.js';
+import {
+  deleteFlow,
+  getFlow,
+  listFlows,
+  onFlowsChanged,
+  renameFlow,
+  saveFlow,
+} from '../common/flow-store.js';
 import {
   getStopRule,
   listStopRules,
   onStopRulesChanged,
   saveStopRule,
 } from '../common/stop-rules-store.js';
+import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
 import { isWebOrigin, orderFlow, validateFlow } from '../shared/flow.js';
 import { parseLines, validateStopRule } from '../shared/stop-rules.js';
 import { confirmInline, followColorScheme, showFieldError, showNotice } from '../shared/ui.js';
@@ -20,14 +29,29 @@ const elements = {
   version: byId('version'),
   listNotice: byId('list-notice'),
   flows: byId('flows'),
+  flowCount: byId('flow-count'),
   empty: byId('empty'),
   newFlow: byId('new'),
   placeholder: byId('placeholder'),
   editor: byId('editor'),
   editorHeading: byId('editor-heading'),
   editorOrigin: byId('editor-origin'),
+  editorMeta: byId('editor-meta'),
+  editorTitle: byId('editor-title'),
+  editorActions: byId('editor-actions'),
   editorConfirm: byId('editor-confirm'),
   editorNotice: byId('editor-notice'),
+  rename: byId('rename'),
+  renameForm: /** @type {HTMLFormElement} */ (byId('rename-form')),
+  renameInput: /** @type {HTMLInputElement} */ (byId('rename-input')),
+  renameFeedback: byId('rename-feedback'),
+  renameCancel: byId('rename-cancel'),
+  paramsSection: byId('params-section'),
+  params: byId('params'),
+  stepCount: byId('step-count'),
+  steps: byId('steps'),
+  jsonDetails: /** @type {HTMLDetailsElement} */ (byId('json-details')),
+  jsonNotice: byId('json-notice'),
   json: /** @type {HTMLTextAreaElement} */ (byId('json')),
   save: byId('save'),
   exportFlow: byId('export'),
@@ -56,6 +80,7 @@ const elements = {
 const notices = [
   elements.listNotice,
   elements.editorNotice,
+  elements.jsonNotice,
   elements.importNotice,
   elements.stopNotice,
 ];
@@ -78,6 +103,61 @@ function clearNotices() {
   }
 }
 
+// ---- タブ ----
+// WAI-ARIA の Tabs パターンに従います（https://www.w3.org/WAI/ARIA/apg/patterns/tabs/）。
+// 選んだタブは URL の ?tab= に書き、再読み込みしても同じタブを開きます。
+
+const tabs = /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll('[role="tab"]')]);
+
+/**
+ * タブを切り替えます。
+ * @param {string} name data-tab の値
+ * @param {boolean} [focus] 選んだタブにフォーカスを移すか。矢印キーで移動したときに使います
+ */
+function selectTab(name, focus = false) {
+  const current = tabs.find((tab) => tab.dataset.tab === name) ?? tabs[0];
+  for (const tab of tabs) {
+    const selected = tab === current;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    // 選ばれていないタブは Tab キーで移動せず、矢印キーで移動します。
+    tab.tabIndex = selected ? 0 : -1;
+    byId(tab.getAttribute('aria-controls') ?? '').hidden = !selected;
+  }
+  if (focus) {
+    current.focus();
+  }
+  const url = new URL(location.href);
+  if (current === tabs[0]) {
+    url.searchParams.delete('tab');
+  } else {
+    url.searchParams.set('tab', current.dataset.tab ?? '');
+  }
+  history.replaceState(null, '', url);
+}
+
+for (const [index, tab] of tabs.entries()) {
+  tab.addEventListener('click', () => {
+    clearNotices();
+    selectTab(tab.dataset.tab ?? '');
+  });
+  tab.addEventListener('keydown', (event) => {
+    const moves = { ArrowRight: 1, ArrowLeft: -1 };
+    const move = moves[/** @type {'ArrowRight' | 'ArrowLeft'} */ (event.key)];
+    if (move) {
+      event.preventDefault();
+      const next = tabs[(index + move + tabs.length) % tabs.length];
+      selectTab(next.dataset.tab ?? '', true);
+    }
+  });
+}
+
+// ?tab= がない場合は、保存したフローのタブを開きます。サイドパネルの［編集］から開く URL
+// （#<フローの id>）には ?tab= がないため、そのフローを保存したフローのタブで開きます。
+selectTab(new URL(location.href).searchParams.get('tab') ?? 'flows');
+
+// ---- 保存したフロー ----
+
 elements.newFlow.addEventListener('click', () => {
   select('');
   elements.importer.hidden = false;
@@ -87,7 +167,7 @@ elements.newFlow.addEventListener('click', () => {
 
 elements.save.addEventListener('click', async () => {
   clearNotices();
-  const flow = parse(elements.json, elements.editorNotice);
+  const flow = parse(elements.json, elements.jsonNotice);
   if (!flow) {
     return;
   }
@@ -95,14 +175,14 @@ elements.save.addEventListener('click', async () => {
   if (!result.ok) {
     showJsonErrors(
       elements.json,
-      elements.editorNotice,
+      elements.jsonNotice,
       `形式に誤りがあるため、保存しませんでした。\n${result.errors.join('\n')}`,
     );
     return;
   }
   const { name } = /** @type {{ name: string }} */ (flow);
   if (result.name === name) {
-    showNotice(elements.editorNotice, '保存しました。', 'success');
+    showNotice(elements.jsonNotice, '保存しました。', 'success');
     return;
   }
   // 同じサイトに同じ名前のフローがあり、番号を付けて保存した場合は、編集欄の名前も合わせます。
@@ -112,11 +192,70 @@ elements.save.addEventListener('click', async () => {
     2,
   );
   showNotice(
-    elements.editorNotice,
+    elements.jsonNotice,
     `同じサイトに「${name}」があるため、「${result.name}」として保存しました。`,
     'success',
   );
 });
+
+elements.rename.addEventListener('click', async () => {
+  clearNotices();
+  const stored = await getFlow(selectedId);
+  if (!stored) {
+    return;
+  }
+  showRenameForm(true);
+  elements.renameInput.value = stored.flow.name;
+  elements.renameInput.focus();
+  elements.renameInput.select();
+});
+
+elements.renameCancel.addEventListener('click', () => showRenameForm(false));
+
+elements.renameInput.addEventListener('input', () => {
+  showFieldError(elements.renameInput, elements.renameFeedback, '');
+});
+
+elements.renameForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearNotices();
+  const name = elements.renameInput.value.trim();
+  if (!name) {
+    showFieldError(elements.renameInput, elements.renameFeedback, 'フロー名を入力してください。');
+    return;
+  }
+  const result = await renameFlow(selectedId, name);
+  if (!result.ok) {
+    showFieldError(
+      elements.renameInput,
+      elements.renameFeedback,
+      `名前を変更できませんでした。${result.errors.join(' ')}`,
+    );
+    return;
+  }
+  showRenameForm(false);
+  // JSON の編集欄の名前も新しい名前にするため、次の表示で編集欄を読み込み直します。
+  delete elements.editor.dataset.id;
+  showNotice(
+    elements.editorNotice,
+    result.name === name
+      ? `名前を「${name}」に変更しました。`
+      : `同じサイトに「${name}」があるため、「${result.name}」に変更しました。`,
+    'success',
+  );
+  await render();
+});
+
+/**
+ * 見出しの位置を、名前の入力欄に切り替えます。
+ * @param {boolean} show
+ */
+function showRenameForm(show) {
+  elements.renameForm.hidden = !show;
+  elements.editorTitle.hidden = show;
+  elements.editorActions.hidden = show;
+  showFieldError(elements.renameInput, elements.renameFeedback, '');
+}
 
 elements.exportFlow.addEventListener('click', async () => {
   clearNotices();
@@ -400,13 +539,17 @@ function select(id) {
     container.hidden = true;
   }
   clearNotices();
+  showRenameForm(false);
+  // 別のフローを選んだら、JSON の編集欄は閉じ、内容の表示から見せます。
+  elements.jsonDetails.open = false;
   render().catch(console.error);
 }
 
-/** 一覧と編集欄を表示し直します。 */
+/** 一覧と詳細を表示し直します。 */
 async function render() {
   const flows = await listFlows();
   elements.empty.hidden = flows.length > 0;
+  elements.flowCount.textContent = flows.length > 0 ? String(flows.length) : '';
   elements.flows.replaceChildren(...flowListItems(flows));
 
   const stored = selectedId ? await getFlow(selectedId) : undefined;
@@ -418,11 +561,79 @@ async function render() {
     elements.json.value = JSON.stringify(orderFlow(stored.flow), null, 2);
   }
   if (stored) {
-    elements.editorHeading.textContent = stored.flow.name;
-    elements.editorOrigin.textContent = stored.flow.origin;
+    renderDetail(stored);
   } else {
     delete elements.editor.dataset.id;
   }
+}
+
+/**
+ * 選んだフローの内容（名前、サイト、実行時に入力する値、手順）を表示します。
+ * JSON を読まなくても、フローが何をするかがわかるようにするためです。
+ * @param {StoredFlow} stored
+ */
+function renderDetail({ flow, createdAt, updatedAt }) {
+  elements.editorHeading.textContent = flow.name;
+  elements.editorOrigin.textContent = flow.origin;
+
+  const params = flow.params ?? [];
+  const secrets = flow.steps.flatMap((step, index) =>
+    step.type === 'input' && step.secret ? [{ step, index }] : [],
+  );
+  const inputs = params.length + secrets.length;
+  elements.editorMeta.textContent = [
+    `手順 ${flow.steps.length} 件`,
+    inputs > 0 ? `実行時に入力 ${inputs} 項目` : '',
+    `作成 ${formatDateTime(createdAt)}`,
+    `更新 ${formatDateTime(updatedAt)}`,
+  ]
+    .filter(Boolean)
+    .join('・');
+
+  elements.paramsSection.hidden = inputs === 0;
+  elements.params.replaceChildren(
+    ...params.flatMap((param) => definition(param.label, describeParam(param))),
+    ...secrets.flatMap(({ step, index }) =>
+      definition(
+        `${step.type === 'input' ? step.target.label : ''}（手順 ${index + 1}）`,
+        '値は記録していません。実行するときに入力します',
+      ),
+    ),
+  );
+
+  elements.stepCount.textContent = String(flow.steps.length);
+  elements.steps.replaceChildren(
+    ...flow.steps.map((step) => {
+      const kind = document.createElement('span');
+      kind.className = 'lm-kind';
+      kind.textContent = stepKindLabel(step);
+      const text = document.createElement('span');
+      text.className = 'lm-step-text';
+      // 種類は前に表示しているため、説明の先頭の「クリック：」などは省きます。
+      const description = describeStep(step);
+      text.textContent = description.includes('：')
+        ? description.replace(/^[^：]+：/, '')
+        : 'ここで止まります。続きは人が操作します。';
+      const item = document.createElement('li');
+      item.className = step.type === 'pause' ? 'lm-step lm-step-pause' : 'lm-step';
+      item.append(kind, text);
+      return item;
+    }),
+  );
+}
+
+/**
+ * 実行時に入力する値の一覧の、1 項目（名前と説明）です。
+ * @param {string} term
+ * @param {string} description
+ * @returns {HTMLElement[]}
+ */
+function definition(term, description) {
+  const dt = document.createElement('dt');
+  dt.textContent = term;
+  const dd = document.createElement('dd');
+  dd.textContent = description;
+  return [dt, dd];
 }
 
 /**
@@ -437,13 +648,14 @@ function flowListItems(flows) {
     byOrigin.set(stored.flow.origin, [...(byOrigin.get(stored.flow.origin) ?? []), stored]);
   }
   return [...byOrigin.keys()].sort().flatMap((origin) => {
+    const group = byOrigin.get(origin) ?? [];
     const heading = document.createElement('div');
     heading.className = 'list-group-item lm-list-heading';
-    heading.textContent = origin;
-    const items = (byOrigin.get(origin) ?? []).map((stored) => {
+    heading.textContent = `${origin}（${group.length}）`;
+    const items = group.map((stored) => {
       const detail = document.createElement('div');
       detail.className = 'lm-sub';
-      detail.textContent = `手順 ${stored.flow.steps.length} 件`;
+      detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
       const button = listButton(stored.flow.name, detail);
       const current = stored.id === selectedId;
       button.classList.toggle('active', current);
@@ -468,6 +680,7 @@ function listButton(title, detail) {
   button.type = 'button';
   button.className = 'list-group-item list-group-item-action';
   const name = document.createElement('div');
+  name.className = 'lm-item-name';
   name.textContent = title;
   button.append(name, detail);
   return button;

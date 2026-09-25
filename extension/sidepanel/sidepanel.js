@@ -11,7 +11,7 @@ import {
   renameFlow,
   saveFlow,
 } from '../common/flow-store.js';
-import { describeStep } from '../shared/describe.js';
+import { describeStep, formatDateTime } from '../shared/describe.js';
 import { isWebUrl, orderFlow } from '../shared/flow.js';
 import {
   RUN_KEY_PREFIX,
@@ -577,7 +577,7 @@ function flowItem(stored) {
   name.textContent = stored.flow.name;
   const detail = document.createElement('div');
   detail.className = 'lm-sub';
-  detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDate(stored.updatedAt)}`;
+  detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
   const text = document.createElement('div');
   text.className = 'lm-flow-text';
   text.append(name, detail);
@@ -831,21 +831,6 @@ function button(text, className, onClick) {
   element.className = className;
   element.addEventListener('click', onClick);
   return element;
-}
-
-/**
- * 日時を「2026/9/25 10:05」の形式にします。
- * @param {string} iso
- * @returns {string}
- */
-function formatDate(iso) {
-  return new Date(iso).toLocaleString('ja-JP', {
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 /** @returns {Promise<Flow | undefined>} */
