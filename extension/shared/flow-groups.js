@@ -12,18 +12,20 @@
  *   renderItem: (stored: StoredFlow) => HTMLElement,
  *   isOpen: (host: string) => boolean,
  *   onToggle: (host: string, open: boolean) => void,
+ *   note?: (flows: StoredFlow[]) => string,
  * }} handlers
- *   renderItem はフローの 1 行を作ります。isOpen と onToggle で、一覧を作り直しても開閉の状態を保ちます
+ *   renderItem はフローの 1 行を作ります。isOpen と onToggle で、一覧を作り直しても開閉の状態を保ちます。
+ *   note は見出しの件数の後に添える文です（例：「・2 件選択」）。閉じたまとまりの中の選択を示します（#83）
  * @returns {HTMLDetailsElement[]}
  */
-export function buildFlowGroups(document, groups, { renderItem, isOpen, onToggle }) {
+export function buildFlowGroups(document, groups, { renderItem, isOpen, onToggle, note }) {
   return groups.map(({ host, flows }) => {
     const details = document.createElement('details');
     details.className = 'lm-group';
     details.open = isOpen(host);
     const summary = document.createElement('summary');
     summary.className = 'list-group-item lm-list-heading';
-    summary.textContent = `${host}（${flows.length} 件）`;
+    summary.textContent = `${host}（${flows.length} 件${note?.(flows) ?? ''}）`;
     details.append(summary, ...flows.map(renderItem));
     details.addEventListener('toggle', () => onToggle(host, details.open));
     return details;

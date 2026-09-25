@@ -72,6 +72,82 @@ body {
   gap: 0.25rem;
 }
 
+/*
+  フローの行です（#83）。左端に選ぶためのチェックボックス、その右に詳細を開くボタンを置きます。
+  ボタンは行の残りの幅をすべて使い、押せる範囲を従来の行と同じ広さに保ちます。
+*/
+.lm-flow-row {
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+}
+
+/*
+  チェックボックスは、Tabler の form-check-input ではなく、ブラウザー標準の表示を使います。
+  Tabler はチェックの印を data: の画像で描きますが、拡張機能の CSP（img-src は 'self'）で読み込めず、
+  選んだ状態と一部だけ選んだ状態の区別が付かなくなるためです。色だけを合わせます。
+*/
+.lm-check {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--tblr-primary);
+  cursor: pointer;
+}
+
+.lm-flow-check {
+  flex: none;
+  margin: 0.8rem 0 0 1rem;
+}
+
+.lm-list .lm-flow-open {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 1rem 0.5rem 0.625rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: start;
+}
+
+.lm-flow-row.active .lm-flow-open {
+  color: inherit;
+}
+
+/* ［すべて選択］と、選んだフローの一括操作の帯です（#83）。検索欄の下に置きます。 */
+.lm-bulk {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--tblr-border-color);
+}
+
+.lm-bulk[hidden],
+.lm-bulk-bar[hidden] {
+  display: none;
+}
+
+.lm-select-all {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0;
+  cursor: pointer;
+}
+
+.lm-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#bulk-notice {
+  margin: 0;
+}
+
 #empty[hidden],
 #no-match[hidden],
 #history-empty[hidden],
@@ -302,13 +378,13 @@ body {
   display: none;
 }
 
-/* ［まとめて書き出し］の知らせです（#27）。一覧の見出しの帯の直下に出します。 */
+/* 一覧の見出しの帯のボタンの知らせです。帯の直下に出します。 */
 #flows-notice {
   margin: 0.75rem 1rem;
 }
 
 /*
-  一覧の見出しの帯には、見出しとボタン 2 つを置きます（#27）。一覧の幅が狭い場合は、見出しを
+  一覧の見出しの帯には、見出しとボタンを置きます。一覧の幅が狭い場合は、見出しを
   途中で折り返さず、ボタンを次の行に送ります。
 */
 .lm-list > .lm-card-header {
