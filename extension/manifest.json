@@ -31,7 +31,7 @@
     "service_worker": "background/service-worker.js",
     "type": "module"
   },
-  "permissions": ["sidePanel", "storage", "scripting", "webNavigation"],
+  "permissions": ["sidePanel", "storage", "scripting", "webNavigation", "debugger", "downloads"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "content_security_policy": {
     "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"

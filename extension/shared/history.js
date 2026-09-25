@@ -54,9 +54,10 @@ export function appendHistory(history, entry, limit = HISTORY_LIMIT) {
  * }} run 実行の状態（background/runner.js の RunState）
  * @param {string} endedAt 終了した日時（ISO 8601）
  * @param {Iterable<string>} values 伏せる値
+ * @param {string[]} [files] 保存したファイルのパス（#16）
  * @returns {HistoryEntry | null} 実行が終わっていない場合は null
  */
-export function historyEntryFromRun(run, endedAt, values) {
+export function historyEntryFromRun(run, endedAt, values, files = []) {
   if (!['done', 'failed', 'stopped', 'halted'].includes(run.status)) {
     return null;
   }
@@ -71,7 +72,7 @@ export function historyEntryFromRun(run, endedAt, values) {
     endedAt,
     status,
     total: run.total,
-    files: [],
+    files: [...files],
   };
   if (status !== 'done') {
     // 停止（stopped）の stepIndex は、停止した時点で完了していた手順の数です。次の手順で止まったことになります。

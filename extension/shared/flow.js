@@ -4,16 +4,29 @@
 // 読み込めません。content script から ES モジュールを読み込むには web_accessible_resources の宣言が
 // 必要になり、ページから拡張機能の有無を検出できるようになるためです。検証は Service Worker で行います。
 
-import { validateParams, validateReferences, withPlaceholders } from './params.js';
+import {
+  PARAM_NAME_PATTERN,
+  validateParams,
+  validateReferences,
+  withPlaceholders,
+} from './params.js';
+import { RESERVED_NAMES, nonBuiltinReferences, validateSaveTemplate } from './save-path.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
- * 版 1 のフローは、変換せずにそのまま版 2 として扱えます。
+ * 版 3 は、版 2 に PDF の保存（savePdf）とページの文字の読み取り（extract）を加えたものです（#16）。
+ * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3];
+
+/**
+ * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
+ * @type {Record<string, number>}
+ */
+const MIN_SCHEMA_VERSION = { pause: 2, savePdf: 3, extract: 3 };
 
 /** 1 つのフローに含められる手順の数の上限です。保存領域を使い切ることを防ぎます。 */
 export const MAX_STEPS = 1000;
@@ -71,7 +84,29 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string} [note] 止まる理由の説明
  */
 
-/** @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep} Step */
+/**
+ * 表示中のページを PDF として保存します（#16）。版 3 で加えました。
+ * 印刷用の表示で保存します。画面の表示のまま保存する方法は #73 で加えます。
+ * @typedef {object} SavePdfStep
+ * @property {'savePdf'} type
+ * @property {string} [path] 保存先のひな形。ダウンロード先フォルダーからの相対パスです。
+ *   省略した場合は save-path.js の DEFAULT_SAVE_PATH を使います。
+ * @property {'rename' | 'overwrite'} [onConflict] 同じ名前のファイルがある場合の動作。
+ *   rename（既定）は番号を付けて別名で保存し、overwrite は上書きします。
+ */
+
+/**
+ * 指定した要素の文字を読み取り、名前を付けて覚えます（#16）。版 3 で加えました。
+ * 読み取った値は、後の手順の savePdf の path で {{名前}} として使えます。保存はしません。
+ * @typedef {object} ExtractStep
+ * @property {'extract'} type
+ * @property {Target} target
+ * @property {string} name 読み取った値に付ける名前
+ */
+
+/**
+ * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep} Step
+ */
 
 /** @typedef {import('./params.js').Param} Param */
 
@@ -171,18 +206,57 @@ export function validateFlow(value) {
   } else if (value.steps.length > MAX_STEPS) {
     errors.push(`steps が上限の ${MAX_STEPS} 件を超えています。`);
   } else {
+    /** 前の手順の extract で付けた名前です。savePdf の path で参照できます。 */
+    const extracted = new Set();
+    const params = /** @type {Param[]} */ (paramErrors.length === 0 ? (value.params ?? []) : []);
     value.steps.forEach((step, index) => {
       for (const error of validateStep(step)) {
         errors.push(`steps[${index}]: ${error}`);
       }
-      if (isRecord(step) && step.type === 'pause' && value.schemaVersion === 1) {
+      const type = isRecord(step) && typeof step.type === 'string' ? step.type : '';
+      const minVersion = MIN_SCHEMA_VERSION[type];
+      if (
+        minVersion !== undefined &&
+        typeof value.schemaVersion === 'number' &&
+        value.schemaVersion < minVersion
+      ) {
         errors.push(
-          `steps[${index}]: pause の手順は、schemaVersion が 2 以上のフローでだけ使えます。`,
+          `steps[${index}]: ${type} の手順は、schemaVersion が ${minVersion} 以上のフローでだけ使えます。`,
         );
+      }
+      if (isRecord(step) && step.type === 'extract' && typeof step.name === 'string') {
+        if (params.some((param) => param.name === step.name)) {
+          errors.push(
+            `steps[${index}]: name の「${step.name}」は、パラメータと同じ名前のため使えません。`,
+          );
+        }
+        extracted.add(step.name);
+      }
+      if (isRecord(step) && step.type === 'savePdf' && typeof step.path === 'string') {
+        for (const { name, part } of nonBuiltinReferences(step.path)) {
+          if (part === undefined && extracted.has(name)) {
+            continue;
+          }
+          if (
+            part === undefined &&
+            !params.some((param) => param.name === name) &&
+            paramErrors.length === 0
+          ) {
+            errors.push(
+              `steps[${index}]: path の「${name}」は、パラメータにも、前の手順の extract で付けた名前にもありません。`,
+            );
+          } else if (paramErrors.length === 0) {
+            for (const error of validateReferences(
+              `{{${part ? `${name}.${part}` : name}}}`,
+              params,
+            )) {
+              errors.push(`steps[${index}]: path の${error}`);
+            }
+          }
+        }
       }
       // パラメータの定義に誤りがある場合、参照の検証は定義を直してから行います。
       if (paramErrors.length === 0) {
-        const params = /** @type {Param[]} */ (value.params ?? []);
         for (const text of templateTexts(step)) {
           for (const error of validateReferences(text, params)) {
             errors.push(`steps[${index}]: ${error}`);
@@ -249,9 +323,39 @@ export function validateStep(step) {
     case 'pause':
       return step.note === undefined || isText(step.note) ? [] : ['note が文字列ではありません。'];
 
+    case 'savePdf': {
+      /** @type {string[]} */
+      const errors = [];
+      if (step.path !== undefined) {
+        if (!isText(step.path)) {
+          errors.push('path が文字列ではありません。');
+        } else {
+          errors.push(...validateSaveTemplate(step.path));
+        }
+      }
+      if (
+        step.onConflict !== undefined &&
+        step.onConflict !== 'rename' &&
+        step.onConflict !== 'overwrite'
+      ) {
+        errors.push('onConflict が rename または overwrite ではありません。');
+      }
+      return errors;
+    }
+
+    case 'extract': {
+      const errors = validateTarget(step.target);
+      if (typeof step.name !== 'string' || !PARAM_NAME_PATTERN.test(step.name)) {
+        errors.push('name が、英字または _ で始まり英数字と _ だけを使った名前ではありません。');
+      } else if (RESERVED_NAMES.includes(step.name)) {
+        errors.push(`name に「${step.name}」は使えません。組み込みの値の名前です。`);
+      }
+      return errors;
+    }
+
     default:
       return [
-        '手順の種類（type）が navigate、click、input、select、pause のいずれでもありません。',
+        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract のいずれでもありません。',
       ];
   }
 }

@@ -38,7 +38,14 @@ test('ページや他の拡張機能からの接続を受け付けず、ペー�
 });
 
 test('要求する権限は、SECURITY.md に記載したものだけである', () => {
-  assert.deepEqual(manifest.permissions, ['sidePanel', 'storage', 'scripting', 'webNavigation']);
+  assert.deepEqual(manifest.permissions, [
+    'sidePanel',
+    'storage',
+    'scripting',
+    'webNavigation',
+    'debugger',
+    'downloads',
+  ]);
   assert.equal(manifest.optional_permissions, undefined);
 });
 

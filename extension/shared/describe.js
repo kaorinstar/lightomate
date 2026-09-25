@@ -1,5 +1,7 @@
 // 手順を、人が読むための 1 行の説明にします。サイドパネルと設定画面で使います。
 
+import { DEFAULT_SAVE_PATH } from './save-path.js';
+
 /** @typedef {import('./flow.js').Step} Step */
 
 /**
@@ -20,6 +22,10 @@ export function describeStep(step) {
       return `選択：${step.target.label} ← ${step.labels.join('、')}`;
     case 'pause':
       return `一時停止${step.note ? `：${step.note}` : ''}`;
+    case 'savePdf':
+      return `PDF を保存：${step.path ?? DEFAULT_SAVE_PATH}${step.onConflict === 'overwrite' ? '（同じ名前は上書き）' : ''}`;
+    case 'extract':
+      return `読み取り：${step.target.label} → {{${step.name}}}`;
   }
 }
 
@@ -40,6 +46,10 @@ export function stepKindLabel(step) {
       return '選択';
     case 'pause':
       return '一時停止';
+    case 'savePdf':
+      return 'PDF 保存';
+    case 'extract':
+      return '読み取り';
   }
 }
 
