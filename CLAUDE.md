@@ -155,6 +155,9 @@ Prettier の対象はコードと設定ファイルだけです。Markdown と `
 ## 規約
 
 - 改行コードは LF です。ただし `.bat`、`.cmd`、`.ps1` は CRLF です。`.gitattributes` で統一しています。
+  `.bat` などはリポジトリにも CRLF のまま保存します（変換しません）。GitHub の［Download raw file］は
+  保存した内容をそのまま返すため、LF で保存すると利用者が受け取るファイルも LF になるためです。
+  CRLF であることは `test/tools.test.js` で確かめます。
 - ブランチ名は `<種類>/<Issue 番号>-<短い説明>` とします。例：`fix/18-tab-layout`、
   `feat/13-tray-icon`、`ci/27-split-workflow`、`docs/20-version-file`。種類は `feat`、`fix`、
   `docs`、`ci`、`chore` です。Issue がない作業では番号を省きます。
