@@ -301,3 +301,20 @@ body {
 .lm-speed-feedback:empty {
   display: none;
 }
+
+/* ［まとめて書き出し］の知らせです（#27）。一覧の見出しの帯の直下に出します。 */
+#flows-notice {
+  margin: 0.75rem 1rem;
+}
+
+/*
+  一覧の見出しの帯には、見出しとボタン 2 つを置きます（#27）。一覧の幅が狭い場合は、見出しを
+  途中で折り返さず、ボタンを次の行に送ります。
+*/
+.lm-list > .lm-card-header {
+  flex-wrap: wrap;
+}
+
+.lm-list > .lm-card-header .card-title {
+  white-space: nowrap;
+}

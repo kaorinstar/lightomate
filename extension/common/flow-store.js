@@ -5,6 +5,7 @@
 
 import { orderFlow, validateFlow, withInterval } from '../shared/flow.js';
 import { uniqueName } from '../shared/flow-list.js';
+import { namesForImport } from '../shared/flow-file.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 
@@ -73,6 +74,34 @@ export async function saveFlow(flow, id) {
   };
   await chrome.storage.local.set({ [FLOWS_KEY]: all });
   return { ok: true, id: flowId, name };
+}
+
+/**
+ * 複数のフローを、1 回の書き込みでまとめて追加します（#27）。1 件でも形式に誤りがあれば、1 件も追加しません。
+ * 同じサイトに同じ名前のフローがある場合は、番号を付けます。ファイルの中どうしの重複にも番号を付けます。
+ * 追加したフローには、新しい ID を割り当てます。
+ * @param {unknown[]} flows
+ * @returns {Promise<{ ok: true, added: { id: string, name: string, originalName: string }[] }
+ *   | { ok: false, errors: string[] }>}
+ */
+export async function addFlows(flows) {
+  const errors = flows.flatMap((flow, index) =>
+    validateFlow(flow).map((error) => (flows.length > 1 ? `${index + 1} 件目：${error}` : error)),
+  );
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+  const valid = /** @type {Flow[]} */ (flows);
+  const all = await readAll();
+  const names = namesForImport(valid, Object.values(all));
+  const now = new Date().toISOString();
+  const added = valid.map((flow, index) => {
+    const id = crypto.randomUUID();
+    all[id] = { id, createdAt: now, updatedAt: now, flow: { ...flow, name: names[index] } };
+    return { id, name: names[index], originalName: flow.name };
+  });
+  await chrome.storage.local.set({ [FLOWS_KEY]: all });
+  return { ok: true, added };
 }
 
 /**

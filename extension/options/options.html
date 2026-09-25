@@ -59,8 +59,12 @@
             <h2 id="list-heading" class="card-title">
               保存したフロー<span class="lm-count" id="flow-count"></span>
             </h2>
-            <button type="button" class="btn btn-sm" id="new">JSON から追加</button>
+            <div class="lm-buttons">
+              <button type="button" class="btn btn-sm" id="export-all">まとめて書き出し</button>
+              <button type="button" class="btn btn-sm" id="new">JSON から追加</button>
+            </div>
           </div>
+          <p id="flows-notice" hidden></p>
           <div class="lm-search" id="search-area" hidden>
             <div class="lm-combobox">
               <label class="visually-hidden" for="search">フロー名かサイトで検索</label>
@@ -204,8 +208,8 @@
             </div>
             <div class="card-body">
               <p class="lm-sub">
-                フロー定義の JSON を貼り付けるか、ファイルを選んでください。追加する前に、
-                フローが操作するサイトを確認します。
+                フロー定義の JSON を貼り付けるか、ファイルを選んでください。［まとめて書き出し］で
+                作った複数のフローのファイルも読み込めます。追加する前に、フローが操作するサイトを確認します。
               </p>
               <input
                 type="file"
