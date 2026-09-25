@@ -1,12 +1,12 @@
 // 記録中のタブのページで、利用者の操作を記録します。
 //
-// 読み込む順序は selector.js、overlay.js、recorder.js です（background/recording.js）。
+// 読み込む順序は selector.js、overlay.js、element-text.js、recorder.js です（background/recording.js）。
 // Service Worker が、記録を始めたときと、記録中にページを移動したときに、このスクリプトを
 // ページへ読み込みます（chrome.scripting.executeScript）。読み込まれた時点で記録を始め、
 // Service Worker から停止の連絡を受けると終了します。
 // 記録した手順は Service Worker へ送り、ここでは保存しません。
 
-/* global buildTarget, showStatusOverlay */
+/* global buildTarget, elementTexts, showNotice, showStatusOverlay */
 
 (() => {
   /** 同じページに 2 回読み込まれた場合に、記録が二重にならないようにする目印です。 */
@@ -51,7 +51,8 @@
       // 入力欄へのクリックは、入力の準備にすぎないため記録しません。値は change で記録します。
       return;
     }
-    send({ type: 'click', target: buildTarget(element) });
+    // 確定ボタンかどうかを Service Worker が判定できるよう、要素の文言も送ります（#29）。
+    send({ type: 'click', target: buildTarget(element) }, elementTexts(element));
   };
 
   /** @param {Event} event */
@@ -90,7 +91,14 @@
   document.addEventListener('change', onChange, true);
 
   chrome.runtime.onMessage.addListener((message, sender) => {
-    if (sender.id !== chrome.runtime.id || message?.kind !== 'recorder/stop') {
+    if (sender.id !== chrome.runtime.id) {
+      return;
+    }
+    if (message?.kind === 'recorder/notice' && typeof message.text === 'string') {
+      showNotice(message.text);
+      return;
+    }
+    if (message?.kind !== 'recorder/stop') {
       return;
     }
     document.removeEventListener('click', onClick, true);
@@ -102,9 +110,10 @@
   /**
    * 手順を Service Worker へ送ります。
    * @param {object} step
+   * @param {string[]} [texts] クリックした要素の文言
    */
-  function send(step) {
-    chrome.runtime.sendMessage({ kind: 'recording/step', step }).catch(() => {
+  function send(step, texts) {
+    chrome.runtime.sendMessage({ kind: 'recording/step', step, texts }).catch(() => {
       // 拡張機能を再読み込みした後など、Service Worker と接続できない場合は記録を続けられません。
       overlay.remove();
     });

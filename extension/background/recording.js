@@ -12,6 +12,7 @@ import {
   validateFlow,
   validateStep,
 } from '../shared/flow.js';
+import { guardRecordedStep } from '../shared/purchase-guard.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -28,8 +29,16 @@ import {
 const RECORDING_KEY = 'recording';
 const LAST_FLOW_KEY = 'lastFlow';
 
-/** ページへ読み込むスクリプトです。selector.js と overlay.js の関数を recorder.js が使うため、この順で読み込みます。 */
-const CONTENT_FILES = ['content/selector.js', 'content/overlay.js', 'content/recorder.js'];
+/**
+ * ページへ読み込むスクリプトです。selector.js、overlay.js、element-text.js の関数を recorder.js が
+ * 使うため、この順で読み込みます。
+ */
+const CONTENT_FILES = [
+  'content/selector.js',
+  'content/overlay.js',
+  'content/element-text.js',
+  'content/recorder.js',
+];
 
 /**
  * 状態の読み書きを 1 つずつ順に行うための待ち行列です。
@@ -121,11 +130,15 @@ export function stopRecording() {
 /**
  * content script から届いた手順を、記録中の手順に加えます。
  * 送信元が記録中のタブの、記録を始めたサイトのページであることを確認します。
+ *
+ * 確定ボタンのクリックは、クリックではなく一時停止の手順として記録し、ページにその旨を表示します（#29）。
+ * 実行時に確定ボタンを押さないためです。利用者が記録中に押したクリックそのものは止めません。
  * @param {unknown} step
  * @param {chrome.runtime.MessageSender} sender
+ * @param {unknown} texts クリックした要素の文言（content/element-text.js）
  * @returns {Promise<void>}
  */
-export function addStep(step, sender) {
+export function addStep(step, sender, texts) {
   return enqueue(async () => {
     const recording = await getRecording();
     if (
@@ -139,8 +152,24 @@ export function addStep(step, sender) {
     ) {
       return;
     }
-    recording.steps.push(/** @type {Step} */ (step));
+    const guarded = guardRecordedStep(
+      /** @type {Step} */ (step),
+      Array.isArray(texts) ? texts.filter((text) => typeof text === 'string') : [],
+    );
+    recording.steps.push(guarded.step);
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
+    if (guarded.confirmText !== undefined) {
+      await chrome.tabs
+        .sendMessage(
+          recording.tabId,
+          {
+            kind: 'recorder/notice',
+            text: '確定ボタンのため、クリックの代わりに一時停止を記録しました。実行はこの手前で止まります。',
+          },
+          { frameId: 0 },
+        )
+        .catch(() => {});
+    }
   });
 }
 

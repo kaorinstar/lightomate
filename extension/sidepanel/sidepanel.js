@@ -419,6 +419,9 @@ function runStatusText(run, step) {
       return `「${run.flowName}」の実行を停止しました。完了した手順は ${run.total} 件中 ${run.stepIndex} 件です。`;
     case 'failed':
       return `「${run.flowName}」の実行は ${where} で止まりました。${run.error ?? ''}`;
+    case 'halted':
+      // 止まった理由（error）に手順の説明が含まれるため、手順の番号だけを示します。
+      return `「${run.flowName}」の実行は 手順 ${run.stepIndex + 1} / ${run.total} で止まりました。${run.error ?? ''}`;
   }
 }
 

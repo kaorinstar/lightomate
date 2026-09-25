@@ -18,5 +18,7 @@ export function describeStep(step) {
         : `入力：${step.target.label} ← ${step.value}`;
     case 'select':
       return `選択：${step.target.label} ← ${step.labels.join('、')}`;
+    case 'pause':
+      return `一時停止${step.note ? `：${step.note}` : ''}`;
   }
 }
