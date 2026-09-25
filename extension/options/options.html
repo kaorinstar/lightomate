@@ -80,6 +80,8 @@
                 </div>
               </form>
               <div class="lm-buttons" id="editor-actions">
+                <button type="button" class="btn btn-sm" id="open-first">最初のページを開く</button>
+                <button type="button" class="btn btn-sm" id="run">実行</button>
                 <button type="button" class="btn btn-sm" id="rename">名前の変更</button>
                 <button type="button" class="btn btn-sm" id="export">ファイルに書き出し</button>
                 <button type="button" class="btn btn-sm btn-ghost-danger" id="delete">削除</button>
@@ -88,6 +90,18 @@
             <div class="card-body">
               <div id="editor-confirm" hidden></div>
               <p id="editor-notice" hidden></p>
+              <p id="run-reason" class="lm-sub" hidden></p>
+
+              <form id="run-form" class="lm-block lm-run-form" hidden>
+                <h3 id="run-form-heading" class="lm-block-title"></h3>
+                <p class="lm-sub">入力した値は保存しません。</p>
+                <div id="run-fields" class="lm-run-fields mb-3"></div>
+                <div class="lm-buttons">
+                  <button type="submit" class="btn btn-primary" id="run-submit"></button>
+                  <button type="button" class="btn" id="run-cancel">キャンセル</button>
+                </div>
+                <p id="run-notice" hidden></p>
+              </form>
 
               <section id="params-section" class="lm-block" aria-labelledby="params-heading">
                 <h3 id="params-heading" class="lm-block-title">実行時に入力する値</h3>

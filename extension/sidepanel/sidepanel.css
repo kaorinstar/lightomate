@@ -151,11 +151,3 @@ body {
 .lm-flow-reason {
   margin: 0.25rem 0 0;
 }
-
-/* 実行する値の入力欄です。項目名の下に入力欄を置きます。 */
-.lm-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin: 0;
-}
