@@ -28,7 +28,7 @@ function Get-DownloadsFolder {
 }
 
 $dest = Join-Path (Get-DownloadsFolder) 'Lightomate'
-# v0.1.0 の更新用ファイルの展開先です（#36）。残っている場合は、読み込み直しを案内します。
+# 作り直す前の v0.1.0 の更新用ファイルの展開先です（#36）。残っている場合は、読み込み直しを案内します。
 $oldDest = Join-Path $env:USERPROFILE 'Lightomate'
 $headers = @{ 'User-Agent' = 'lightomate-update' }
 
