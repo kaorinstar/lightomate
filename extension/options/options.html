@@ -110,7 +110,7 @@
               <p id="editor-notice" hidden></p>
               <p id="run-reason" class="lm-sub" hidden></p>
 
-              <form id="run-form" class="lm-block lm-run-form" hidden>
+              <form id="run-form" class="lm-block lm-run-form" novalidate hidden>
                 <h3 id="run-form-heading" class="lm-block-title"></h3>
                 <p class="lm-sub">入力した値は保存しません。</p>
                 <div id="run-fields" class="lm-run-fields mb-3"></div>
@@ -146,6 +146,7 @@
                   spellcheck="false"
                   aria-label="フロー定義の JSON"
                 ></textarea>
+                <div class="invalid-feedback" id="json-feedback"></div>
                 <div class="lm-buttons mt-3">
                   <button type="button" class="btn btn-primary" id="save">JSON を保存</button>
                 </div>
@@ -170,18 +171,20 @@
                 accept="application/json,.json"
                 aria-label="フロー定義のファイル"
               />
-              <textarea
-                id="import-json"
-                class="form-control lm-code mb-3"
-                rows="18"
-                spellcheck="false"
-                aria-label="追加するフロー定義の JSON"
-              ></textarea>
+              <div class="mb-3">
+                <textarea
+                  id="import-json"
+                  class="form-control lm-code"
+                  rows="18"
+                  spellcheck="false"
+                  aria-label="追加するフロー定義の JSON"
+                ></textarea>
+                <div class="invalid-feedback" id="import-json-feedback"></div>
+              </div>
               <div class="lm-buttons">
                 <button type="button" class="btn btn-primary" id="import">追加</button>
               </div>
               <div id="import-confirm" hidden></div>
-              <p id="import-notice" hidden></p>
             </div>
           </section>
         </div>
@@ -237,6 +240,7 @@
                   spellcheck="false"
                   placeholder="#placeOrder"
                 ></textarea>
+                <div class="invalid-feedback" id="stop-selectors-feedback"></div>
               </div>
               <div class="mb-3">
                 <label class="form-label" for="stop-paths"
@@ -249,6 +253,7 @@
                   spellcheck="false"
                   placeholder="/checkout/*"
                 ></textarea>
+                <div class="invalid-feedback" id="stop-paths-feedback"></div>
               </div>
               <div class="lm-buttons">
                 <button type="submit" class="btn btn-primary">このサイトの指定を保存</button>

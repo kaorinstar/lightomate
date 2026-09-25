@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   defaultValue,
   findReferences,
+  paramFieldErrors,
   renderTemplate,
   resolveParams,
   validateParams,
@@ -78,4 +79,30 @@ test('定義されていない参照と、年月以外での .year などの参�
   assert.equal(validateReferences('{{color}}', params).length, 1);
   assert.equal(validateReferences('{{size.year}}', params).length, 1);
   assert.equal(validateReferences('{{target.day}}', params).length, 1);
+});
+
+test('入力の誤りを、パラメータの名前ごとに返す', () => {
+  const now = new Date(2026, 8, 25);
+  assert.deepEqual(
+    paramFieldErrors(params, { size: 'XL', count: 'abc', target: '', keyword: '' }, now),
+    {
+      size: '選択肢にない値です。',
+      count: '数値ではありません。',
+      keyword: '値を入力してください。',
+    },
+    '空でも既定値のある欄（対象月）は誤りにしない',
+  );
+  assert.deepEqual(
+    paramFieldErrors(params, { size: 'S', count: '3', target: '2026-08', keyword: '本' }, now),
+    {},
+  );
+});
+
+test('欄ごとの誤りは、実行時の検証（resolveParams）と同じ件数になる', () => {
+  const now = new Date(2026, 8, 25);
+  const input = { size: 'XL', count: '', target: '2026-13', keyword: 'a' };
+  assert.equal(
+    Object.keys(paramFieldErrors(params, input, now)).length,
+    resolveParams(params, input, now).errors.length,
+  );
 });

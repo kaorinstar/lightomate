@@ -3,7 +3,14 @@
 // フォームを組み立てる関数は、渡された要素の ownerDocument を使って部品を作ります。
 
 import { isWebUrl } from './flow.js';
-import { defaultValue, findReferences, renderTemplate, resolveParams } from './params.js';
+import {
+  defaultValue,
+  findReferences,
+  paramFieldErrors,
+  renderTemplate,
+  resolveParams,
+} from './params.js';
+import { showFieldError } from './ui.js';
 
 /** @typedef {import('./flow.js').Flow} Flow */
 /** @typedef {import('./params.js').Param} Param */
@@ -63,13 +70,23 @@ export function firstPageUrl(flow, paramInput, now) {
 
 /**
  * 入力フォームの欄を作ります。パラメータごとの欄と、値を記録していない入力欄の手順ごとの欄です。
+ * 各欄は、項目名、入力欄、誤りの表示欄（invalid-feedback）の順に並べます。
+ * Chrome 標準の吹き出し（required による検証）は使わず、showRunFieldErrors で各欄の直下に誤りを出します。
+ * フォームには novalidate を付けます（docs/design-guidelines.md の「5.」）。
  * @param {Document} document
  * @param {Flow} flow
- * @param {{ params: Param[], secretSteps: number[], now: Date }} fields 作る欄
- * @returns {HTMLLabelElement[]}
+ * @param {{ params: Param[], secretSteps: number[], now: Date, idPrefix?: string }} fields 作る欄。
+ *   idPrefix は、入力欄の id の接頭辞です
+ * @returns {HTMLDivElement[]}
  */
-export function buildRunFields(document, flow, { params, secretSteps, now }) {
-  const labels = params.map((param) => {
+export function buildRunFields(
+  document,
+  flow,
+  { params, secretSteps, now, idPrefix = 'run-field' },
+) {
+  let count = 0;
+  const nextId = () => `${idPrefix}-${count++}`;
+  const fields = params.map((param) => {
     /** @type {HTMLInputElement | HTMLSelectElement} */
     let control;
     if (param.type === 'select') {
@@ -91,8 +108,7 @@ export function buildRunFields(document, flow, { params, secretSteps, now }) {
     }
     control.name = `param:${param.name}`;
     control.value = defaultValue(param, now);
-    control.required = true;
-    return labeled(document, param.label, control);
+    return field(document, param.label, control, nextId());
   });
 
   for (const index of secretSteps) {
@@ -102,11 +118,45 @@ export function buildRunFields(document, flow, { params, secretSteps, now }) {
     control.type = 'password';
     control.name = `secret:${index}`;
     control.autocomplete = 'off';
-    control.required = true;
     const label = step.type === 'input' ? step.target.label : '';
-    labels.push(labeled(document, `${label}（手順 ${index + 1}）`, control));
+    fields.push(field(document, `${label}（手順 ${index + 1}）`, control, nextId()));
   }
-  return labels;
+  return fields;
+}
+
+/**
+ * 入力フォームの値を検証し、誤りをそれぞれの入力欄の直下に表示します。
+ * パラメータの欄は実行時と同じ検証（paramFieldErrors）を行い、値を記録していない入力欄は空を誤りにします。
+ * @param {HTMLFormElement} form buildRunFields で作った欄を含むフォーム
+ * @param {Param[]} params フォームを作ったときのパラメータ
+ * @param {Date} now
+ * @returns {boolean} 誤りがある場合は true。最初の誤りの欄にフォーカスを移します
+ */
+export function showRunFieldErrors(form, params, now) {
+  const { params: input } = readRunFields(new FormData(form));
+  const errors = paramFieldErrors(params, input, now);
+  /** @type {HTMLElement | null} */
+  let first = null;
+  const controls = /** @type {NodeListOf<HTMLInputElement | HTMLSelectElement>} */ (
+    form.querySelectorAll('input[name], select[name]')
+  );
+  for (const control of controls) {
+    const feedback = form.ownerDocument.getElementById(`${control.id}-feedback`);
+    if (!feedback) {
+      continue;
+    }
+    const error = control.name.startsWith('param:')
+      ? (errors[control.name.slice('param:'.length)] ?? '')
+      : control.value === ''
+        ? '値を入力してください。'
+        : '';
+    showFieldError(control, feedback, error);
+    if (error && !first) {
+      first = control;
+    }
+  }
+  first?.focus();
+  return first !== null;
 }
 
 /**
@@ -133,14 +183,28 @@ export function readRunFields(entries) {
 }
 
 /**
+ * 入力フォームの 1 項目（項目名、入力欄、誤りの表示欄）を作ります。
+ * 誤りの表示欄は入力欄の直後に置きます。Tabler は、誤りの印の付いた入力欄の後ろの表示欄だけを表示するためです。
+ * 項目名は label の for で入力欄に結び付け、誤りの文が項目名として読み上げられないようにします。
  * @param {Document} document
- * @param {string} text
- * @param {HTMLElement} control
- * @returns {HTMLLabelElement}
+ * @param {string} text 項目名
+ * @param {HTMLInputElement | HTMLSelectElement} control
+ * @param {string} id 入力欄の id
+ * @returns {HTMLDivElement}
  */
-function labeled(document, text, control) {
+function field(document, text, control, id) {
+  control.id = id;
   const label = document.createElement('label');
-  label.className = 'form-label lm-field';
-  label.append(text, control);
-  return label;
+  label.className = 'form-label';
+  label.htmlFor = id;
+  label.textContent = text;
+  const feedback = document.createElement('div');
+  feedback.className = 'invalid-feedback';
+  feedback.id = `${id}-feedback`;
+  // 誤りは、その欄を直し始めたときに消します。
+  control.addEventListener('input', () => showFieldError(control, feedback, ''));
+  const wrapper = document.createElement('div');
+  wrapper.className = 'lm-field';
+  wrapper.append(label, control, feedback);
+  return wrapper;
 }
