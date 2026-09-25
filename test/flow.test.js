@@ -5,6 +5,7 @@ import {
   MAX_STEPS,
   SCHEMA_VERSION,
   orderFlow,
+  replaceJsonName,
   validateFlow,
   validateStep,
 } from '../extension/shared/flow.js';
@@ -146,4 +147,26 @@ test('項目を並べ直しても、内容は変わらず、type が先頭にな
   assert.deepEqual(ordered, validFlow);
   assert.deepEqual(Object.keys(ordered).slice(0, 3), ['schemaVersion', 'name', 'origin']);
   assert.equal(Object.keys(ordered.steps[0])[0], 'type');
+});
+
+test('編集中の JSON の名前だけを書き換え、ほかの編集内容を残す', () => {
+  const edited = JSON.stringify({
+    schemaVersion: 1,
+    name: '旧い名前',
+    origin: 'https://www.example.com',
+    steps: [{ type: 'navigate', cause: 'user', url: 'https://www.example.com/edited' }],
+    note: '保存していない編集',
+  });
+  const renamed = replaceJsonName(edited, '新しい名前');
+  assert.ok(renamed);
+  assert.deepEqual(JSON.parse(renamed), { ...JSON.parse(edited), name: '新しい名前' });
+  // 項目の順序は変えません。
+  assert.deepEqual(Object.keys(JSON.parse(renamed)), Object.keys(JSON.parse(edited)));
+});
+
+test('JSON として読み取れない、または最上位がオブジェクトでない場合は書き換えない', () => {
+  assert.equal(replaceJsonName('{ "name": "途中', '新しい名前'), null);
+  assert.equal(replaceJsonName('[1, 2]', '新しい名前'), null);
+  assert.equal(replaceJsonName('"文字列"', '新しい名前'), null);
+  assert.equal(replaceJsonName('null', '新しい名前'), null);
 });

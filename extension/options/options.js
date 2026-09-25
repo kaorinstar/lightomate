@@ -21,7 +21,7 @@ import {
   saveStopRule,
 } from '../common/stop-rules-store.js';
 import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
-import { isWebOrigin, orderFlow, validateFlow } from '../shared/flow.js';
+import { isWebOrigin, orderFlow, replaceJsonName, validateFlow } from '../shared/flow.js';
 import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
 import { attachCombobox } from '../shared/combobox.js';
 import { buildFlowGroups } from '../shared/flow-groups.js';
@@ -474,8 +474,17 @@ elements.renameForm.addEventListener('submit', async (event) => {
     return;
   }
   showRenameForm(false);
-  // JSON の編集欄の名前も新しい名前にするため、次の表示で編集欄を読み込み直します。
-  delete elements.editor.dataset.id;
+  // JSON の編集欄は読み込み直さず、名前だけを書き換えます。保存していない編集を失わないためです（#53）。
+  const renamed = replaceJsonName(elements.json.value, result.name);
+  if (renamed === null) {
+    showNotice(
+      elements.jsonNotice,
+      `JSON の編集欄を読み取れないため、編集欄の名前は書き換えていません。［JSON を保存］を押すと、名前は編集欄の内容に戻ります。`,
+      'warning',
+    );
+  } else {
+    elements.json.value = renamed;
+  }
   if (result.name === name) {
     showToast(elements.toast, `名前を「${name}」に変更しました。`);
     return;
