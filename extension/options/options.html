@@ -51,6 +51,24 @@
             </h2>
             <button type="button" class="btn btn-sm" id="new">JSON から追加</button>
           </div>
+          <div class="lm-search" id="search-area" hidden>
+            <div class="lm-combobox">
+              <label class="visually-hidden" for="search">フロー名かサイトで検索</label>
+              <input
+                type="search"
+                class="form-control form-control-sm"
+                id="search"
+                placeholder="フロー名かサイトで検索"
+              />
+              <ul id="search-suggestions" class="lm-suggestions" aria-label="検索の候補"></ul>
+            </div>
+            <select
+              class="form-select form-select-sm lm-search-mode"
+              id="search-mode"
+              aria-label="一致方法"
+            ></select>
+          </div>
+          <p id="no-match" class="lm-empty" hidden>該当するフローはありません。</p>
           <p id="empty" class="lm-empty">
             保存したフローはまだありません。サイドパネルの［記録開始］で作成できます。JSON
             のファイルがある場合は［JSON から追加］を押してください。
