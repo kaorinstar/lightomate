@@ -19,8 +19,8 @@ Chrome ウェブストア以外で入手した拡張機能のファイル（`.cr
 
 1. https://github.com/kaorinstar/lightomate/releases/latest を開き、`lightomate-update.bat` を
    ダウンロードします。
-2. ダウンロードしたファイルを実行します。最新の版が `%USERPROFILE%\Lightomate`
-   （例：`C:\Users\<ユーザー名>\Lightomate`）に展開されます。
+2. ダウンロードしたファイルを実行します。最新の版が、「ダウンロード」フォルダーの中の `Lightomate`
+   フォルダー（例：`C:\Users\<ユーザー名>\Downloads\Lightomate`）に展開されます。
    「Windows によって PC が保護されました」と表示された場合は、［詳細情報］→［実行］を押します。
 3. Chrome で chrome://extensions を開き、右上の［デベロッパー モード］を有効にします。
 4. ［パッケージ化されていない拡張機能を読み込む］を押し、手順 2 のフォルダーを選びます。
@@ -28,6 +28,13 @@ Chrome ウェブストア以外で入手した拡張機能のファイル（`.cr
 
 更新するときは、`lightomate-update.bat` をもう一度実行し、chrome://extensions の Lightomate の
 ［再読み込み］ボタンを押します。読み込み直す必要はありません。
+
+「ダウンロード」フォルダーを整理するときは、`Lightomate` フォルダーを削除しないでください。削除すると
+拡張機能が動作しなくなります。削除した場合は、`lightomate-update.bat` を実行すると元に戻ります。
+
+v0.1.0 の `lightomate-update.bat` は、`%USERPROFILE%\Lightomate` に展開していました。そのフォルダーを
+読み込んでいた場合は、新しい版の `lightomate-update.bat` を実行した後に、手順 4 の操作で `Downloads` の
+中の `Lightomate` フォルダーを選び直します。［削除］は押しません。保存したフローは残ります。
 
 ### ZIP を使う方法
 
