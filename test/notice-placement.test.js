@@ -19,6 +19,12 @@ const options = readFileSync(new URL('../extension/options/options.html', import
 const cases = [
   { page: 'サイドパネル', html: sidepanel, button: 'start', notices: ['flows-notice'] },
   { page: 'サイドパネル', html: sidepanel, button: 'stop', notices: ['recording-notice'] },
+  {
+    page: 'サイドパネル',
+    html: sidepanel,
+    button: 'recording-discard',
+    notices: ['recording-confirm', 'recording-discard-notice'],
+  },
   { page: 'サイドパネル', html: sidepanel, button: 'form-cancel', notices: ['form-notice'] },
   {
     page: 'サイドパネル',

@@ -52,12 +52,15 @@ const elements = {
   stepCount: byId('step-count'),
   steps: byId('steps'),
   stop: /** @type {HTMLButtonElement} */ (byId('stop')),
+  recordingDiscard: /** @type {HTMLButtonElement} */ (byId('recording-discard')),
+  recordingConfirm: byId('recording-confirm'),
+  recordingDiscardNotice: byId('recording-discard-notice'),
   resultSection: byId('result-section'),
   resultNotice: byId('result-notice'),
   flowName: /** @type {HTMLInputElement} */ (byId('flow-name')),
   flowNameFeedback: byId('flow-name-feedback'),
   saveFlow: byId('save-flow'),
-  discard: byId('discard'),
+  discard: /** @type {HTMLButtonElement} */ (byId('discard')),
   resultConfirm: byId('result-confirm'),
   saveNotice: byId('save-notice'),
   resultStepCount: byId('result-step-count'),
@@ -77,6 +80,7 @@ const elements = {
 const notices = [
   elements.formNotice,
   elements.recordingNotice,
+  elements.recordingDiscardNotice,
   elements.resultNotice,
   elements.saveNotice,
   elements.jsonNotice,
@@ -147,6 +151,11 @@ elements.stop.addEventListener('click', async () => {
     showNotice(elements.recordingNotice, response?.error ?? '記録を停止できません。', 'error');
     return;
   }
+  if (!response.flow) {
+    // 手順をすべて削除していた場合は、保存するものがないため、記録を破棄しています。
+    showToast(elements.toast, '記録した手順がないため、記録を破棄しました。', { kind: 'info' });
+    return;
+  }
   elements.flowName.value = response.flow.name;
   showFieldError(elements.flowName, elements.flowNameFeedback, '');
   if (response.errors.length > 0) {
@@ -190,9 +199,54 @@ elements.discard.addEventListener('click', async () => {
   if (!confirmed) {
     return;
   }
-  await chrome.storage.session.remove('lastFlow');
-  showToast(elements.toast, '記録した手順を破棄しました。', { kind: 'info' });
+  await resetRecording(elements.saveNotice, '記録した手順を破棄しました。');
 });
+
+elements.recordingDiscard.addEventListener('click', async () => {
+  clearNotices();
+  const confirmed = await confirmInline(elements.recordingConfirm, {
+    message: '記録を停止し、記録した手順を破棄します。元に戻せません。',
+    confirmLabel: '破棄する',
+    danger: true,
+  });
+  if (!confirmed) {
+    return;
+  }
+  await resetRecording(
+    elements.recordingDiscardNotice,
+    '記録を停止し、記録した手順を破棄しました。',
+  );
+});
+
+/**
+ * 記録した手順を破棄します。記録中の場合は、記録を停止してから破棄します。
+ * 破棄すると区画が閉じるため、成功の知らせは画面の上部のトーストに出します。
+ * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
+ * @param {string} doneMessage
+ */
+async function resetRecording(errorNotice, doneMessage) {
+  const response = await chrome.runtime.sendMessage({ kind: 'recording/reset' });
+  if (!response?.ok) {
+    showNotice(errorNotice, response?.error ?? '記録を破棄できません。', 'error');
+    return;
+  }
+  showToast(elements.toast, doneMessage, { kind: 'info' });
+}
+
+/**
+ * 記録中、または保存前の手順を 1 件削除します。
+ * @param {number} index 削除する手順の番号（0 から数えます）
+ * @param {number} count 表示している手順の件数。表示が古い場合に別の手順を消さないよう、一緒に送ります
+ * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
+ */
+async function removeStep(index, count, errorNotice) {
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({ kind: 'recording/removeStep', index, count });
+  if (!response?.ok) {
+    showNotice(errorNotice, response?.error ?? '手順を削除できません。', 'error');
+    await render();
+  }
+}
 
 elements.flowName.addEventListener('input', () => {
   if (elements.flowName.value.trim()) {
@@ -392,6 +446,8 @@ async function render() {
   const recording = /** @type {Recording | undefined} */ (stored.recording);
   const lastFlow = /** @type {Flow | undefined} */ (stored.lastFlow);
   const runs = /** @type {RunState[]} */ (runStatesFrom(stored));
+  // フローの実行中は、記録した手順の削除と破棄をできないようにします。
+  const running = runs.some(isActiveRun);
 
   elements.pageOrigin.textContent = currentPage?.origin ?? 'このページでは使えません';
 
@@ -405,7 +461,10 @@ async function render() {
   if (recording) {
     elements.recordingOrigin.textContent = `記録するページ：${recording.origin}`;
     elements.stepCount.textContent = String(recording.steps.length);
-    elements.steps.replaceChildren(...stepItems(recording.steps));
+    elements.steps.replaceChildren(
+      ...stepItems(recording.steps, running, elements.recordingNotice),
+    );
+    elements.recordingDiscard.disabled = running || recording.steps.length === 0;
     // 最後に記録した手順が見えるよう、一覧の末尾まで移動します。
     elements.steps.scrollTop = elements.steps.scrollHeight;
   }
@@ -419,7 +478,10 @@ async function render() {
   elements.resultSection.hidden = !showResult;
   elements.result.value = lastFlow ? JSON.stringify(orderFlow(lastFlow), null, 2) : '';
   elements.resultStepCount.textContent = String(lastFlow?.steps.length ?? 0);
-  elements.resultSteps.replaceChildren(...stepItems(lastFlow?.steps ?? []));
+  elements.resultSteps.replaceChildren(
+    ...stepItems(lastFlow?.steps ?? [], running, elements.saveNotice),
+  );
+  elements.discard.disabled = running || !lastFlow?.steps.length;
   if (lastFlow && !elements.flowName.value) {
     elements.flowName.value = lastFlow.name;
   }
@@ -447,14 +509,27 @@ async function render() {
 }
 
 /**
- * 手順の一覧の項目を作ります。
+ * 手順の一覧の項目を作ります。各行の右端に、その手順を削除する「×」を置きます。
  * @param {import('../shared/flow.js').Step[]} steps
+ * @param {boolean} locked 削除できない状態（フローの実行中）か
+ * @param {HTMLElement} errorNotice 削除できなかったときに知らせを出す場所
  * @returns {HTMLLIElement[]}
  */
-function stepItems(steps) {
-  return steps.map((step) => {
+function stepItems(steps, locked, errorNotice) {
+  return steps.map((step, index) => {
     const item = document.createElement('li');
-    item.textContent = describeStep(step);
+    const text = document.createElement('span');
+    text.textContent = describeStep(step);
+    const remove = button('×', 'btn btn-sm btn-ghost-secondary lm-step-remove', () => {
+      removeStep(index, steps.length, errorNotice).catch((error) =>
+        showNotice(errorNotice, String(error), 'error'),
+      );
+    });
+    remove.title = 'この手順を削除';
+    remove.setAttribute('aria-label', `${index + 1} 番目の手順を削除`);
+    remove.disabled = locked;
+    // 「×」は float で右端に寄せるため、説明より先に置きます。
+    item.append(remove, text);
     return item;
   });
 }

@@ -31,6 +31,10 @@ import { getStopRule } from '../common/stop-rules-store.js';
 const RECORDING_KEY = 'recording';
 const LAST_FLOW_KEY = 'lastFlow';
 
+/** 手順の削除を、表示が古いために断ったときの理由です。 */
+const STALE_STEPS_ERROR =
+  '手順の一覧が変わったため、削除しませんでした。一覧を確かめてから押し直してください。';
+
 /**
  * ページへ読み込むスクリプトです。selector.js、overlay.js、element-text.js の関数を recorder.js が
  * 使うため、この順で読み込みます。
@@ -106,13 +110,19 @@ export function startRecording(tabId) {
 
 /**
  * 記録を停止し、記録した手順からフロー定義を作ります。
- * @returns {Promise<{ ok: true, flow: Flow, errors: string[] } | { ok: false, error: string }>}
+ * 手順をすべて削除していた場合は、フローを作らずに記録を破棄し、flow に null を返します。
+ * @returns {Promise<{ ok: true, flow: Flow | null, errors: string[] } | { ok: false, error: string }>}
  */
 export function stopRecording() {
   return enqueue(async () => {
     const recording = await getRecording();
     if (!recording) {
       return { ok: false, error: '記録していません。' };
+    }
+    if (recording.steps.length === 0) {
+      await chrome.storage.session.remove(RECORDING_KEY);
+      await detach(recording.tabId);
+      return { ok: true, flow: null, errors: [] };
     }
 
     /** @type {Flow} */
@@ -127,6 +137,91 @@ export function stopRecording() {
     await detach(recording.tabId);
     return { ok: true, flow: orderFlow(flow), errors: validateFlow(flow) };
   });
+}
+
+/**
+ * 記録中、または記録を停止した後で保存前の手順から、指定した番号の手順を 1 件削除します。
+ * サイドパネルの表示が古い状態で押された場合に別の手順を消さないよう、表示していた手順の件数を
+ * 受け取り、今の件数と一致しない場合は削除しません。
+ * 記録の停止後にすべての手順を削除した場合は、記録を破棄した状態（lastFlow なし）にします。
+ * 保存済みのフロー（chrome.storage.local）には影響しません。
+ * @param {unknown} index 削除する手順の番号（0 から数えます）
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function removeRecordedStep(index, count) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (recording) {
+      const steps = withoutStep(recording.steps, index, count);
+      if (!steps) {
+        return { ok: false, error: STALE_STEPS_ERROR };
+      }
+      await chrome.storage.session.set({ [RECORDING_KEY]: { ...recording, steps } });
+      return { ok: true };
+    }
+
+    const lastFlow = await getLastFlow();
+    if (!lastFlow) {
+      return { ok: false, error: '削除する手順がありません。' };
+    }
+    const steps = withoutStep(lastFlow.steps, index, count);
+    if (!steps) {
+      return { ok: false, error: STALE_STEPS_ERROR };
+    }
+    if (steps.length === 0) {
+      await chrome.storage.session.remove(LAST_FLOW_KEY);
+    } else {
+      await chrome.storage.session.set({ [LAST_FLOW_KEY]: { ...lastFlow, steps } });
+    }
+    return { ok: true };
+  });
+}
+
+/**
+ * 記録した手順を破棄します。記録中の場合は、記録を停止してから破棄します。
+ * 保存済みのフロー（chrome.storage.local）には影響しません。
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function resetRecording() {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    const lastFlow = await getLastFlow();
+    if (!recording && !lastFlow) {
+      return { ok: false, error: '破棄する記録がありません。' };
+    }
+    await chrome.storage.session.remove([RECORDING_KEY, LAST_FLOW_KEY]);
+    if (recording) {
+      await detach(recording.tabId);
+    }
+    return { ok: true };
+  });
+}
+
+/**
+ * 指定した番号の手順を除いた、新しい手順の配列を返します。元の配列は変更しません。
+ * 番号が範囲外の場合と、件数が一致しない場合は null を返します。
+ * @param {Step[]} steps
+ * @param {unknown} index 削除する手順の番号（0 から数えます）
+ * @param {unknown} count 削除を指示した画面が表示していた手順の件数
+ * @returns {Step[] | null}
+ */
+export function withoutStep(steps, index, count) {
+  if (
+    !Number.isInteger(index) ||
+    count !== steps.length ||
+    /** @type {number} */ (index) < 0 ||
+    /** @type {number} */ (index) >= steps.length
+  ) {
+    return null;
+  }
+  return steps.filter((_, i) => i !== index);
+}
+
+/** @returns {Promise<Flow | undefined>} */
+async function getLastFlow() {
+  const stored = await chrome.storage.session.get(LAST_FLOW_KEY);
+  return /** @type {Flow | undefined} */ (stored[LAST_FLOW_KEY]);
 }
 
 /**

@@ -10,6 +10,8 @@ import {
   onCommitted,
   onDOMContentLoaded,
   onTabRemoved,
+  removeRecordedStep,
+  resetRecording,
   startRecording,
   stopRecording,
 } from './recording.js';
@@ -53,6 +55,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       }
       stopRecording().then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/removeStep':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      removeRecordedStep(message.index, message.count).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/reset':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      resetRecording().then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
       );
       return true;
