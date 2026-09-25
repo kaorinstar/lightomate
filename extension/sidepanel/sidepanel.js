@@ -1,5 +1,7 @@
 // サイドパネルです。記録の開始・停止、記録したフローの保存、保存したフローの一覧と実行、
 // 実行の状態を表示します。
+// 配置と、知らせを出す場所は docs/design-guidelines.md に従います。知らせは画面の上部にまとめず、
+// 操作した区画や行の中に出します。
 
 import {
   deleteFlow,
@@ -9,7 +11,7 @@ import {
   renameFlow,
   saveFlow,
 } from '../common/flow-store.js';
-import { describeStep } from '../shared/describe.js';
+import { describeStep, formatDateTime } from '../shared/describe.js';
 import { isWebUrl, orderFlow } from '../shared/flow.js';
 import {
   RUN_KEY_PREFIX,
@@ -20,15 +22,16 @@ import {
   runStatesFrom,
 } from '../shared/flow-list.js';
 import { defaultValue } from '../shared/params.js';
+import { confirmInline, followColorScheme, showFieldError, showNotice } from '../shared/ui.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../background/recording.js').Recording} Recording */
 /** @typedef {import('../background/runner.js').RunState} RunState */
 /** @typedef {import('../common/flow-store.js').StoredFlow} StoredFlow */
+/** @typedef {import('../shared/ui.js').NoticeKind} NoticeKind */
 
 const elements = {
-  version: byId('version'),
-  message: byId('message'),
+  pageOrigin: byId('page-origin'),
   runSection: byId('run-section'),
   runs: byId('runs'),
   formSection: byId('form-section'),
@@ -36,21 +39,40 @@ const elements = {
   form: /** @type {HTMLFormElement} */ (byId('run-form')),
   formFields: byId('form-fields'),
   formCancel: byId('form-cancel'),
-  pageOrigin: byId('page-origin'),
-  start: /** @type {HTMLButtonElement} */ (byId('start')),
-  stop: /** @type {HTMLButtonElement} */ (byId('stop')),
-  stepsSection: byId('steps-section'),
+  formNotice: byId('form-notice'),
+  recordingSection: byId('recording-section'),
+  recordingOrigin: byId('recording-origin'),
+  recordingNotice: byId('recording-notice'),
   stepCount: byId('step-count'),
   steps: byId('steps'),
+  stop: /** @type {HTMLButtonElement} */ (byId('stop')),
   resultSection: byId('result-section'),
+  resultNotice: byId('result-notice'),
   flowName: /** @type {HTMLInputElement} */ (byId('flow-name')),
+  flowNameFeedback: byId('flow-name-feedback'),
   saveFlow: byId('save-flow'),
+  discard: byId('discard'),
+  resultConfirm: byId('result-confirm'),
+  resultStepCount: byId('result-step-count'),
+  resultSteps: byId('result-steps'),
   result: /** @type {HTMLTextAreaElement} */ (byId('result')),
   copy: byId('copy'),
   save: byId('save'),
+  jsonNotice: byId('json-notice'),
+  start: /** @type {HTMLButtonElement} */ (byId('start')),
+  flowsNotice: byId('flows-notice'),
   flows: byId('flows'),
   flowsEmpty: byId('flows-empty'),
 };
+
+/** 区画に固定で置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
+const notices = [
+  elements.formNotice,
+  elements.recordingNotice,
+  elements.resultNotice,
+  elements.jsonNotice,
+  elements.flowsNotice,
+];
 
 /**
  * 表示中のタブです。記録開始のボタンを押したときに、許可を求める画面を待たせずに出せるよう、
@@ -65,11 +87,30 @@ let formFlowId = '';
 /**
  * 一覧で名前を変更している、または削除の確認を表示しているフローです。
  * 実行中は状態が頻繁に変わるため、一覧を作り直しても入力中の名前が消えないよう、ここに保持します。
- * @type {{ id: string, mode: 'rename' | 'delete', name: string } | null}
+ * error は、名前の入力欄の直下に出す誤りです。
+ * @type {{ id: string, mode: 'rename' | 'delete', name: string, error: string } | null}
  */
 let editing = null;
 
-elements.version.textContent = chrome.runtime.getManifest().version;
+/** 「その他」の操作を開いている行のフローの id です。一覧を作り直しても開いたままにします。 */
+let menuOpenId = '';
+
+/**
+ * 一覧の行の中に出す知らせです。キーはフローの id です。一覧を作り直しても消えないよう、ここに保持します。
+ * @type {Map<string, { text: string, kind: NoticeKind }>}
+ */
+const rowNotices = new Map();
+
+followColorScheme(document.documentElement, matchMedia('(prefers-color-scheme: dark)'));
+
+/** 前の操作の知らせを消します。操作を始めるときに呼びます。 */
+function clearNotices() {
+  for (const notice of notices) {
+    showNotice(notice, '');
+  }
+  rowNotices.clear();
+  menuOpenId = '';
+}
 
 // ---- 記録 ----
 
@@ -77,57 +118,91 @@ elements.start.addEventListener('click', async () => {
   if (!currentPage?.origin) {
     return;
   }
+  clearNotices();
   const { tabId, origin } = currentPage;
-  if (!(await requestPermission(origin))) {
+  const denied = await requestPermission(origin);
+  if (denied) {
+    showNotice(elements.flowsNotice, denied, 'error');
     return;
   }
   const response = await chrome.runtime.sendMessage({ kind: 'recording/start', tabId });
-  showMessage(
-    response?.ok ? '記録を開始しました。' : (response?.error ?? '記録を開始できません。'),
-    !response?.ok,
-  );
+  if (!response?.ok) {
+    showNotice(elements.flowsNotice, response?.error ?? '記録を開始できません。', 'error');
+  }
 });
 
 elements.stop.addEventListener('click', async () => {
+  clearNotices();
   const response = await chrome.runtime.sendMessage({ kind: 'recording/stop' });
   if (!response?.ok) {
-    showMessage(response?.error ?? '記録を停止できません。', true);
+    showNotice(elements.recordingNotice, response?.error ?? '記録を停止できません。', 'error');
     return;
   }
   elements.flowName.value = response.flow.name;
-  showMessage(
-    response.errors.length === 0
-      ? '記録を停止しました。フロー名を付けて保存できます。'
-      : `記録を停止しました。形式に誤りがあります：${response.errors.join(' ')}`,
-    response.errors.length > 0,
-  );
+  showFieldError(elements.flowName, elements.flowNameFeedback, '');
+  if (response.errors.length > 0) {
+    showNotice(
+      elements.resultNotice,
+      `記録した内容の形式に誤りがあります。\n${response.errors.join('\n')}`,
+      'error',
+    );
+  }
 });
 
 elements.saveFlow.addEventListener('click', async () => {
+  clearNotices();
   const lastFlow = await getLastFlow();
   if (!lastFlow) {
     return;
   }
   const name = elements.flowName.value.trim();
   if (!name) {
-    showMessage('フロー名を入力してください。', true);
+    showFieldError(elements.flowName, elements.flowNameFeedback, 'フロー名を入力してください。');
+    elements.flowName.focus();
     return;
   }
+  showFieldError(elements.flowName, elements.flowNameFeedback, '');
   const result = await saveFlow({ ...lastFlow, name });
   if (!result.ok) {
-    showMessage(`保存できませんでした：${result.errors.join(' ')}`, true);
+    showNotice(
+      elements.resultNotice,
+      `保存できませんでした。\n${result.errors.join('\n')}`,
+      'error',
+    );
     return;
   }
   await chrome.storage.session.remove('lastFlow');
-  showMessage(savedMessage(name, result.name), false);
+  // 保存の区画は閉じるため、保存したフローが並ぶ一覧の区画に知らせます。
+  showNotice(elements.flowsNotice, savedMessage(name, result.name), 'success');
+});
+
+elements.discard.addEventListener('click', async () => {
+  clearNotices();
+  const confirmed = await confirmInline(elements.resultConfirm, {
+    message: '記録した手順を破棄します。元に戻せません。',
+    confirmLabel: '破棄する',
+    danger: true,
+  });
+  if (!confirmed) {
+    return;
+  }
+  await chrome.storage.session.remove('lastFlow');
+  showNotice(elements.flowsNotice, '記録した手順を破棄しました。', 'info');
+});
+
+elements.flowName.addEventListener('input', () => {
+  if (elements.flowName.value.trim()) {
+    showFieldError(elements.flowName, elements.flowNameFeedback, '');
+  }
 });
 
 elements.copy.addEventListener('click', async () => {
+  clearNotices();
   try {
     await navigator.clipboard.writeText(elements.result.value);
-    showMessage('JSON をコピーしました。', false);
+    showNotice(elements.jsonNotice, 'JSON をコピーしました。', 'success');
   } catch (error) {
-    showMessage(`コピーできませんでした：${String(error)}`, true);
+    showNotice(elements.jsonNotice, `コピーできませんでした。${String(error)}`, 'error');
   }
 });
 
@@ -138,18 +213,24 @@ elements.save.addEventListener('click', () => {
 // ---- 実行 ----
 
 /**
- * 実行のボタンを押したときの処理です。
+ * 実行のボタンを押したときの処理です。誤りは、そのフローの行の中に表示します。
  * @param {StoredFlow} stored
  */
 async function onRunClick(stored) {
+  clearNotices();
   // 許可を求める処理は、ボタンを押した直後に呼び出す必要があります。この前に待ち時間を入れないでください。
-  if (!(await requestPermission(stored.flow.origin))) {
+  const denied = await requestPermission(stored.flow.origin);
+  if (denied) {
+    setRowNotice(stored.id, denied, 'error');
     return;
   }
   const params = stored.flow.params ?? [];
   const secretSteps = secretStepIndexes(stored.flow);
   if (params.length === 0 && secretSteps.length === 0) {
-    await startRun(stored.id, {}, {});
+    const error = await startRun(stored.id, {}, {});
+    if (error) {
+      setRowNotice(stored.id, error, 'error');
+    }
     return;
   }
   showForm(stored);
@@ -170,11 +251,13 @@ function showForm(stored) {
     let control;
     if (param.type === 'select') {
       control = document.createElement('select');
+      control.className = 'form-select';
       for (const option of param.options ?? []) {
         control.append(new Option(option, option));
       }
     } else {
       control = document.createElement('input');
+      control.className = 'form-control';
       control.type = param.type === 'month' ? 'month' : 'text';
       if (param.type === 'number') {
         control.inputMode = 'decimal';
@@ -189,6 +272,7 @@ function showForm(stored) {
   for (const index of secretStepIndexes(stored.flow)) {
     const step = stored.flow.steps[index];
     const control = document.createElement('input');
+    control.className = 'form-control';
     control.type = 'password';
     control.name = `secret:${index}`;
     control.autocomplete = 'off';
@@ -198,6 +282,7 @@ function showForm(stored) {
   }
 
   elements.formFields.replaceChildren(...fields);
+  showNotice(elements.formNotice, '');
   elements.formSection.hidden = false;
   elements.formSection.scrollIntoView({ block: 'start' });
   const first = elements.formFields.querySelector('input, select');
@@ -208,6 +293,7 @@ function showForm(stored) {
 
 elements.form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  clearNotices();
   /** @type {Record<string, string>} */
   const params = {};
   /** @type {Record<string, string>} */
@@ -222,10 +308,12 @@ elements.form.addEventListener('submit', async (event) => {
       secrets[key.slice('secret:'.length)] = value;
     }
   }
-  const started = await startRun(formFlowId, params, secrets);
-  if (started) {
-    hideForm();
+  const error = await startRun(formFlowId, params, secrets);
+  if (error) {
+    showNotice(elements.formNotice, error, 'error');
+    return;
   }
+  hideForm();
 });
 
 elements.formCancel.addEventListener('click', hideForm);
@@ -234,7 +322,7 @@ elements.formCancel.addEventListener('click', hideForm);
  * @param {string} flowId
  * @param {Record<string, string>} params
  * @param {Record<string, string>} secrets
- * @returns {Promise<boolean>} 実行を始められたか
+ * @returns {Promise<string>} 実行を始められなかった理由。始められた場合は空の文字列
  */
 async function startRun(flowId, params, secrets) {
   const response = await chrome.runtime.sendMessage({
@@ -243,18 +331,14 @@ async function startRun(flowId, params, secrets) {
     params,
     secrets,
   });
-  if (!response?.ok) {
-    showMessage(response?.error ?? '実行を開始できません。', true);
-    return false;
-  }
-  showMessage('', false);
-  return true;
+  return response?.ok ? '' : (response?.error ?? '実行を開始できません。');
 }
 
 function hideForm() {
   elements.formSection.hidden = true;
   // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
   elements.formFields.replaceChildren();
+  showNotice(elements.formNotice, '');
   formFlowId = '';
 }
 
@@ -305,41 +389,40 @@ async function render() {
   const lastFlow = /** @type {Flow | undefined} */ (stored.lastFlow);
   const runs = /** @type {RunState[]} */ (runStatesFrom(stored));
 
-  if (recording) {
-    elements.pageOrigin.textContent = recording.origin;
-  } else if (currentPage?.origin) {
-    elements.pageOrigin.textContent = currentPage.origin;
-  } else {
-    elements.pageOrigin.textContent =
-      'このページは記録できません（https:// または http:// で始まるページで使えます）';
-  }
+  elements.pageOrigin.textContent = currentPage?.origin ?? 'このページでは使えません';
 
-  elements.start.hidden = Boolean(recording);
   // 同じサイトのフローを実行中のタブと、記録の操作が干渉しないよう、そのサイトでは記録を始めません。
   elements.start.disabled =
-    !currentPage?.origin || Boolean(findConflictingRun(currentPage.origin, runs));
-  elements.stop.hidden = !recording;
+    !currentPage?.origin ||
+    Boolean(recording) ||
+    Boolean(findConflictingRun(currentPage.origin, runs));
 
-  const steps = recording?.steps ?? lastFlow?.steps;
-  elements.stepsSection.hidden = !steps;
-  elements.stepCount.textContent = String(steps?.length ?? 0);
-  elements.steps.replaceChildren(
-    ...(steps ?? []).map((step) => {
-      const item = document.createElement('li');
-      item.textContent = describeStep(step);
-      return item;
-    }),
-  );
+  elements.recordingSection.hidden = !recording;
+  if (recording) {
+    elements.recordingOrigin.textContent = `記録するページ：${recording.origin}`;
+    elements.stepCount.textContent = String(recording.steps.length);
+    elements.steps.replaceChildren(...stepItems(recording.steps));
+    // 最後に記録した手順が見えるよう、一覧の末尾まで移動します。
+    elements.steps.scrollTop = elements.steps.scrollHeight;
+  }
 
-  elements.resultSection.hidden = Boolean(recording) || !lastFlow;
+  const showResult = !recording && Boolean(lastFlow);
+  if (!showResult && !elements.resultSection.hidden) {
+    // 保存の区画を閉じるときは、入力欄の誤りも消します。次に開いたときに残らないようにするためです。
+    showFieldError(elements.flowName, elements.flowNameFeedback, '');
+    elements.flowName.value = '';
+  }
+  elements.resultSection.hidden = !showResult;
   elements.result.value = lastFlow ? JSON.stringify(orderFlow(lastFlow), null, 2) : '';
+  elements.resultStepCount.textContent = String(lastFlow?.steps.length ?? 0);
+  elements.resultSteps.replaceChildren(...stepItems(lastFlow?.steps ?? []));
   if (lastFlow && !elements.flowName.value) {
     elements.flowName.value = lastFlow.name;
   }
 
   await renderRuns(runs);
 
-  // 記録中と、同じサイトのフローを実行中は、実行のボタンを押せなくし、理由を表示します。
+  // 記録中と、同じサイトのフローを実行中は、実行のボタンを押せなくし、理由を行の中に表示します。
   for (const item of elements.flows.querySelectorAll('li[data-origin]')) {
     const row = /** @type {HTMLElement} */ (item);
     const conflict = findConflictingRun(row.dataset.origin ?? '', runs);
@@ -347,57 +430,86 @@ async function render() {
     if (run instanceof HTMLButtonElement) {
       run.disabled = Boolean(recording) || Boolean(conflict);
     }
-    const blocked = row.querySelector('.flow-blocked');
-    if (blocked instanceof HTMLElement) {
-      blocked.textContent = conflict ? conflictMessage(conflict.origin, conflict.flowName) : '';
-      blocked.hidden = !conflict;
+    const reason = row.querySelector('.lm-flow-reason');
+    if (reason instanceof HTMLElement) {
+      reason.textContent = recording
+        ? '記録中は実行できません。'
+        : conflict
+          ? conflictMessage(conflict.origin, conflict.flowName)
+          : '';
+      reason.hidden = !reason.textContent;
     }
   }
 }
 
 /**
- * 実行の状態を、実行ごとに表示します。
+ * 手順の一覧の項目を作ります。
+ * @param {import('../shared/flow.js').Step[]} steps
+ * @returns {HTMLLIElement[]}
+ */
+function stepItems(steps) {
+  return steps.map((step) => {
+    const item = document.createElement('li');
+    item.textContent = describeStep(step);
+    return item;
+  });
+}
+
+/**
+ * 実行の状態を、実行ごとに 1 枚ずつ表示します。止まった理由は、その実行の区画の中に表示します。
  * @param {RunState[]} runs
  */
 async function renderRuns(runs) {
   elements.runSection.hidden = runs.length === 0;
-  const items = await Promise.all(
+  const cards = await Promise.all(
     runs.map(async (run) => {
       const stored = await getFlow(run.flowId);
-      const item = document.createElement('li');
+      const card = document.createElement('div');
+      card.className = 'card';
+      const body = document.createElement('div');
+      body.className = 'card-body';
+      card.append(body);
+
       const status = document.createElement('p');
-      status.className = 'run-status';
-      status.classList.toggle('error', run.status === 'failed');
-      status.textContent = runStatusText(run, stored?.flow.steps[run.stepIndex]);
+      const text = runStatusText(run, stored?.flow.steps[run.stepIndex]);
+      if (run.status === 'failed') {
+        card.classList.add('lm-card-failed');
+        showNotice(status, text, 'error');
+      } else if (run.status === 'halted') {
+        showNotice(status, text, 'warning');
+      } else if (run.status === 'done') {
+        showNotice(status, text, 'success');
+      } else {
+        status.className = 'm-0';
+        status.setAttribute('role', 'status');
+        status.textContent = text;
+      }
 
       const buttons = document.createElement('div');
-      buttons.className = 'buttons';
+      buttons.className = 'lm-buttons mt-3';
       if (isActiveRun(run)) {
-        const stop = document.createElement('button');
-        stop.type = 'button';
-        stop.className = 'danger';
-        stop.textContent = '実行停止';
-        stop.disabled = run.status === 'stopping';
-        stop.addEventListener('click', () => {
+        const stop = button('実行停止', 'btn btn-sm btn-danger', () => {
           chrome.runtime
             .sendMessage({ kind: 'runner/stop', runId: run.runId })
             .catch(console.error);
         });
+        stop.disabled = run.status === 'stopping';
         buttons.append(stop);
       } else {
-        const close = document.createElement('button');
-        close.type = 'button';
-        close.textContent = '閉じる';
-        close.addEventListener('click', () => {
-          chrome.storage.session.remove(RUN_KEY_PREFIX + run.runId).catch(console.error);
-        });
-        buttons.append(close);
+        buttons.append(
+          button('閉じる', 'btn btn-sm', () => {
+            chrome.storage.session.remove(RUN_KEY_PREFIX + run.runId).catch(console.error);
+          }),
+        );
+        if (run.status === 'failed' && stored) {
+          buttons.append(editLink(stored, 'フローを編集'));
+        }
       }
-      item.append(status, buttons);
-      return item;
+      body.append(status, buttons);
+      return card;
     }),
   );
-  elements.runs.replaceChildren(...items);
+  elements.runs.replaceChildren(...cards);
 }
 
 /**
@@ -438,19 +550,21 @@ async function renderFlows() {
 
   elements.flowsEmpty.hidden = flows.length > 0;
   elements.flowsEmpty.textContent = origin
-    ? `${origin} のフローはまだありません。`
-    : 'このページでは、フローを表示できません（https:// または http:// で始まるページで使えます）。';
+    ? `${origin} のフローはまだありません。「記録開始」を押し、このページで操作を記録してください。`
+    : 'このページでは、フローの記録と実行はできません。https:// または http:// で始まるページを開いてください。';
   elements.flows.replaceChildren(...flows.map(flowItem));
   await render();
 }
 
 /**
  * フローの一覧の 1 行を作ります。
+ * 主な操作の「実行」だけを行に出し、名前の変更・編集・削除は「その他」の中に置きます。
  * @param {StoredFlow} stored
  * @returns {HTMLLIElement}
  */
 function flowItem(stored) {
   const item = document.createElement('li');
+  item.className = 'list-group-item';
   item.dataset.origin = stored.flow.origin;
 
   if (editing?.id === stored.id && editing.mode === 'rename') {
@@ -458,81 +572,151 @@ function flowItem(stored) {
     return item;
   }
 
-  const name = document.createElement('span');
-  name.className = 'flow-name';
+  const name = document.createElement('div');
+  name.className = 'lm-flow-name';
   name.textContent = stored.flow.name;
-  const detail = document.createElement('span');
-  detail.className = 'flow-detail';
-  detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDate(stored.updatedAt)}`;
-  const blocked = document.createElement('p');
-  blocked.className = 'flow-blocked';
-  blocked.hidden = true;
+  const detail = document.createElement('div');
+  detail.className = 'lm-sub';
+  detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
+  const text = document.createElement('div');
+  text.className = 'lm-flow-text';
+  text.append(name, detail);
 
-  const buttons = document.createElement('div');
-  buttons.className = 'buttons';
+  const main = document.createElement('div');
+  main.className = 'lm-flow-main';
+  main.append(text);
+  item.append(main);
+
   if (editing?.id === stored.id && editing.mode === 'delete') {
-    const question = document.createElement('p');
-    question.className = 'flow-confirm';
-    question.textContent = `「${stored.flow.name}」を削除します。元に戻せません。`;
+    const question = document.createElement('div');
+    question.className = 'lm-confirm alert alert-danger';
+    question.setAttribute('role', 'alertdialog');
+    const message = document.createElement('p');
+    message.className = 'mb-2';
+    message.textContent = `「${stored.flow.name}」を削除します。元に戻せません。`;
+    const buttons = document.createElement('div');
+    buttons.className = 'lm-buttons';
+    const cancel = button('キャンセル', 'btn btn-sm', () => setEditing(null));
     buttons.append(
-      button('削除する', 'danger', () => {
-        onDelete(stored).catch((error) => showMessage(String(error), true));
+      button('削除する', 'btn btn-sm btn-danger', () => {
+        onDelete(stored).catch((error) => setRowNotice(stored.id, String(error), 'error'));
       }),
-      button('キャンセル', '', () => setEditing(null)),
+      cancel,
     );
-    item.append(name, detail, question, buttons);
+    question.append(message, buttons);
+    item.append(question);
+    queueMicrotask(() => cancel.focus());
     return item;
   }
 
-  const run = button('実行', '', () => {
-    onRunClick(stored).catch((error) => showMessage(String(error), true));
+  const run = button('実行', 'btn btn-sm btn-primary', () => {
+    onRunClick(stored).catch((error) => setRowNotice(stored.id, String(error), 'error'));
   });
   run.dataset.run = stored.id;
-  const edit = document.createElement('a');
-  edit.href = `../options/options.html#${encodeURIComponent(stored.id)}`;
-  edit.target = '_blank';
-  edit.textContent = '編集';
-  buttons.append(
-    run,
-    button('名前の変更', '', () =>
-      setEditing({ id: stored.id, mode: 'rename', name: stored.flow.name }),
-    ),
-    button('削除', '', () => setEditing({ id: stored.id, mode: 'delete', name: '' })),
-    edit,
-  );
-  item.append(name, detail, blocked, buttons);
+  const menuOpen = menuOpenId === stored.id;
+  const more = button('…', 'btn btn-sm btn-ghost-secondary', () => {
+    menuOpenId = menuOpen ? '' : stored.id;
+    renderFlows().catch(console.error);
+  });
+  more.title = 'その他の操作';
+  more.setAttribute('aria-label', `「${stored.flow.name}」のその他の操作`);
+  more.setAttribute('aria-expanded', String(menuOpen));
+  const actions = document.createElement('div');
+  actions.className = 'lm-flow-actions';
+  actions.append(run, more);
+  main.append(actions);
+
+  const reason = document.createElement('p');
+  reason.className = 'lm-flow-reason lm-sub';
+  reason.hidden = true;
+  item.append(reason);
+
+  if (menuOpen) {
+    const menu = document.createElement('div');
+    menu.className = 'lm-more-menu';
+    menu.append(
+      button('名前の変更', 'btn btn-sm', () =>
+        setEditing({ id: stored.id, mode: 'rename', name: stored.flow.name, error: '' }),
+      ),
+      editLink(stored, '編集'),
+      button('削除', 'btn btn-sm btn-ghost-danger', () =>
+        setEditing({ id: stored.id, mode: 'delete', name: '', error: '' }),
+      ),
+    );
+    item.append(menu);
+  }
+
+  const notice = rowNotices.get(stored.id);
+  if (notice) {
+    const element = document.createElement('p');
+    showNotice(element, notice.text, notice.kind);
+    item.append(element);
+  }
   return item;
 }
 
 /**
- * 名前を変更する入力欄です。
+ * 管理画面で、そのフローを開くリンクです。
  * @param {StoredFlow} stored
- * @param {{ name: string }} state 入力中の名前
+ * @param {string} text
+ * @returns {HTMLAnchorElement}
+ */
+function editLink(stored, text) {
+  const link = document.createElement('a');
+  link.className = 'btn btn-sm';
+  link.href = `../options/options.html#${encodeURIComponent(stored.id)}`;
+  link.target = '_blank';
+  link.textContent = text;
+  return link;
+}
+
+/**
+ * 名前を変更する入力欄です。誤りは入力欄の直下に表示します。
+ * @param {StoredFlow} stored
+ * @param {{ name: string, error: string }} state 入力中の名前と、その誤り
  * @returns {HTMLFormElement}
  */
 function renameForm(stored, state) {
   const form = document.createElement('form');
   const input = document.createElement('input');
   input.type = 'text';
+  input.className = 'form-control';
+  input.id = `rename-${stored.id}`;
   input.maxLength = 200;
-  input.required = true;
   input.value = state.name;
   input.addEventListener('input', () => {
     state.name = input.value;
   });
-  const buttons = document.createElement('div');
-  buttons.className = 'buttons';
+  const feedback = document.createElement('div');
+  feedback.className = 'invalid-feedback';
+  feedback.id = `rename-feedback-${stored.id}`;
+  showFieldError(input, feedback, state.error);
+
+  const label = document.createElement('label');
+  label.className = 'form-label';
+  label.htmlFor = input.id;
+  label.textContent = 'フロー名';
+  const field = document.createElement('div');
+  field.className = 'mb-2';
+  field.append(label, input, feedback);
+
   const save = document.createElement('button');
   save.type = 'submit';
+  save.className = 'btn btn-sm btn-primary';
   save.textContent = '保存';
+  const buttons = document.createElement('div');
+  buttons.className = 'lm-buttons';
   buttons.append(
     save,
-    button('キャンセル', '', () => setEditing(null)),
+    button('キャンセル', 'btn btn-sm', () => setEditing(null)),
   );
-  form.append(labeled('フロー名', input), buttons);
+  form.append(field, buttons);
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    onRename(stored, input.value.trim()).catch((error) => showMessage(String(error), true));
+    onRename(stored, input.value.trim()).catch((error) => {
+      state.error = String(error);
+      renderFlows().catch(console.error);
+    });
   });
   queueMicrotask(() => input.focus());
   return form;
@@ -543,34 +727,55 @@ function renameForm(stored, state) {
  * @param {string} name
  */
 async function onRename(stored, name) {
+  clearNotices();
+  if (!editing) {
+    return;
+  }
   if (!name) {
-    showMessage('フロー名を入力してください。', true);
+    editing.error = 'フロー名を入力してください。';
+    await renderFlows();
     return;
   }
   const result = await renameFlow(stored.id, name);
   if (!result.ok) {
-    showMessage(`名前を変更できませんでした：${result.errors.join(' ')}`, true);
+    editing.error = `名前を変更できませんでした。${result.errors.join(' ')}`;
+    await renderFlows();
     return;
   }
   editing = null;
-  showMessage(savedMessage(name, result.name), false);
-  await renderFlows();
+  menuOpenId = '';
+  setRowNotice(stored.id, savedMessage(name, result.name), 'success');
 }
 
 /** @param {StoredFlow} stored */
 async function onDelete(stored) {
+  clearNotices();
   await deleteFlow(stored.id);
   editing = null;
-  showMessage(`「${stored.flow.name}」を削除しました。`, false);
+  menuOpenId = '';
+  // 行は消えるため、一覧の区画の先頭に知らせます。
+  showNotice(elements.flowsNotice, `「${stored.flow.name}」を削除しました。`, 'success');
   await renderFlows();
 }
 
 /**
  * 名前の変更と削除の確認を始める、または終えます。
- * @param {{ id: string, mode: 'rename' | 'delete', name: string } | null} state
+ * @param {{ id: string, mode: 'rename' | 'delete', name: string, error: string } | null} state
  */
 function setEditing(state) {
+  clearNotices();
   editing = state;
+  renderFlows().catch(console.error);
+}
+
+/**
+ * フローの行の中に知らせを出します。
+ * @param {string} flowId
+ * @param {string} text
+ * @param {NoticeKind} kind
+ */
+function setRowNotice(flowId, text, kind) {
+  rowNotices.set(flowId, { text, kind });
   renderFlows().catch(console.error);
 }
 
@@ -579,19 +784,17 @@ function setEditing(state) {
 /**
  * サイトを操作する許可を求めます。許可済みの場合、画面は表示されません。
  * @param {string} origin
- * @returns {Promise<boolean>}
+ * @returns {Promise<string>} 許可が得られなかった理由。得られた場合は空の文字列
  */
 async function requestPermission(origin) {
   try {
     if (await chrome.permissions.request({ origins: [`${origin}/*`] })) {
-      return true;
+      return '';
     }
   } catch (error) {
-    showMessage(`許可を求められませんでした：${String(error)}`, true);
-    return false;
+    return `許可を求められませんでした。${String(error)}`;
   }
-  showMessage(`${origin} を操作する許可が得られなかったため、続けられません。`, true);
-  return false;
+  return `${origin} を操作する許可が得られなかったため、続けられません。もう一度押し、表示される画面で「許可」を選んでください。`;
 }
 
 /**
@@ -625,26 +828,9 @@ function button(text, className, onClick) {
   const element = document.createElement('button');
   element.type = 'button';
   element.textContent = text;
-  if (className) {
-    element.className = className;
-  }
+  element.className = className;
   element.addEventListener('click', onClick);
   return element;
-}
-
-/**
- * 日時を「2026/9/25 10:05」の形式にします。
- * @param {string} iso
- * @returns {string}
- */
-function formatDate(iso) {
-  return new Date(iso).toLocaleString('ja-JP', {
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 /** @returns {Promise<Flow | undefined>} */
@@ -660,18 +846,9 @@ async function getLastFlow() {
  */
 function labeled(text, control) {
   const label = document.createElement('label');
-  label.className = 'field';
+  label.className = 'form-label lm-field';
   label.append(text, control);
   return label;
-}
-
-/**
- * @param {string} text
- * @param {boolean} isError
- */
-function showMessage(text, isError) {
-  elements.message.textContent = text;
-  elements.message.classList.toggle('error', isError);
 }
 
 /**

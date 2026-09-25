@@ -1,130 +1,242 @@
+/* 管理画面だけの指定です。共通の指定は shared/base.css にあります。 */
+
 body {
-  max-width: 1100px;
-  margin: 0 auto;
+  background: var(--tblr-bg-surface-secondary);
 }
 
-h2 {
-  margin: 0 0 8px;
-  font-size: 1rem;
+.lm-page {
+  padding-block: 1.5rem;
 }
 
-.layout {
+.lm-page-header {
+  margin-bottom: 1rem;
+}
+
+/* タブです。領域の上端に置きます。 */
+.lm-tabs {
+  margin-bottom: 1rem;
+}
+
+.lm-tabs .nav-link {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.lm-tabs .nav-link:not(.active) {
+  color: var(--tblr-secondary);
+}
+
+.lm-panel-note {
+  max-width: 60rem;
+  margin: 0 0 1rem;
+  color: var(--tblr-secondary);
+}
+
+/* 一覧と詳細を左右に並べます。幅が狭い場合は 1 列にします。 */
+.lm-layout {
   display: grid;
-  grid-template-columns: minmax(200px, 280px) 1fr;
-  gap: 24px;
-  margin-top: 16px;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.lm-layout[hidden] {
+  display: none;
 }
 
 @media (width <= 700px) {
-  .layout {
-    grid-template-columns: 1fr;
+  .lm-layout {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.note {
-  margin: 0 0 8px;
-  font-size: 0.85rem;
+.lm-card-header {
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
-.message {
-  min-height: 1.4em;
-  margin: 8px 0 0;
-  font-size: 0.9rem;
-  white-space: pre-line;
-}
-
-.message.error {
-  color: #d93025;
-}
-
-.flows {
+.lm-card-header .card-title {
   margin: 0;
-  padding: 0;
-  list-style: none;
 }
 
-.flows button {
-  display: block;
-  width: 100%;
-  margin-bottom: 4px;
-  padding: 6px 8px;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
+/* 一覧です。サイトの見出しと、フローの行を明確に区別します。 */
+.card > .lm-list > .list-group,
+.lm-list > .list-group,
+.lm-list > .list-group > .list-group-item:first-child {
+  border-top: 0;
 }
 
-.flows button[aria-current='true'] {
-  outline: 2px solid #1a73e8;
+.lm-list-heading {
+  padding-block: 0.5rem 0.25rem;
+  border-bottom: 0;
+  color: var(--tblr-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
 }
 
-.flows small {
-  display: block;
-  opacity: 0.7;
-  word-break: break-all;
-}
-
-textarea {
-  box-sizing: border-box;
-  width: 100%;
-  font:
-    0.8rem/1.4 ui-monospace,
-    monospace;
-}
-
-.buttons {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-button {
-  padding: 6px 14px;
-  font: inherit;
-  cursor: pointer;
-}
-
-button.danger {
-  border: 1px solid #d93025;
-  background: #d93025;
-  color: #fff;
-}
-
-input[type='file'] {
-  margin-bottom: 8px;
-}
-
-.stop-rules {
-  margin-top: 32px;
-  padding-top: 16px;
-  border-top: 1px solid rgb(128 128 128 / 30%);
-}
-
-.stop-list {
-  margin: 0 0 8px;
-  padding: 0;
-  list-style: none;
-}
-
-.stop-list button {
-  margin-bottom: 4px;
-  padding: 6px 8px;
-  text-align: left;
-}
-
-.stop-list small {
-  margin-left: 8px;
-  opacity: 0.7;
-}
-
-.field {
+.lm-list .list-group-item-action {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 8px;
-  font-size: 0.85rem;
+  gap: 0.25rem;
 }
 
-.field input[type='text'] {
-  padding: 4px 6px;
-  font: inherit;
+#list-notice {
+  margin: 0.75rem 1rem;
+}
+
+#empty[hidden],
+#stop-empty[hidden] {
+  display: none;
+}
+
+/* 詳細の見出しです。フロー名を最も大きく表示します。 */
+.lm-detail-header {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-block: 1rem;
+}
+
+.lm-detail-title {
+  display: flex;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.lm-detail-title[hidden] {
+  display: none;
+}
+
+.lm-detail-name {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lm-detail-header .lm-buttons[hidden] {
+  display: none;
+}
+
+/* 詳細の中の節（実行時に入力する値、手順、JSON の編集）です。 */
+.lm-block + .lm-block {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--tblr-border-color);
+}
+
+.lm-block[hidden] {
+  display: none;
+}
+
+/* 先頭の節（実行時に入力する値）がない場合は、次の節の上に区切りを付けません。 */
+.lm-block[hidden] + .lm-block {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.lm-block-title {
+  margin: 0 0 0.75rem;
+}
+
+.lm-params {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: 0.5rem 1.5rem;
+  margin: 0;
+}
+
+.lm-params dt {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.lm-params dd {
+  margin: 0;
+  color: var(--tblr-secondary);
+}
+
+/* 手順の一覧です。番号、種類、説明の順に並べます。 */
+.lm-step-list {
+  max-height: 32rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  counter-reset: step;
+  list-style: none;
+}
+
+.lm-step {
+  display: grid;
+  grid-template-columns: 2rem 5.5rem 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.5rem 0.5rem 0.5rem 0;
+  border-bottom: 1px solid var(--tblr-border-color);
+  counter-increment: step;
+}
+
+.lm-step:last-child {
+  border-bottom: 0;
+}
+
+.lm-step::before {
+  color: var(--tblr-secondary);
+  font-size: 0.75rem;
+  text-align: end;
+  content: counter(step);
+}
+
+.lm-kind {
+  justify-self: start;
+  padding: 0 0.5rem;
+  border: 1px solid var(--tblr-border-color);
+  border-radius: var(--tblr-border-radius);
+  color: var(--tblr-secondary);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.lm-step-text {
+  overflow-wrap: anywhere;
+}
+
+/* 一時停止は、実行が止まる場所のため、黄色の帯で強調します。 */
+.lm-step-pause {
+  background: color-mix(in oklab, var(--tblr-warning) 14%, var(--tblr-bg-surface));
+}
+
+.lm-step-pause .lm-kind {
+  border-color: color-mix(in oklab, var(--tblr-warning) 60%, black);
+  color: color-mix(in oklab, var(--tblr-warning) 55%, black);
+  font-weight: 700;
+}
+
+[data-bs-theme='dark'] .lm-step-pause .lm-kind {
+  border-color: color-mix(in oklab, var(--tblr-warning) 60%, white);
+  color: color-mix(in oklab, var(--tblr-warning) 45%, white);
+}
+
+.lm-advanced > summary {
+  margin: 0;
+  cursor: pointer;
+}
+
+.lm-advanced[open] > summary {
+  margin-bottom: 0.5rem;
+}
+
+#json {
+  min-height: 16rem;
+}
+
+.lm-footer {
+  margin-top: 2.5rem;
 }

@@ -5,3 +5,5 @@ package-lock.json
 *.md
 .github/
 .claude/
+# 同梱した外部のファイルは、配布元のまま置きます（scripts/vendor.js）。
+extension/vendor/
