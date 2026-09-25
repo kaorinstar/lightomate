@@ -1,10 +1,13 @@
 # 既定の改行コードは LF とします。
 * text=auto eol=lf
 
-# Windows で実行するスクリプトは CRLF を維持します。
-*.bat text eol=crlf
-*.cmd text eol=crlf
-*.ps1 text eol=crlf
+# Windows で実行するスクリプトは CRLF とし、リポジトリにも CRLF のまま保存します（変換しません）。
+# GitHub の［Download raw file］はリポジトリに保存した内容をそのまま返すため、LF に変換して保存すると、
+# 利用者が受け取るファイルも LF になり、コマンドプロンプトが正しく読めない場合があるためです（#56）。
+# CRLF であることは test/tools.test.js で確かめます。
+*.bat -text
+*.cmd -text
+*.ps1 -text
 
 # バイナリは変換しません。
 *.png binary

@@ -33,8 +33,9 @@ Chrome ウェブストア以外で入手した拡張機能のファイル（`.cr
 
 1. https://github.com/kaorinstar/lightomate/releases/latest を開き、`lightomate-update.bat` を
    ダウンロードします。
-2. ダウンロードしたファイルを実行します。最新の版が、「ダウンロード」フォルダーの中の `Lightomate`
-   フォルダー（例：`C:\Users\<ユーザー名>\Downloads\Lightomate`）に展開されます。
+2. ダウンロードしたファイルを実行します。「ブランチ名」と尋ねられたら、何も入力せずに Enter を押します。
+   最新の版が、「ダウンロード」フォルダーの中の `Lightomate` フォルダー
+   （例：`C:\Users\<ユーザー名>\Downloads\Lightomate`）に展開されます。
    「Windows によって PC が保護されました」と表示された場合は、［詳細情報］→［実行］を押します。
 3. Chrome で chrome://extensions を開き、右上の［デベロッパー モード］を有効にします。
 4. ［パッケージ化されていない拡張機能を読み込む］を押し、手順 2 のフォルダーを選びます。
@@ -61,8 +62,20 @@ Lightomate の［再読み込み］ボタンを押します。
 
 ### 開発中の版を使う方法
 
-リリース前の変更を試す場合は、このリポジトリを ZIP でダウンロードして展開するか、複製（clone）します。
-読み込むのは、リポジトリのフォルダー全体ではなく、その中の `extension` フォルダーです。
+リリース前の変更（プルリクエストの版）を試す場合は、`lightomate-update.bat` を実行し、「ブランチ名」に
+ブランチの名前（例：`feat/54-stop-rules`）を入力して Enter を押します。そのブランチの `extension` フォルダーの
+中身が、いつもの `Lightomate` フォルダーに展開されます。その後、chrome://extensions の Lightomate の
+［再読み込み］ボタンを押します。
+
+確認が終わったら、`lightomate-update.bat` をもう一度実行し、何も入力せずに Enter を押して、最新の
+リリースに戻します。
+
+v0.1.0 のリリースに添付した `lightomate-update.bat` は、ブランチ名を尋ねません。尋ねられない
+場合は、https://github.com/kaorinstar/lightomate/blob/main/tools/lightomate-update.bat を開き、
+［Download raw file］（下向き矢印のボタン）で新しいファイルをダウンロードします。
+
+このリポジトリを ZIP でダウンロードして展開するか、複製（clone）して使うこともできます。読み込むのは、
+リポジトリのフォルダー全体ではなく、その中の `extension` フォルダーです。
 
 ### 保存したフローについて
 
