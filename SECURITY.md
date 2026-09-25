@@ -44,7 +44,8 @@ Chrome の許可画面で許可したときだけ、そのサイトを操作で�
 拡張機能の詳細画面から取り消せます。
 
 `chrome.debugger` は、フローの PDF の保存（`savePdf`）の手順を実行する間だけ、実行中のタブに接続します。
-使う命令は `Page.printToPDF`（ページを PDF にする）だけで、PDF を作り終えるとすぐに接続を切ります。
+使う命令は `Page.printToPDF`（ページを PDF にする）と、`mode` が `screen` の手順で表示を画面用に切り替える
+`Emulation.setEmulatedMedia`（#73）だけです。PDF を作り終えると、表示の切り替えを戻し、すぐに接続を切ります。
 記録中と、それ以外の手順の実行中は接続しません。`debugger` は任意の権限（`optional_permissions`）に
 できない権限のため、常に要求する権限としています（https://developer.chrome.com/docs/extensions/reference/api/permissions ）。
 接続している間、Chrome は画面の上部に、拡張機能がデバッグを開始した旨を表示します。
