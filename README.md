@@ -32,7 +32,7 @@ Chrome ウェブストア以外で入手した拡張機能のファイル（`.cr
 「ダウンロード」フォルダーを整理するときは、`Lightomate` フォルダーを削除しないでください。削除すると
 拡張機能が動作しなくなります。削除した場合は、`lightomate-update.bat` を実行すると元に戻ります。
 
-v0.1.0 の `lightomate-update.bat` は、`%USERPROFILE%\Lightomate` に展開していました。そのフォルダーを
+作り直す前の v0.1.0 の `lightomate-update.bat` は、`%USERPROFILE%\Lightomate` に展開していました。そのフォルダーを
 読み込んでいた場合は、新しい版の `lightomate-update.bat` を実行した後に、手順 4 の操作で `Downloads` の
 中の `Lightomate` フォルダーを選び直します。［削除］は押しません。保存したフローは残ります。
 
