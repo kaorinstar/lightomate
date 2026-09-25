@@ -33,6 +33,12 @@
   color: color-mix(in oklab, var(--tblr-danger) 85%, black);
 }
 
+/* 入力欄の誤りは、JSON の形式の誤りのように複数になることがあるため、改行で並べます。 */
+.invalid-feedback {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
 [data-bs-theme='dark'] .alert {
   --tblr-alert-color: color-mix(in oklab, var(--tblr-alert-variant-color) 45%, white);
 }

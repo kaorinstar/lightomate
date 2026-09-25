@@ -20,7 +20,7 @@ import {
 } from '../common/stop-rules-store.js';
 import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
 import { isWebOrigin, orderFlow, validateFlow } from '../shared/flow.js';
-import { parseLines, validateStopRule } from '../shared/stop-rules.js';
+import { parseLines, stopRuleFieldErrors } from '../shared/stop-rules.js';
 import {
   confirmInline,
   followColorScheme,
@@ -57,15 +57,16 @@ const elements = {
   steps: byId('steps'),
   jsonDetails: /** @type {HTMLDetailsElement} */ (byId('json-details')),
   jsonNotice: byId('json-notice'),
+  jsonFeedback: byId('json-feedback'),
   json: /** @type {HTMLTextAreaElement} */ (byId('json')),
   save: byId('save'),
   exportFlow: byId('export'),
   deleteFlow: byId('delete'),
   importer: byId('importer'),
-  importNotice: byId('import-notice'),
   importConfirm: byId('import-confirm'),
   file: /** @type {HTMLInputElement} */ (byId('file')),
   importJson: /** @type {HTMLTextAreaElement} */ (byId('import-json')),
+  importJsonFeedback: byId('import-json-feedback'),
   importFlow: byId('import'),
   stopList: byId('stop-list'),
   stopEmpty: byId('stop-empty'),
@@ -74,7 +75,9 @@ const elements = {
   stopOriginFeedback: byId('stop-origin-feedback'),
   stopOrigins: byId('stop-origins'),
   stopSelectors: /** @type {HTMLTextAreaElement} */ (byId('stop-selectors')),
+  stopSelectorsFeedback: byId('stop-selectors-feedback'),
   stopPaths: /** @type {HTMLTextAreaElement} */ (byId('stop-paths')),
+  stopPathsFeedback: byId('stop-paths-feedback'),
   stopClear: byId('stop-clear'),
   stopDelete: byId('stop-delete'),
   stopConfirm: byId('stop-confirm'),
@@ -83,11 +86,18 @@ const elements = {
 };
 
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
-const notices = [
-  elements.editorNotice,
-  elements.jsonNotice,
-  elements.importNotice,
-  elements.stopNotice,
+const notices = [elements.editorNotice, elements.jsonNotice, elements.stopNotice];
+
+/**
+ * 入力欄と、その直下に置いた誤りの表示欄の組み合わせです。次の操作を始めるときに、まとめて消します。
+ * @type {Array<[HTMLInputElement | HTMLTextAreaElement, HTMLElement]>}
+ */
+const fieldFeedbacks = [
+  [elements.json, elements.jsonFeedback],
+  [elements.importJson, elements.importJsonFeedback],
+  [elements.stopOrigin, elements.stopOriginFeedback],
+  [elements.stopSelectors, elements.stopSelectorsFeedback],
+  [elements.stopPaths, elements.stopPathsFeedback],
 ];
 
 /** 編集中のフローの id です。URL の # 以降にも書き、再読み込みしても同じフローを開きます。 */
@@ -101,10 +111,9 @@ function clearNotices() {
   for (const notice of notices) {
     showNotice(notice, '');
   }
-  // JSON の誤りの説明は知らせの欄にあるため、知らせと同時に編集欄の誤りの印も消します。
-  for (const textarea of [elements.json, elements.importJson]) {
-    textarea.classList.remove('is-invalid');
-    textarea.removeAttribute('aria-invalid');
+  // 入力欄の直下に出した誤りも、次の操作を始めるときに消します。
+  for (const [control, feedback] of fieldFeedbacks) {
+    showFieldError(control, feedback, '');
   }
 }
 
@@ -172,15 +181,15 @@ elements.newFlow.addEventListener('click', () => {
 
 elements.save.addEventListener('click', async () => {
   clearNotices();
-  const flow = parse(elements.json, elements.jsonNotice);
+  const flow = parse(elements.json, elements.jsonFeedback);
   if (!flow) {
     return;
   }
   const result = await saveFlow(flow, selectedId);
   if (!result.ok) {
-    showJsonErrors(
+    showFieldError(
       elements.json,
-      elements.jsonNotice,
+      elements.jsonFeedback,
       `形式に誤りがあるため、保存しませんでした。\n${result.errors.join('\n')}`,
     );
     return;
@@ -307,15 +316,15 @@ elements.file.addEventListener('change', async () => {
 
 elements.importFlow.addEventListener('click', async () => {
   clearNotices();
-  const flow = parse(elements.importJson, elements.importNotice);
+  const flow = parse(elements.importJson, elements.importJsonFeedback);
   if (!flow) {
     return;
   }
   const errors = validateFlow(flow);
   if (errors.length > 0) {
-    showJsonErrors(
+    showFieldError(
       elements.importJson,
-      elements.importNotice,
+      elements.importJsonFeedback,
       `形式に誤りがあるため、追加しませんでした。\n${errors.join('\n')}`,
     );
     return;
@@ -333,7 +342,7 @@ elements.importFlow.addEventListener('click', async () => {
   }
   const result = await saveFlow(flow);
   if (!result.ok) {
-    showNotice(elements.importNotice, result.errors.join('\n'), 'error');
+    showFieldError(elements.importJson, elements.importJsonFeedback, result.errors.join('\n'));
     return;
   }
   elements.importJson.value = '';
@@ -375,9 +384,10 @@ elements.stopDelete.addEventListener('click', () => {
   onDeleteStopRule().catch((error) => showNotice(elements.stopNotice, String(error), 'error'));
 });
 
-elements.stopOrigin.addEventListener('input', () => {
-  showFieldError(elements.stopOrigin, elements.stopOriginFeedback, '');
-});
+// 入力欄の誤りは、その欄を直し始めたときに消します。
+for (const [control, feedback] of fieldFeedbacks) {
+  control.addEventListener('input', () => showFieldError(control, feedback, ''));
+}
 
 onStopRulesChanged(() => {
   renderStopRules().catch(console.error);
@@ -401,13 +411,20 @@ async function onSaveStopRule() {
     selectors: parseLines(elements.stopSelectors.value),
     paths: parseLines(elements.stopPaths.value),
   };
-  const errors = [...validateStopRule(rule), ...selectorSyntaxErrors(rule.selectors)];
-  if (errors.length > 0) {
-    showNotice(
-      elements.stopNotice,
-      `指定に誤りがあるため、保存しませんでした。\n${errors.join('\n')}`,
-      'error',
-    );
+  const errors = stopRuleFieldErrors(rule);
+  errors.selectors.push(...selectorSyntaxErrors(rule.selectors));
+  showFieldError(
+    elements.stopSelectors,
+    elements.stopSelectorsFeedback,
+    errors.selectors.join('\n'),
+  );
+  showFieldError(elements.stopPaths, elements.stopPathsFeedback, errors.paths.join('\n'));
+  if (errors.selectors.length > 0) {
+    elements.stopSelectors.focus();
+    return;
+  }
+  if (errors.paths.length > 0) {
+    elements.stopPaths.focus();
     return;
   }
   const removing = rule.selectors.length === 0 && rule.paths.length === 0;
@@ -438,13 +455,14 @@ async function onDeleteStopRule() {
   const origin = elements.stopOrigin.value.trim().replace(/\/+$/, '');
   const exists = (await listStopRules()).some((entry) => entry.origin === origin);
   if (!exists) {
-    showNotice(
-      elements.stopNotice,
+    showFieldError(
+      elements.stopOrigin,
+      elements.stopOriginFeedback,
       origin
         ? `${origin} の指定はありません。削除するサイトを一覧から選んでください。`
         : '削除するサイトを一覧から選んでください。',
-      'error',
     );
+    elements.stopOrigin.focus();
     return;
   }
   if (
@@ -488,7 +506,9 @@ function selectorSyntaxErrors(selectors) {
  * @param {{ selectors: string[], paths: string[] }} rule
  */
 function editStopRule(origin, rule) {
-  showFieldError(elements.stopOrigin, elements.stopOriginFeedback, '');
+  for (const [control, feedback] of fieldFeedbacks) {
+    showFieldError(control, feedback, '');
+  }
   elements.stopOrigin.value = origin;
   elements.stopSelectors.value = rule.selectors.join('\n');
   elements.stopPaths.value = rule.paths.join('\n');
@@ -687,34 +707,21 @@ function listButton(title, detail) {
 }
 
 /**
- * JSON を読み取ります。誤りがある場合は、その内容を区画の中に表示して null を返します。
+ * JSON を読み取ります。誤りがある場合は、その内容を編集欄の直下に表示して null を返します。
+ * 誤りの対象は編集欄そのものであるため、ほかの入力欄の誤りと同じく、入力欄の直下に出します。
  * @param {HTMLTextAreaElement} textarea
- * @param {HTMLElement} notice 誤りを表示する欄
+ * @param {HTMLElement} feedback 編集欄の直後に置いた、誤りを表示する要素
  * @returns {unknown}
  */
-function parse(textarea, notice) {
+function parse(textarea, feedback) {
   try {
     const value = JSON.parse(textarea.value);
-    textarea.classList.remove('is-invalid');
-    textarea.removeAttribute('aria-invalid');
+    showFieldError(textarea, feedback, '');
     return value;
   } catch (error) {
-    showJsonErrors(textarea, notice, `JSON として読み取れません。${String(error)}`);
+    showFieldError(textarea, feedback, `JSON として読み取れません。${String(error)}`);
     return null;
   }
-}
-
-/**
- * JSON の誤りを、保存や追加のボタンの直下の表示欄に一覧で表示し、編集欄に誤りの印を付けます。
- * 編集欄は長く、編集欄の上に出すと、下端のボタンを押したときに画面の外に出るためです。
- * @param {HTMLTextAreaElement} textarea
- * @param {HTMLElement} notice
- * @param {string} text
- */
-function showJsonErrors(textarea, notice, text) {
-  showNotice(notice, text, 'error');
-  textarea.classList.add('is-invalid');
-  textarea.setAttribute('aria-invalid', 'true');
 }
 
 /**

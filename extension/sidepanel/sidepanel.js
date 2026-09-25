@@ -21,7 +21,7 @@ import {
   isActiveRun,
   runStatesFrom,
 } from '../shared/flow-list.js';
-import { defaultValue } from '../shared/params.js';
+import { defaultValue, paramFieldErrors } from '../shared/params.js';
 import {
   confirmInline,
   followColorScheme,
@@ -96,6 +96,13 @@ let currentPage = null;
 
 /** 入力フォームを表示しているフローの id です。 */
 let formFlowId = '';
+
+/**
+ * 入力フォームの入力欄と、その直下に置いた誤りの表示欄です。
+ * param はパラメータの定義で、値を記録していない入力欄（パスワードなど）では null です。
+ * @type {Array<{ control: HTMLInputElement | HTMLSelectElement, feedback: HTMLElement, param: import('../shared/params.js').Param | null }>}
+ */
+let formControls = [];
 
 /**
  * 一覧で名前を変更している、または削除の確認を表示しているフローです。
@@ -303,6 +310,7 @@ function showForm(stored) {
   formFlowId = stored.id;
   elements.formFlowName.textContent = `「${stored.flow.name}」`;
   const now = new Date();
+  formControls = [];
 
   const fields = (stored.flow.params ?? []).map((param) => {
     /** @type {HTMLInputElement | HTMLSelectElement} */
@@ -323,8 +331,7 @@ function showForm(stored) {
     }
     control.name = `param:${param.name}`;
     control.value = defaultValue(param, now);
-    control.required = true;
-    return labeled(param.label, control);
+    return formField(param.label, control, param);
   });
 
   for (const index of secretStepIndexes(stored.flow)) {
@@ -334,9 +341,8 @@ function showForm(stored) {
     control.type = 'password';
     control.name = `secret:${index}`;
     control.autocomplete = 'off';
-    control.required = true;
     const label = step.type === 'input' ? step.target.label : '';
-    fields.push(labeled(`${label}（手順 ${index + 1}）`, control));
+    fields.push(formField(`${label}（手順 ${index + 1}）`, control, null));
   }
 
   elements.formFields.replaceChildren(...fields);
@@ -366,6 +372,9 @@ elements.form.addEventListener('submit', async (event) => {
       secrets[key.slice('secret:'.length)] = value;
     }
   }
+  if (showFormErrors(params)) {
+    return;
+  }
   const error = await startRun(formFlowId, params, secrets);
   if (error) {
     showNotice(elements.formNotice, error, 'error');
@@ -373,6 +382,35 @@ elements.form.addEventListener('submit', async (event) => {
   }
   hideForm();
 });
+
+/**
+ * 入力フォームの値を検証し、誤りをそれぞれの入力欄の直下に表示します。
+ * Chrome 標準の吹き出し（required による検証）は使いません。見た目と位置が、ほかの誤りと異なるためです。
+ * @param {Record<string, string>} params パラメータの入力値
+ * @returns {boolean} 誤りがある場合は true。最初の誤りの欄にフォーカスを移します
+ */
+function showFormErrors(params) {
+  const paramErrors = paramFieldErrors(
+    formControls.flatMap(({ param }) => (param ? [param] : [])),
+    params,
+    new Date(),
+  );
+  /** @type {HTMLElement | null} */
+  let first = null;
+  for (const { control, feedback, param } of formControls) {
+    const error = param
+      ? (paramErrors[param.name] ?? '')
+      : control.value === ''
+        ? '値を入力してください。'
+        : '';
+    showFieldError(control, feedback, error);
+    if (error && !first) {
+      first = control;
+    }
+  }
+  first?.focus();
+  return first !== null;
+}
 
 elements.formCancel.addEventListener('click', hideForm);
 
@@ -394,6 +432,7 @@ async function startRun(flowId, params, secrets) {
 
 function hideForm() {
   elements.formSection.hidden = true;
+  formControls = [];
   // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
   elements.formFields.replaceChildren();
   showNotice(elements.formNotice, '');
@@ -927,15 +966,29 @@ async function getLastFlow() {
 }
 
 /**
- * @param {string} text
- * @param {HTMLElement} control
- * @returns {HTMLLabelElement}
+ * 入力フォームの 1 項目（項目名、入力欄、誤りの表示欄）を作り、formControls に登録します。
+ * 誤りの表示欄は入力欄の直後に置きます。Tabler は、誤りの印の付いた入力欄の後ろの表示欄だけを表示するためです。
+ * @param {string} text 項目名
+ * @param {HTMLInputElement | HTMLSelectElement} control
+ * @param {import('../shared/params.js').Param | null} param
+ * @returns {HTMLDivElement}
  */
-function labeled(text, control) {
+function formField(text, control, param) {
+  const id = `run-field-${formControls.length}`;
+  control.id = id;
   const label = document.createElement('label');
-  label.className = 'form-label lm-field';
-  label.append(text, control);
-  return label;
+  label.className = 'form-label';
+  label.htmlFor = id;
+  label.textContent = text;
+  const feedback = document.createElement('div');
+  feedback.className = 'invalid-feedback';
+  feedback.id = `${id}-feedback`;
+  control.addEventListener('input', () => showFieldError(control, feedback, ''));
+  formControls.push({ control, feedback, param });
+  const field = document.createElement('div');
+  field.className = 'lm-field';
+  field.append(label, control, feedback);
+  return field;
 }
 
 /**

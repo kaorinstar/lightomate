@@ -43,29 +43,47 @@ export function validateStopRule(rule) {
     return ['指定がオブジェクトではありません。'];
   }
   const { selectors, paths } = /** @type {Record<string, unknown>} */ (rule);
+  return [...entryErrors('selectors', selectors), ...entryErrors('paths', paths)];
+}
+
+/**
+ * 止める要素と止める画面の誤りを、欄ごとに分けて返します。
+ * 画面で、誤りをそれぞれの入力欄の直下に表示するために使います。検証の内容は validateStopRule と同じです。
+ * @param {StopRule} rule
+ * @returns {{ selectors: string[], paths: string[] }}
+ */
+export function stopRuleFieldErrors(rule) {
+  return {
+    selectors: entryErrors('selectors', rule.selectors),
+    paths: entryErrors('paths', rule.paths),
+  };
+}
+
+/**
+ * 止める要素、または止める画面の一覧を検証します。
+ * @param {'selectors' | 'paths'} name
+ * @param {unknown} values
+ * @returns {string[]}
+ */
+function entryErrors(name, values) {
+  const label = name === 'selectors' ? '止める要素' : '止める画面';
+  if (!Array.isArray(values) || values.some((value) => typeof value !== 'string')) {
+    return [`${label}（${name}）が文字列の配列ではありません。`];
+  }
   /** @type {string[]} */
   const errors = [];
-  for (const [name, label, values] of /** @type {const} */ ([
-    ['selectors', '止める要素', selectors],
-    ['paths', '止める画面', paths],
-  ])) {
-    if (!Array.isArray(values) || values.some((value) => typeof value !== 'string')) {
-      errors.push(`${label}（${name}）が文字列の配列ではありません。`);
-      continue;
-    }
-    if (values.length > MAX_STOP_ENTRIES) {
-      errors.push(`${label}は ${MAX_STOP_ENTRIES} 件までです。`);
-    }
-    for (const value of values) {
-      if (value.trim() === '') {
-        errors.push(`${label}に空の指定があります。`);
-      } else if (value.length > MAX_STOP_ENTRY_LENGTH) {
-        errors.push(
-          `${label}の「${value.slice(0, 30)}…」が ${MAX_STOP_ENTRY_LENGTH} 文字を超えています。`,
-        );
-      } else if (name === 'paths' && !value.startsWith('/')) {
-        errors.push(`止める画面の「${value}」が / で始まっていません。`);
-      }
+  if (values.length > MAX_STOP_ENTRIES) {
+    errors.push(`${label}は ${MAX_STOP_ENTRIES} 件までです。`);
+  }
+  for (const value of values) {
+    if (value.trim() === '') {
+      errors.push(`${label}に空の指定があります。`);
+    } else if (value.length > MAX_STOP_ENTRY_LENGTH) {
+      errors.push(
+        `${label}の「${value.slice(0, 30)}…」が ${MAX_STOP_ENTRY_LENGTH} 文字を超えています。`,
+      );
+    } else if (name === 'paths' && !value.startsWith('/')) {
+      errors.push(`止める画面の「${value}」が / で始まっていません。`);
     }
   }
   return errors;

@@ -159,3 +159,8 @@ body {
   gap: 0.25rem;
   margin: 0;
 }
+
+.lm-field .form-label,
+.lm-field .invalid-feedback {
+  margin: 0;
+}

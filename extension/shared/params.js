@@ -169,11 +169,7 @@ export function resolveParams(params, input, now) {
   const errors = [];
 
   for (const param of params) {
-    let value = (input[param.name] ?? '').trim();
-    if (value === '' && param.default !== undefined) {
-      value = defaultValue(param, now);
-    }
-    const error = value === '' ? '値を入力してください。' : checkValue(param, value, false);
+    const { value, error } = resolveParam(param, input[param.name], now);
     if (error) {
       errors.push(`${param.label}：${error}`);
       continue;
@@ -188,6 +184,43 @@ export function resolveParams(params, input, now) {
     }
   }
   return { values, errors };
+}
+
+/**
+ * 入力フォームの値を検証し、誤りのある欄の名前と誤りの説明を返します。
+ * 画面で、誤りを入力欄ごとに、その欄の直下に表示するために使います。
+ * 検証の内容は resolveParams と同じです。
+ * @param {Param[]} params
+ * @param {Record<string, string>} input 入力フォームの値
+ * @param {Date} now
+ * @returns {Record<string, string>} キーはパラメータの名前。誤りがない場合は空のオブジェクト
+ */
+export function paramFieldErrors(params, input, now) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  for (const param of params) {
+    const { error } = resolveParam(param, input[param.name], now);
+    if (error) {
+      errors[param.name] = error;
+    }
+  }
+  return errors;
+}
+
+/**
+ * 1 つのパラメータの入力を、実行に使う値にします。空の場合は既定値を使います。
+ * @param {Param} param
+ * @param {string | undefined} raw 入力フォームの値
+ * @param {Date} now
+ * @returns {{ value: string, error: string | null }}
+ */
+function resolveParam(param, raw, now) {
+  let value = (raw ?? '').trim();
+  if (value === '' && param.default !== undefined) {
+    value = defaultValue(param, now);
+  }
+  const error = value === '' ? '値を入力してください。' : checkValue(param, value, false);
+  return { value, error };
 }
 
 /**
