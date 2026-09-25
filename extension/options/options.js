@@ -1,8 +1,8 @@
 // フローの管理画面です。保存したフローの内容の表示、名前の変更、書き出し、削除、JSON の編集と、
 // JSON からの追加、サイトごとの「必ず止まる場所」の指定を行います。2 つはタブで分けています。
 // ビジュアルエディタ（#9）ができるまでは、手順の変更は JSON を直接編集して行います。
-// 配置と、知らせを出す場所は docs/design-guidelines.md に従います。知らせは画面の上部にまとめず、
-// 操作した区画の中に出します。
+// 配置と、知らせを出す場所は docs/design-guidelines.md に従います。成功は画面の上部のトーストに出し、
+// 誤り・警告・確認は押したボタンの直下に出します。
 
 import {
   deleteFlow,
@@ -21,13 +21,18 @@ import {
 import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
 import { isWebOrigin, orderFlow, validateFlow } from '../shared/flow.js';
 import { parseLines, validateStopRule } from '../shared/stop-rules.js';
-import { confirmInline, followColorScheme, showFieldError, showNotice } from '../shared/ui.js';
+import {
+  confirmInline,
+  followColorScheme,
+  showFieldError,
+  showNotice,
+  showToast,
+} from '../shared/ui.js';
 
 /** @typedef {import('../common/flow-store.js').StoredFlow} StoredFlow */
 
 const elements = {
   version: byId('version'),
-  listNotice: byId('list-notice'),
   flows: byId('flows'),
   flowCount: byId('flow-count'),
   empty: byId('empty'),
@@ -74,11 +79,11 @@ const elements = {
   stopDelete: byId('stop-delete'),
   stopConfirm: byId('stop-confirm'),
   stopNotice: byId('stop-notice'),
+  toast: byId('toast'),
 };
 
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
 const notices = [
-  elements.listNotice,
   elements.editorNotice,
   elements.jsonNotice,
   elements.importNotice,
@@ -182,7 +187,7 @@ elements.save.addEventListener('click', async () => {
   }
   const { name } = /** @type {{ name: string }} */ (flow);
   if (result.name === name) {
-    showNotice(elements.jsonNotice, '保存しました。', 'success');
+    showToast(elements.toast, '保存しました。');
     return;
   }
   // 同じサイトに同じ名前のフローがあり、番号を付けて保存した場合は、編集欄の名前も合わせます。
@@ -191,10 +196,11 @@ elements.save.addEventListener('click', async () => {
     null,
     2,
   );
+  // 名前が変わったことは見落とすと困るため、自動で消えるトーストではなく、ボタンの直下に残します。
   showNotice(
     elements.jsonNotice,
     `同じサイトに「${name}」があるため、「${result.name}」として保存しました。`,
-    'success',
+    'warning',
   );
 });
 
@@ -236,12 +242,14 @@ elements.renameForm.addEventListener('submit', async (event) => {
   showRenameForm(false);
   // JSON の編集欄の名前も新しい名前にするため、次の表示で編集欄を読み込み直します。
   delete elements.editor.dataset.id;
+  if (result.name === name) {
+    showToast(elements.toast, `名前を「${name}」に変更しました。`);
+    return;
+  }
   showNotice(
     elements.editorNotice,
-    result.name === name
-      ? `名前を「${name}」に変更しました。`
-      : `同じサイトに「${name}」があるため、「${result.name}」に変更しました。`,
-    'success',
+    `同じサイトに「${name}」があるため、「${result.name}」に変更しました。`,
+    'warning',
   );
   await render();
 });
@@ -287,8 +295,7 @@ elements.deleteFlow.addEventListener('click', async () => {
   }
   await deleteFlow(stored.id);
   select('');
-  // 詳細の区画は閉じるため、一覧の区画に知らせます。
-  showNotice(elements.listNotice, `「${stored.flow.name}」を削除しました。`, 'success');
+  showToast(elements.toast, `「${stored.flow.name}」を削除しました。`);
 });
 
 elements.file.addEventListener('change', async () => {
@@ -332,13 +339,15 @@ elements.importFlow.addEventListener('click', async () => {
   elements.importJson.value = '';
   elements.file.value = '';
   select(result.id);
-  // 追加したフローは詳細の区画で開くため、その区画に知らせます。
+  if (result.name === name) {
+    showToast(elements.toast, `「${name}」を追加しました。`);
+    return;
+  }
+  // 追加したフローは詳細の区画で開くため、名前が変わったことはその区画に残します。
   showNotice(
     elements.editorNotice,
-    result.name === name
-      ? `「${name}」を追加しました。`
-      : `同じサイトに「${name}」があるため、「${result.name}」として追加しました。`,
-    'success',
+    `同じサイトに「${name}」があるため、「${result.name}」として追加しました。`,
+    'warning',
   );
 });
 
@@ -353,7 +362,7 @@ render().catch(console.error);
 elements.stopForm.addEventListener('submit', (event) => {
   event.preventDefault();
   clearNotices();
-  onSaveStopRule().catch((error) => showStopNotice(String(error), 'error'));
+  onSaveStopRule().catch((error) => showNotice(elements.stopNotice, String(error), 'error'));
 });
 
 elements.stopClear.addEventListener('click', () => {
@@ -363,7 +372,7 @@ elements.stopClear.addEventListener('click', () => {
 
 elements.stopDelete.addEventListener('click', () => {
   clearNotices();
-  onDeleteStopRule().catch((error) => showStopNotice(String(error), 'error'));
+  onDeleteStopRule().catch((error) => showNotice(elements.stopNotice, String(error), 'error'));
 });
 
 elements.stopOrigin.addEventListener('input', () => {
@@ -374,20 +383,6 @@ onStopRulesChanged(() => {
   renderStopRules().catch(console.error);
 });
 renderStopRules().catch(console.error);
-
-/**
- * 「必ず止まる場所」の結果と誤りを、保存のボタンの下に表示します。
- * 画面の上部の表示欄では、下部の入力欄を操作している間に見えないためです。
- * @param {string} text
- * @param {import('../shared/ui.js').NoticeKind} kind
- */
-function showStopNotice(text, kind) {
-  showNotice(elements.stopNotice, text, kind);
-  if (text) {
-    // 保存のボタンが画面の下端にある場合も、表示が見える位置まで移動します。
-    elements.stopNotice.scrollIntoView({ block: 'nearest' });
-  }
-}
 
 /** 入力欄の指定を検証し、保存します。 */
 async function onSaveStopRule() {
@@ -408,7 +403,11 @@ async function onSaveStopRule() {
   };
   const errors = [...validateStopRule(rule), ...selectorSyntaxErrors(rule.selectors)];
   if (errors.length > 0) {
-    showStopNotice(`指定に誤りがあるため、保存しませんでした。\n${errors.join('\n')}`, 'error');
+    showNotice(
+      elements.stopNotice,
+      `指定に誤りがあるため、保存しませんでした。\n${errors.join('\n')}`,
+      'error',
+    );
     return;
   }
   const removing = rule.selectors.length === 0 && rule.paths.length === 0;
@@ -424,13 +423,13 @@ async function onSaveStopRule() {
   }
   const result = await saveStopRule(origin, rule);
   if (!result.ok) {
-    showStopNotice(`保存できませんでした。\n${result.errors.join('\n')}`, 'error');
+    showNotice(elements.stopNotice, `保存できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
   elements.stopOrigin.value = origin;
-  showStopNotice(
+  showToast(
+    elements.toast,
     removing ? `${origin} の指定を削除しました。` : `${origin} の指定を保存しました。`,
-    'success',
   );
 }
 
@@ -439,7 +438,8 @@ async function onDeleteStopRule() {
   const origin = elements.stopOrigin.value.trim().replace(/\/+$/, '');
   const exists = (await listStopRules()).some((entry) => entry.origin === origin);
   if (!exists) {
-    showStopNotice(
+    showNotice(
+      elements.stopNotice,
       origin
         ? `${origin} の指定はありません。削除するサイトを一覧から選んでください。`
         : '削除するサイトを一覧から選んでください。',
@@ -458,11 +458,11 @@ async function onDeleteStopRule() {
   }
   const result = await saveStopRule(origin, { selectors: [], paths: [] });
   if (!result.ok) {
-    showStopNotice(`削除できませんでした。\n${result.errors.join('\n')}`, 'error');
+    showNotice(elements.stopNotice, `削除できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
   editStopRule('', { selectors: [], paths: [] });
-  showStopNotice(`${origin} の指定を削除しました。`, 'success');
+  showToast(elements.toast, `${origin} の指定を削除しました。`);
 }
 
 /**
@@ -705,8 +705,8 @@ function parse(textarea, notice) {
 }
 
 /**
- * JSON の誤りを、編集欄の上の表示欄に一覧で表示し、編集欄に誤りの印を付けます。
- * JSON の誤りは入力欄の一部を指せないため、入力欄の直下ではなく、編集欄の上にまとめます。
+ * JSON の誤りを、保存や追加のボタンの直下の表示欄に一覧で表示し、編集欄に誤りの印を付けます。
+ * 編集欄は長く、編集欄の上に出すと、下端のボタンを押したときに画面の外に出るためです。
  * @param {HTMLTextAreaElement} textarea
  * @param {HTMLElement} notice
  * @param {string} text

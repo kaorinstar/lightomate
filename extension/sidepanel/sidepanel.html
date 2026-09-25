@@ -59,6 +59,7 @@
             <span class="lm-sub">手順 <span id="step-count">0</span> 件</span>
             <button type="button" id="stop" class="btn btn-sm btn-danger ms-auto">記録停止</button>
           </div>
+          <p id="recording-notice" hidden></p>
           <p class="lm-sub mb-2" id="recording-origin"></p>
           <ol id="steps" class="lm-steps"></ol>
           <div class="lm-buttons mt-2">
@@ -67,7 +68,7 @@
             </button>
           </div>
           <div id="recording-confirm" hidden></div>
-          <p id="recording-notice" hidden></p>
+          <p id="recording-discard-notice" hidden></p>
         </div>
       </section>
 
@@ -85,6 +86,7 @@
             <button type="button" class="btn" id="discard">破棄</button>
           </div>
           <div id="result-confirm" hidden></div>
+          <p id="save-notice" hidden></p>
           <details class="mt-3">
             <summary class="lm-sub">
               記録した手順（<span id="result-step-count">0</span> 件）
@@ -124,5 +126,7 @@
         </div>
       </section>
     </main>
+
+    <div id="toast" class="lm-toast-region" role="status" aria-live="polite"></div>
   </body>
 </html>
