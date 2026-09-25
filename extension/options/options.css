@@ -277,3 +277,15 @@ body {
   color: var(--tblr-warning-text-emphasis, var(--tblr-warning));
   font-weight: 600;
 }
+
+/* 実行の速度の欄です（#15）。最短と最長を横に並べ、狭い幅では折り返します。 */
+.lm-speed-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.lm-speed-fields .lm-field {
+  flex: 0 1 10rem;
+}

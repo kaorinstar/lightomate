@@ -3,7 +3,7 @@
 // フローは chrome.storage.local に保存します。Chrome を終了しても残りますが、暗号化はされません。
 // 拡張機能を削除すると、保存したフローも削除されます。
 
-import { orderFlow, validateFlow } from '../shared/flow.js';
+import { orderFlow, validateFlow, withInterval } from '../shared/flow.js';
 import { uniqueName } from '../shared/flow-list.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
@@ -87,6 +87,22 @@ export async function renameFlow(id, name) {
     return { ok: false, errors: ['フローが見つかりません。'] };
   }
   return saveFlow({ ...stored.flow, name }, id);
+}
+
+/**
+ * フローの手順の間隔を変えます（#15）。undefined を渡すと、既定の間隔に戻します。
+ * @param {string} id
+ * @param {import('../shared/speed.js').Interval | undefined} interval
+ * @returns {Promise<{ ok: true, id: string, name: string, flow: Flow } | { ok: false, errors: string[] }>}
+ */
+export async function setFlowInterval(id, interval) {
+  const stored = (await readAll())[id];
+  if (!stored) {
+    return { ok: false, errors: ['フローが見つかりません。'] };
+  }
+  const flow = withInterval(stored.flow, interval);
+  const result = await saveFlow(flow, id);
+  return result.ok ? { ...result, flow } : result;
 }
 
 /**

@@ -11,22 +11,27 @@ import {
   withPlaceholders,
 } from './params.js';
 import { RESERVED_NAMES, nonBuiltinReferences, validateSaveTemplate } from './save-path.js';
+import { validateInterval, validateWaitMs } from './speed.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
  * 版 3 は、版 2 に PDF の保存（savePdf）とページの文字の読み取り（extract）を加えたものです（#16）。
+ * 版 4 は、版 3 に手順の間隔（interval）と待機の手順（wait）を加えたものです（#15）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
  * @type {Record<string, number>}
  */
-const MIN_SCHEMA_VERSION = { pause: 2, savePdf: 3, extract: 3 };
+const MIN_SCHEMA_VERSION = { pause: 2, savePdf: 3, extract: 3, wait: 4 };
+
+/** interval を使える最も古い版です。 */
+const INTERVAL_MIN_SCHEMA_VERSION = 4;
 
 /** 1 つのフローに含められる手順の数の上限です。保存領域を使い切ることを防ぎます。 */
 export const MAX_STEPS = 1000;
@@ -105,7 +110,14 @@ export const MAX_TEXT_LENGTH = 2000;
  */
 
 /**
- * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep} Step
+ * 指定した時間だけ待ちます（#15）。版 4 で加えました。
+ * @typedef {object} WaitStep
+ * @property {'wait'} type
+ * @property {number} ms 待つ時間（ミリ秒）。1 以上 300,000 以下の整数です
+ */
+
+/**
+ * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep | WaitStep} Step
  */
 
 /** @typedef {import('./params.js').Param} Param */
@@ -118,6 +130,8 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string} origin 記録したサイトのオリジン（例：https://www.amazon.co.jp）。
  *   実行時は、このオリジンのページでだけ手順を実行します。
  * @property {Param[]} [params] パラメータ（実行のたびに入力する値）の定義
+ * @property {import('./speed.js').Interval} [interval] 手順と手順の間に待つ時間の範囲（ミリ秒、#15）。
+ *   省略した場合は speed.js の DEFAULT_INTERVAL です。版 4 で加えました。
  * @property {Step[]} steps 手順の一覧
  */
 
@@ -131,6 +145,17 @@ export const MAX_TEXT_LENGTH = 2000;
  * @returns {string | null}
  */
 export function replaceJsonName(text, name) {
+  return replaceJsonFields(text, { name });
+}
+
+/**
+ * 編集中の JSON の文字列のうち、指定した最上位の項目だけを書き換えます（#53、#15）。
+ * 値が undefined の項目は削除します。そのほかの扱いは replaceJsonName と同じです。
+ * @param {string} text
+ * @param {Record<string, unknown>} fields
+ * @returns {string | null}
+ */
+export function replaceJsonFields(text, fields) {
   let value;
   try {
     value = JSON.parse(text);
@@ -140,7 +165,28 @@ export function replaceJsonName(text, name) {
   if (!isRecord(value)) {
     return null;
   }
-  return JSON.stringify({ ...value, name }, null, 2);
+  return JSON.stringify({ ...value, ...fields }, null, 2);
+}
+
+/**
+ * 手順の間隔（interval）を変えたフローを返します（#15）。元のフローは変更しません。
+ * interval に undefined を渡すと削除し、既定の間隔に戻します。
+ * interval を加える場合、版 4 より古いフローは版 4 にします。interval は版 4 で加えた項目のためです。
+ * @param {Flow} flow
+ * @param {import('./speed.js').Interval | undefined} interval
+ * @returns {Flow}
+ */
+export function withInterval(flow, interval) {
+  const rest = { ...flow };
+  delete rest.interval;
+  if (interval === undefined) {
+    return rest;
+  }
+  return {
+    ...rest,
+    schemaVersion: Math.max(flow.schemaVersion, INTERVAL_MIN_SCHEMA_VERSION),
+    interval: { min: interval.min, max: interval.max },
+  };
 }
 
 /**
@@ -218,6 +264,18 @@ export function validateFlow(value) {
 
   const paramErrors = validateParams(value.params);
   errors.push(...paramErrors);
+
+  if (value.interval !== undefined) {
+    errors.push(...validateInterval(value.interval));
+    if (
+      typeof value.schemaVersion === 'number' &&
+      value.schemaVersion < INTERVAL_MIN_SCHEMA_VERSION
+    ) {
+      errors.push(
+        `interval は、schemaVersion が ${INTERVAL_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+      );
+    }
+  }
 
   if (!Array.isArray(value.steps)) {
     errors.push('steps が配列ではありません。');
@@ -371,9 +429,12 @@ export function validateStep(step) {
       return errors;
     }
 
+    case 'wait':
+      return validateWaitMs(step.ms);
+
     default:
       return [
-        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract のいずれでもありません。',
+        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait のいずれでもありません。',
       ];
   }
 }

@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describeParam, stepKindLabel } from '../extension/shared/describe.js';
+import { describeParam, describeStep, stepKindLabel } from '../extension/shared/describe.js';
 
 const target = { selectors: ['#a'], tag: 'button', label: '注文履歴', text: '注文履歴' };
 
@@ -32,4 +32,10 @@ test('選択肢と、既定値がない場合を表示する', () => {
     describeParam({ name: 'n', label: '数量', type: 'number', default: '3' }),
     '数値・既定値は3',
   );
+});
+
+test('待機の手順は「3 秒待つ」の形で説明する（#15）', () => {
+  assert.equal(describeStep({ type: 'wait', ms: 3000 }), '3 秒待つ');
+  assert.equal(describeStep({ type: 'wait', ms: 1500 }), '1.5 秒待つ');
+  assert.equal(stepKindLabel({ type: 'wait', ms: 3000 }), '待機');
 });

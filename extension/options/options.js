@@ -12,6 +12,7 @@ import {
   onFlowsChanged,
   renameFlow,
   saveFlow,
+  setFlowInterval,
 } from '../common/flow-store.js';
 import { requestPermission } from '../common/permissions.js';
 import {
@@ -26,6 +27,7 @@ import {
   formatFlowJson,
   isWebOrigin,
   orderFlow,
+  replaceJsonFields,
   replaceJsonName,
   validateFlow,
 } from '../shared/flow.js';
@@ -43,6 +45,7 @@ import {
   showRunFieldErrors,
 } from '../shared/run-form.js';
 import { STATUS_LABELS, historyToCsv, stepText } from '../shared/history.js';
+import { MAX_INTERVAL_MS, formatSeconds, parseSeconds } from '../shared/speed.js';
 import { parseLines, stopRuleFieldErrors } from '../shared/stop-rules.js';
 import {
   confirmInline,
@@ -89,6 +92,12 @@ const elements = {
   renameFeedback: byId('rename-feedback'),
   renameCancel: byId('rename-cancel'),
   paramsSection: byId('params-section'),
+  speedForm: /** @type {HTMLFormElement} */ (byId('speed-form')),
+  intervalMin: /** @type {HTMLInputElement} */ (byId('interval-min')),
+  intervalMinFeedback: byId('interval-min-feedback'),
+  intervalMax: /** @type {HTMLInputElement} */ (byId('interval-max')),
+  intervalMaxFeedback: byId('interval-max-feedback'),
+  speedNotice: byId('speed-notice'),
   params: byId('params'),
   stepCount: byId('step-count'),
   steps: byId('steps'),
@@ -139,6 +148,7 @@ const notices = [
   elements.jsonNotice,
   elements.stopNotice,
   elements.historyNotice,
+  elements.speedNotice,
 ];
 
 /**
@@ -147,6 +157,8 @@ const notices = [
  */
 const fieldFeedbacks = [
   [elements.json, elements.jsonFeedback],
+  [elements.intervalMin, elements.intervalMinFeedback],
+  [elements.intervalMax, elements.intervalMaxFeedback],
   [elements.importJson, elements.importJsonFeedback],
   [elements.stopOrigin, elements.stopOriginFeedback],
   [elements.stopSelectors, elements.stopSelectorsFeedback],
@@ -683,6 +695,90 @@ onFlowsChanged(() => {
 });
 render().catch(console.error);
 
+// ---- 実行の速度（#15） ----
+
+/**
+ * 実行の速度の欄に、フローの手順の間隔を入れます。指定がない場合は空欄にします（既定の 1 秒）。
+ * @param {import('../shared/flow.js').Flow} flow
+ */
+function fillSpeedFields(flow) {
+  elements.intervalMin.value = flow.interval ? formatSeconds(flow.interval.min) : '';
+  elements.intervalMax.value = flow.interval ? formatSeconds(flow.interval.max) : '';
+  showFieldError(elements.intervalMin, elements.intervalMinFeedback, '');
+  showFieldError(elements.intervalMax, elements.intervalMaxFeedback, '');
+}
+
+for (const [control, feedback] of /** @type {Array<[HTMLInputElement, HTMLElement]>} */ ([
+  [elements.intervalMin, elements.intervalMinFeedback],
+  [elements.intervalMax, elements.intervalMaxFeedback],
+])) {
+  control.addEventListener('input', () => showFieldError(control, feedback, ''));
+}
+
+elements.speedForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearNotices();
+  const minText = elements.intervalMin.value;
+  const maxText = elements.intervalMax.value;
+  /** @type {import('../shared/speed.js').Interval | undefined} */
+  let interval;
+  if (minText.trim() !== '' || maxText.trim() !== '') {
+    const min = parseSeconds(minText, MAX_INTERVAL_MS);
+    const max = parseSeconds(maxText, MAX_INTERVAL_MS);
+    const minError =
+      minText.trim() === '' ? '最長と同じく入力してください。' : min.ok ? '' : min.error;
+    const maxError =
+      maxText.trim() === '' ? '最短と同じく入力してください。' : max.ok ? '' : max.error;
+    const orderError =
+      !minError && !maxError && min.ok && max.ok && min.ms > max.ms
+        ? '最短以上の秒数を入力してください。'
+        : '';
+    showFieldError(elements.intervalMin, elements.intervalMinFeedback, minError);
+    showFieldError(elements.intervalMax, elements.intervalMaxFeedback, maxError || orderError);
+    if (minError) {
+      elements.intervalMin.focus();
+      return;
+    }
+    if (maxError || orderError || !min.ok || !max.ok) {
+      elements.intervalMax.focus();
+      return;
+    }
+    interval = { min: min.ms, max: max.ms };
+  }
+  const result = await setFlowInterval(selectedId, interval);
+  if (!result.ok) {
+    showNotice(
+      elements.speedNotice,
+      `保存できませんでした。\n${result.errors.join('\n')}`,
+      'error',
+    );
+    return;
+  }
+  fillSpeedFields(result.flow);
+  // JSON の編集欄は読み込み直さず、版番号と間隔だけを書き換えます。保存していない編集を失わないためです（#53）。
+  const replaced = replaceJsonFields(elements.json.value, {
+    schemaVersion: result.flow.schemaVersion,
+    interval: result.flow.interval,
+  });
+  if (replaced === null) {
+    showNotice(
+      elements.jsonNotice,
+      'JSON の編集欄を読み取れないため、編集欄の速度は書き換えていません。［JSON を保存］を押すと、速度は編集欄の内容に戻ります。',
+      'warning',
+    );
+  } else {
+    elements.json.value = replaced;
+  }
+  showToast(
+    elements.toast,
+    interval
+      ? interval.min === interval.max
+        ? `手順の間隔を ${formatSeconds(interval.min)} 秒にしました。`
+        : `手順の間隔を ${formatSeconds(interval.min)}〜${formatSeconds(interval.max)} 秒にしました。`
+      : '手順の間隔を既定の 1 秒に戻しました。',
+  );
+});
+
 // ---- 実行履歴（#19） ----
 // 履歴は Service Worker が実行の終わりに記録します。この画面は表示と CSV への書き出しを行い、
 // 削除（#75）は Service Worker に依頼します。記録と削除の書き込みを、同じ待ち行列で順に行うためです。
@@ -1052,6 +1148,7 @@ async function render() {
     // 編集中の内容を上書きしないよう、別のフローを選んだときだけ JSON を入れ替えます。
     elements.editor.dataset.id = stored.id;
     elements.json.value = JSON.stringify(orderFlow(stored.flow), null, 2);
+    fillSpeedFields(stored.flow);
   }
   if (stored) {
     renderDetail(stored);

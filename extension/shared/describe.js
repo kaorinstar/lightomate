@@ -26,6 +26,8 @@ export function describeStep(step) {
       return `PDF を保存：${step.path ?? DEFAULT_SAVE_PATH}${step.onConflict === 'overwrite' ? '（同じ名前は上書き）' : ''}`;
     case 'extract':
       return `読み取り：${step.target.label} → {{${step.name}}}`;
+    case 'wait':
+      return `${step.ms / 1000} 秒待つ`;
   }
 }
 
@@ -50,6 +52,8 @@ export function stepKindLabel(step) {
       return 'PDF 保存';
     case 'extract':
       return '読み取り';
+    case 'wait':
+      return '待機';
   }
 }
 
