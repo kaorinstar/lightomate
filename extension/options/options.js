@@ -6,6 +6,7 @@
 // 誤り・警告・確認は押したボタンの直下に出します。
 
 import {
+  addFlows,
   deleteFlow,
   getFlow,
   listFlows,
@@ -29,10 +30,10 @@ import {
   orderFlow,
   replaceJsonFields,
   replaceJsonName,
-  validateFlow,
 } from '../shared/flow.js';
 import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
 import { attachCombobox } from '../shared/combobox.js';
+import { flowFileName, flowFileText, parseFlowFile, splitDuplicates } from '../shared/flow-file.js';
 import { buildFlowGroups } from '../shared/flow-groups.js';
 import { MATCH_MODES, filterFlows, groupByHost, suggestions } from '../shared/flow-search.js';
 import {
@@ -107,9 +108,12 @@ const elements = {
   format: byId('format'),
   save: byId('save'),
   exportFlow: byId('export'),
+  exportAll: byId('export-all'),
+  flowsNotice: byId('flows-notice'),
   deleteFlow: byId('delete'),
   importer: byId('importer'),
   importConfirm: byId('import-confirm'),
+  importNotice: byId('import-notice'),
   file: /** @type {HTMLInputElement} */ (byId('file')),
   importJson: /** @type {HTMLTextAreaElement} */ (byId('import-json')),
   importJsonFeedback: byId('import-json-feedback'),
@@ -142,6 +146,8 @@ const elements = {
 
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
 const notices = [
+  elements.flowsNotice,
+  elements.importNotice,
   elements.editorNotice,
   elements.runNotice,
   elements.jsonNotice,
@@ -567,17 +573,40 @@ function showRenameForm(show) {
 elements.exportFlow.addEventListener('click', async () => {
   clearNotices();
   const stored = await getFlow(selectedId);
-  if (!stored) {
+  if (stored) {
+    downloadFlows([stored.flow]);
+  }
+});
+
+// 一覧に表示中のフロー（検索で絞り込んでいる場合は、その結果）を 1 つのファイルに書き出します（#27）。
+elements.exportAll.addEventListener('click', async () => {
+  clearNotices();
+  const shown = filterFlows(await listFlows(), elements.search.value, searchMode());
+  if (shown.length === 0) {
+    showNotice(elements.flowsNotice, '書き出すフローがありません。', 'warning');
     return;
   }
-  const blob = new Blob([JSON.stringify(stored.flow, null, 2)], { type: 'application/json' });
+  downloadFlows(shown.map((stored) => stored.flow));
+});
+
+/**
+ * フローを JSON ファイルとして、Chrome のダウンロード先フォルダーに保存します。
+ * @param {import('../shared/flow.js').Flow[]} flows
+ */
+function downloadFlows(flows) {
+  const blob = new Blob([flowFileText(flows)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `lightomate-${stored.flow.name.replace(/[\\/:*?"<>|]/g, '_')}.json`;
+  link.download = flowFileName(flows, new Date());
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
-});
+  // パラメータの既定値に個人の情報を入れている場合に備え、ファイルに含まれることを知らせます。
+  showToast(
+    elements.toast,
+    `${flows.length === 1 ? `「${flows[0].name}」` : `${flows.length} 件のフロー`}をファイルに書き出しました。実行時に入力する値の既定値も含まれます。`,
+  );
+}
 
 elements.deleteFlow.addEventListener('click', async () => {
   clearNotices();
@@ -610,46 +639,75 @@ elements.importFormat.addEventListener('click', () =>
 
 elements.importFlow.addEventListener('click', async () => {
   clearNotices();
-  const flow = parse(elements.importJson, elements.importJsonFeedback);
-  if (!flow) {
+  const value = parse(elements.importJson, elements.importJsonFeedback);
+  if (value === null) {
     return;
   }
-  const errors = validateFlow(flow);
-  if (errors.length > 0) {
+  const parsed = parseFlowFile(value);
+  if (!parsed.ok) {
     showFieldError(
       elements.importJson,
       elements.importJsonFeedback,
-      `形式に誤りがあるため、追加しませんでした。\n${errors.join('\n')}`,
+      `形式に誤りがあるため、追加しませんでした。\n${parsed.errors.join('\n')}`,
     );
     return;
   }
-  const { name, origin } = /** @type {{ name: string, origin: string }} */ (flow);
+  // 保存済みのフローと内容が同じフローは、追加しません（#27）。
+  const { fresh: flows, duplicates } = splitDuplicates(parsed.flows, await listFlows());
+  const duplicateText =
+    duplicates.length === 0
+      ? ''
+      : `\n\n次の ${duplicates.length} 件は、同じ内容のフローがあるため追加しません。\n` +
+        duplicates.map((flow) => `・${flow.name}（${flow.origin}）`).join('\n');
+  if (flows.length === 0) {
+    showNotice(
+      elements.importNotice,
+      `${parsed.flows.length === 1 ? 'このフロー' : `${parsed.flows.length} 件のフロー`}はすべて追加済みです。同じ内容のフローがあるため、何も追加しませんでした。`,
+      'info',
+    );
+    return;
+  }
   // 他人から受け取ったフローは、ログイン中のサイトで意図しない操作を行う可能性があります（#14）。
   const confirmed = await confirmInline(elements.importConfirm, {
     message:
-      `「${name}」は ${origin} を操作するフローです。` +
-      '内容を確認し、信頼できるフローだけを追加してください。',
+      (flows.length === 1
+        ? `「${flows[0].name}」は ${flows[0].origin} を操作するフローです。` +
+          '内容を確認し、信頼できるフローだけを追加してください。'
+        : `次の ${flows.length} 件のフローを追加します。各フローは、括弧内のサイトを操作します。` +
+          '内容を確認し、信頼できるフローだけを追加してください。\n' +
+          flows.map((flow) => `・${flow.name}（${flow.origin}）`).join('\n')) + duplicateText,
     confirmLabel: '追加する',
   });
   if (!confirmed) {
     return;
   }
-  const result = await saveFlow(flow);
+  const result = await addFlows(flows);
   if (!result.ok) {
     showFieldError(elements.importJson, elements.importJsonFeedback, result.errors.join('\n'));
     return;
   }
   elements.importJson.value = '';
   elements.file.value = '';
-  select(result.id);
-  if (result.name === name) {
-    showToast(elements.toast, `「${name}」を追加しました。`);
+  select(result.added[0].id);
+  const renamed = result.added.filter(({ name, originalName }) => name !== originalName);
+  const skipped =
+    duplicates.length === 0 ? '' : `同じ内容の ${duplicates.length} 件は追加しませんでした。`;
+  if (renamed.length === 0) {
+    showToast(
+      elements.toast,
+      (flows.length === 1
+        ? `「${result.added[0].name}」を追加しました。`
+        : `${flows.length} 件のフローを追加しました。`) + skipped,
+    );
     return;
   }
   // 追加したフローは詳細の区画で開くため、名前が変わったことはその区画に残します。
   showNotice(
     elements.editorNotice,
-    `同じサイトに「${name}」があるため、「${result.name}」として追加しました。`,
+    (flows.length === 1 ? '' : `${flows.length} 件のフローを追加しました。`) +
+      skipped +
+      `同じサイトに同じ名前のフローがあるため、次の名前で追加しました。\n` +
+      renamed.map(({ name, originalName }) => `・「${originalName}」→「${name}」`).join('\n'),
     'warning',
   );
 });

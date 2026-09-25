@@ -39,13 +39,14 @@ const cases = [
     button: 'delete',
     notices: ['editor-confirm', 'editor-notice'],
   },
+  { page: '管理画面', html: options, button: 'new', notices: ['flows-notice'] },
   { page: '管理画面', html: options, button: 'save', notices: ['json-notice'] },
   { page: '管理画面', html: options, button: 'speed-save', notices: ['speed-notice'] },
   {
     page: '管理画面',
     html: options,
     button: 'import',
-    notices: ['import-confirm'],
+    notices: ['import-confirm', 'import-notice'],
   },
   {
     page: '管理画面',
