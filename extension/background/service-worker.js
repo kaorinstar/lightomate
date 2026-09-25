@@ -16,7 +16,13 @@ import {
   stopRecording,
 } from './recording.js';
 import { removeHistory } from '../common/history-store.js';
-import { markInterruptedRuns, requestStop, startRun } from './runner.js';
+import {
+  markInterruptedRuns,
+  requestPause,
+  requestResume,
+  requestStop,
+  startRun,
+} from './runner.js';
 
 // ツールバーのアイコンを押したときに、ポップアップではなくサイドパネルを開きます。
 // ポップアップはページをクリックした時点で閉じるため、記録中に開いたままにできないためです。
@@ -99,6 +105,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       requestStop(message.runId).then(
         () => sendResponse({ ok: true }),
         (error) => sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'runner/pause':
+      if (!fromExtensionPage || typeof message.runId !== 'string') {
+        return false;
+      }
+      requestPause(message.runId).then(
+        () => sendResponse({ ok: true }),
+        (error) => sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'runner/resume':
+      if (!fromExtensionPage || typeof message.runId !== 'string') {
+        return false;
+      }
+      requestResume(message.runId).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
       );
       return true;
 

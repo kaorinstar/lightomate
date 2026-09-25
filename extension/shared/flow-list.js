@@ -90,13 +90,16 @@ export function uniqueName(name, origin, flows, ownId) {
   }
 }
 
+/** 実行中とみなす状態です。一時停止中も、再開できるよう実行中として扱います（#37）。 */
+const ACTIVE_STATUSES = ['running', 'stopping', 'pausing', 'paused'];
+
 /**
- * 実行中（停止の処理中を含む）かどうかです。
+ * 実行中（停止の処理中、一時停止の処理中、一時停止中を含む）かどうかです。
  * @param {{ status: string }} run
  * @returns {boolean}
  */
 export function isActiveRun(run) {
-  return run.status === 'running' || run.status === 'stopping';
+  return ACTIVE_STATUSES.includes(run.status);
 }
 
 /**

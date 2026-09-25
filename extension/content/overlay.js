@@ -17,6 +17,10 @@
  * @returns {HTMLElement} 表示を消すときに remove() を呼ぶ要素
  */
 function showStatusOverlay(text, color, textColor) {
+  // 前の実行が残した表示（「ここから手で操作してください」など）は、新しい表示に置き換えます（#13）。
+  for (const previous of document.querySelectorAll('lightomate-status')) {
+    previous.remove();
+  }
   const host = document.createElement('lightomate-status');
   host.style.cssText =
     'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';

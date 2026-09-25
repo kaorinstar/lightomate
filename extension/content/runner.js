@@ -14,9 +14,31 @@
   }
   scope[installedKey] = true;
 
-  // 実行中は黄色で示します。青は画面の配色に紛れて気付きにくかったためです。
-  // 黄色の上では白い文字が読みにくいため、文字は黒にします。
-  const overlay = showStatusOverlay('▶ 実行中（Lightomate）', '#fbbc04', '#202124');
+  /**
+   * ページの枠と左上の文字です。
+   * 実行中は黄色で示します。青は画面の配色に紛れて気付きにくかったためです。
+   * 黄色の上では白い文字が読みにくいため、文字は黒にします。
+   * 一時停止中と、以降を人が操作する場合は、黄色や記録中の赤と区別できる紫で示します（#13、#37）。
+   * @type {Record<'running' | 'paused' | 'handOver', [string, string, string]>}
+   */
+  const indicators = {
+    running: ['▶ 実行中（Lightomate）', '#fbbc04', '#202124'],
+    paused: ['⏸ 一時停止中（Lightomate）', '#8e24aa', '#ffffff'],
+    handOver: ['■ 停止：ここから手で操作してください（Lightomate）', '#8e24aa', '#ffffff'],
+  };
+
+  let overlay = showStatusOverlay(...indicators.running);
+
+  /**
+   * 枠と文字を、指定した表示に置き換えます。
+   * @param {unknown} name
+   */
+  function showIndicator(name) {
+    if (name === 'running' || name === 'paused' || name === 'handOver') {
+      overlay.remove();
+      overlay = showStatusOverlay(...indicators[name]);
+    }
+  }
 
   /** 実行中の手順で要素を待つ処理を止めるためのものです。停止を指示されたときに使います。 */
   let currentStep = new AbortController();
@@ -43,8 +65,18 @@
       sendResponse({ ok: true });
       return false;
     }
+    if (message?.kind === 'runner/indicator') {
+      showIndicator(message.indicator);
+      return false;
+    }
     if (message?.kind === 'runner/finish') {
-      overlay.remove();
+      // 確定ボタンの手前などで終えた場合は、以降を人が操作することを示す表示を残します（#13）。
+      // ページを移動すると、このスクリプトとともに消えます。
+      if (message.indicator === 'handOver') {
+        showIndicator('handOver');
+      } else {
+        overlay.remove();
+      }
       scope[installedKey] = false;
       return false;
     }
