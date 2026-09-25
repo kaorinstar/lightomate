@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Lightomate",
   "description": "ログイン済みの Chrome の画面をそのまま使い、Web 上の操作を記録して自動で実行します。",
-  "version": "0.3.0",
+  "version": "0.2.0",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvKszm5+IG5SYQCL3uJXsHHfc1wvv71FZpi3HtMMLCkWOwKANsUn1LuMC0/nwq4QxxvmGaUqiAFDA/6jogQfDAMaLCytlK1nZEgVMmlnRef58oWL6jfkXUBjVQ5Fz0f4NS4QK36wNCSVt+Q5TUyF9Ef/G4hKReGIjh20Mmw4irM87ohTZf7VxBkq6UT+b+dNUF9BjfebbdQ3wYtB5MNdu66nPIHOdsZlKGkhoruhm/bsYEwZVFdB0gis7dmVL7E6DfExItvytBmAjpRJ2UELscWvexTZltMi2f+ZGVcdA5WG6lM9+lBQfD/2dCi1MUHLYrna8d6rZyN41wf4NzZXFgwIDAQAB",
   "icons": {
