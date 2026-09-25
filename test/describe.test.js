@@ -2,7 +2,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describeParam, describeStep, stepKindLabel } from '../extension/shared/describe.js';
+import {
+  describeParam,
+  describeStep,
+  runStatusText,
+  stepKindLabel,
+} from '../extension/shared/describe.js';
 
 const target = { selectors: ['#a'], tag: 'button', label: '注文履歴', text: '注文履歴' };
 
@@ -38,4 +43,22 @@ test('待機の手順は「3 秒待つ」の形で説明する（#15）', () => 
   assert.equal(describeStep({ type: 'wait', ms: 3000 }), '3 秒待つ');
   assert.equal(describeStep({ type: 'wait', ms: 1500 }), '1.5 秒待つ');
   assert.equal(stepKindLabel({ type: 'wait', ms: 3000 }), '待機');
+});
+
+test('一時停止中の状態の説明に、手順の番号と次の手順を含める（#37）', () => {
+  const run = { flowName: '領収書', status: 'paused', stepIndex: 2, total: 8 };
+  assert.equal(
+    runStatusText(run, { type: 'click', target }),
+    '「領収書」は 手順 3 / 8 の前で一時停止しています（次の手順：クリック：注文履歴）。' +
+      '続ける場合は［再開］を押してください。',
+  );
+  assert.match(
+    runStatusText({ ...run, note: '確定は手で行ってください。' }, undefined),
+    /の前で一時停止しています。確定は手で行ってください。続ける場合は/,
+  );
+});
+
+test('一時停止の処理中の説明に、実行中の手順を含める（#37）', () => {
+  const run = { flowName: '領収書', status: 'pausing', stepIndex: 0, total: 8 };
+  assert.match(runStatusText(run, { type: 'click', target }), /手順 1 \/ 8（クリック：注文履歴）/);
 });

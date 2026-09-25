@@ -156,6 +156,8 @@ test('停止した実行は、完了した手順の次の手順で止まった�
 test('実行中の状態からは、履歴を作らない', () => {
   assert.equal(historyEntryFromRun({ ...run, status: 'running' }, '', []), null);
   assert.equal(historyEntryFromRun({ ...run, status: 'stopping' }, '', []), null);
+  assert.equal(historyEntryFromRun({ ...run, status: 'pausing' }, '', []), null);
+  assert.equal(historyEntryFromRun({ ...run, status: 'paused' }, '', []), null);
 });
 
 test('CSV は見出しと各行を CRLF で区切り、先頭に BOM を付ける', () => {

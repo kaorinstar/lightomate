@@ -32,6 +32,39 @@ export function describeStep(step) {
 }
 
 /**
+ * 実行の状態の説明です。サイドパネルの「フローの実行」に表示します。
+ * @param {{
+ *   flowName: string, status: string, stepIndex: number, total: number, error?: string, note?: string,
+ * }} run 実行の状態（background/runner.js の RunState）
+ * @param {Step | undefined} step 実行中、または止まった手順。一時停止中は、次に実行する手順です。
+ * @returns {string}
+ */
+export function runStatusText(run, step) {
+  const where = `手順 ${run.stepIndex + 1} / ${run.total}${step ? `（${describeStep(step)}）` : ''}`;
+  switch (run.status) {
+    case 'running':
+      return `「${run.flowName}」を実行中です。${where}`;
+    case 'pausing':
+      return `「${run.flowName}」は、実行中の手順が終わった時点で一時停止します。${where}`;
+    case 'paused': {
+      const next = step ? `（次の手順：${describeStep(step)}）` : '';
+      return `「${run.flowName}」は 手順 ${run.stepIndex + 1} / ${run.total} の前で一時停止しています${next}。${run.note ?? ''}続ける場合は［再開］を押してください。`;
+    }
+    case 'stopping':
+      return `「${run.flowName}」を停止しています。${where}`;
+    case 'done':
+      return `「${run.flowName}」の実行が完了しました。`;
+    case 'stopped':
+      return `「${run.flowName}」の実行を停止しました。完了した手順は ${run.total} 件中 ${run.stepIndex} 件です。`;
+    case 'halted':
+      // 止まった理由（error）に手順の説明が含まれるため、手順の番号だけを示します。
+      return `「${run.flowName}」の実行は 手順 ${run.stepIndex + 1} / ${run.total} で止まりました。${run.error ?? ''}`;
+    default:
+      return `「${run.flowName}」の実行は ${where} で止まりました。${run.error ?? ''}`;
+  }
+}
+
+/**
  * 手順の種類の短い名前です。管理画面の手順の一覧で、説明の前に表示します。
  * @param {Step} step
  * @returns {string}
