@@ -42,9 +42,12 @@ import { getStopRule } from '../common/stop-rules-store.js';
  * @property {number} stepIndex 実行中の手順の番号（0 から数えます）。完了後は最後の手順の番号、
  *   失敗後は失敗した手順の番号、停止後は停止した時点で完了していた手順の数です。
  * @property {number} total 手順の数
- * @property {'running' | 'stopping' | 'done' | 'failed' | 'stopped' | 'halted'} status
- *   halted は、確定ボタンの手前、または一時停止の手順で実行を終えたことを示します（#29）。
+ * @property {'running' | 'stopping' | 'pausing' | 'paused' | 'done' | 'failed' | 'stopped' | 'halted'} status
+ *   pausing は［一時停止］を押され、実行中の手順が終わるのを待っている状態、paused は一時停止中です（#37）。
+ *   一時停止中の stepIndex は、再開したときに実行する手順の番号です。
+ *   halted は、確定ボタンの手前、または最後の一時停止の手順で実行を終えたことを示します（#29）。
  * @property {string} [error] 失敗した理由。halted の場合は、止まった理由の説明です。
+ * @property {string} [note] 一時停止の手順で止まった場合の、その手順の説明（note）です。
  * @property {string} startedAt
  */
 
@@ -70,6 +73,15 @@ const EXTRACT_MAX_LENGTH = 200;
 
 /** 停止の指示を確かめる間隔です。要素やページの読み込みを待っている間も、この間隔で確かめます。 */
 const STOP_CHECK_INTERVAL_MS = 250;
+
+/**
+ * 一時停止を続けられる上限です（#37）。一時停止中は同じサイトのフローを実行できず、
+ * Service Worker も止まらないよう問い合わせを続けるため、上限を設けます。
+ */
+const PAUSE_LIMIT_MS = 30 * 60_000;
+
+/** 一時停止中と、確定ボタンの手前などで実行を終えた後の、ツールバーのアイコンの色です（#13、#37）。 */
+const PAUSED_BADGE_COLOR = '#8e24aa';
 
 /** サイドパネルから停止を指示されたことを示す誤りです。失敗ではなく停止として扱います。 */
 class StopRequested extends Error {}
@@ -261,9 +273,56 @@ export async function startRun(flowId, paramInput, secretInput) {
  */
 export async function requestStop(runId) {
   const state = await getRunState(runId);
-  if (state?.status === 'running') {
+  if (state && ['running', 'pausing', 'paused'].includes(state.status)) {
     await setRunState({ ...state, status: 'stopping' });
   }
+}
+
+/**
+ * 実行の一時停止を求めます（#37）。実行中の手順が終わった時点で一時停止します。
+ * @param {string} runId
+ * @returns {Promise<void>}
+ */
+export async function requestPause(runId) {
+  const state = await getRunState(runId);
+  if (state?.status === 'running') {
+    await setRunState({ ...state, status: 'pausing' });
+  }
+}
+
+/**
+ * 一時停止中の実行を再開します（#37）。
+ * タブが開いていて、フローのサイトのページを表示している場合に限り再開します。
+ * 止まっている間に人が別のサイトへ移動した場合に、そのサイトで操作しないためです（#14）。
+ * @param {string} runId
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export async function requestResume(runId) {
+  const state = await getRunState(runId);
+  if (state?.status !== 'paused') {
+    return { ok: false, error: '一時停止中ではないため、再開できません。' };
+  }
+  if (!activeRuns.has(runId)) {
+    return {
+      ok: false,
+      error: '拡張機能の処理が途中で停止したため、再開できません。［実行停止］を押してください。',
+    };
+  }
+  let tab;
+  try {
+    tab = await chrome.tabs.get(state.tabId);
+  } catch {
+    return { ok: false, error: '実行していたタブが閉じられたため、再開できません。' };
+  }
+  const url = tab.url ?? '';
+  if (!isWebUrl(url) || new URL(url).origin !== state.origin) {
+    return {
+      ok: false,
+      error: `フローのサイト（${state.origin}）のページを表示してから、［再開］を押してください。`,
+    };
+  }
+  await setRunState({ ...state, status: 'running', note: undefined });
+  return { ok: true };
 }
 
 /**
@@ -359,9 +418,14 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
    * @type {string | undefined}
    */
   let documentBefore;
+  /** 実行を終えた後も、ページの枠とアイコンで「ここから手で操作する」ことを示すか（#13）。 */
+  let handOver = false;
   try {
     while (index < steps.length) {
       await throwIfStopRequested(runId);
+      if (await isPauseRequested(runId)) {
+        await pauseRun(runId, flow, tabId, index);
+      }
       await updateRunState(runId, { stepIndex: index });
       // タブのページが移動すると、Chrome はそのタブ用のアイコンの文字を消します。手順ごとに設定し直します。
       await showRunBadge(tabId);
@@ -378,7 +442,15 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       } else if (step.type === 'wait') {
         await waitWithStopCheck(runId, step.ms);
       } else if (step.type === 'pause') {
-        throw new Halted(step.note ?? '一時停止の手順です。以降の操作は手で行ってください。');
+        // 最後の手順の場合は、再開しても続ける手順がないため、これまでどおり実行を終えます。
+        if (index === steps.length - 1) {
+          throw new Halted(step.note ?? '一時停止の手順です。以降の操作は手で行ってください。');
+        }
+        // 止まる前のページの識別子（documentBefore）は変えません。止まっている間に人がページを
+        // 移動していれば、次の「ページの操作による移動」の手順は待たずに進みます。
+        index += 1;
+        await pauseRun(runId, flow, tabId, index, step.note);
+        continue;
       } else if (step.type === 'navigate') {
         if (index > 0) {
           await chrome.tabs.update(tabId, { url: step.url });
@@ -417,6 +489,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       return;
     }
     if (error instanceof Halted) {
+      handOver = true;
       await finishRun(runId, { status: 'halted', stepIndex: index, error: error.message });
       return;
     }
@@ -426,9 +499,122 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       error: error instanceof Error ? error.message : String(error),
     });
   } finally {
-    await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
-    await chrome.tabs.sendMessage(tabId, { kind: 'runner/finish' }, { frameId: 0 }).catch(() => {});
+    if (handOver) {
+      // 確定ボタンの手前などで実行を終えた場合は、以降を人が操作することを示します（#13）。
+      // タブのページが移動すると、Chrome がアイコンの文字を消し、枠も content script とともに消えます。
+      await showWaitBadge(tabId).catch(() => {});
+    } else {
+      await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+    }
+    await chrome.tabs
+      .sendMessage(
+        tabId,
+        { kind: 'runner/finish', indicator: handOver ? 'handOver' : undefined },
+        { frameId: 0 },
+      )
+      .catch(() => {});
   }
+}
+
+/**
+ * 一時停止を求められているかを返します（#37）。
+ * @param {string} runId
+ * @returns {Promise<boolean>}
+ */
+async function isPauseRequested(runId) {
+  return (await getRunState(runId))?.status === 'pausing';
+}
+
+/**
+ * 実行を一時停止し、［再開］を押されるまで待ちます（#37）。
+ *
+ * 待っている間も短い間隔で実行の状態とタブを問い合わせます。拡張機能の API を呼ぶたびに
+ * Service Worker の停止までの時間が数え直されるため、長い一時停止の間も停止しません。
+ * 実行時に入力した値はこのファイルの変数にだけ置いているため、Service Worker が停止すると再開できません。
+ * https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle
+ * @param {string} runId
+ * @param {Flow} flow
+ * @param {number} tabId
+ * @param {number} nextIndex 再開したときに実行する手順の番号
+ * @param {string} [note] 一時停止の手順の説明
+ */
+async function pauseRun(runId, flow, tabId, nextIndex, note) {
+  await updateRunState(runId, { status: 'paused', stepIndex: nextIndex, note });
+  const deadline = Date.now() + PAUSE_LIMIT_MS;
+  /** 枠を表示したページの識別子です。人がページを移動したら、移動後のページに表示し直します。 */
+  let shownDocument;
+  for (;;) {
+    const state = await getRunState(runId);
+    if (!state || state.status === 'stopping') {
+      throw new StopRequested('停止を指示されました。');
+    }
+    if (state.status === 'running') {
+      await setIndicator(tabId, 'running');
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Halted(
+        `${PAUSE_LIMIT_MS / 60_000} 分間［再開］が押されなかったため、実行を終了しました。続きは手で操作してください。`,
+      );
+    }
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch {
+      throw new Error('実行中のタブが閉じられたため、停止しました。');
+    }
+    const documentId = await getDocumentId(tabId);
+    if (tab.status === 'complete' && documentId !== shownDocument) {
+      shownDocument = documentId;
+      // ページが移動すると、Chrome がアイコンの文字を消すため、設定し直します。
+      await showWaitBadge(tabId).catch(() => {});
+      await showPausedFrame(flow, tabId, tab.url);
+    }
+    await sleep(STOP_CHECK_INTERVAL_MS);
+  }
+}
+
+/**
+ * 一時停止中の枠と文字を、ページに表示します（#37）。
+ * フローのサイトのページにだけ表示します。そのほかのサイトには、スクリプトを読み込む許可がないためです。
+ * @param {Flow} flow
+ * @param {number} tabId
+ * @param {string | undefined} url
+ */
+async function showPausedFrame(flow, tabId, url) {
+  if (!url || !isWebUrl(url) || new URL(url).origin !== flow.origin) {
+    return;
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      files: CONTENT_FILES,
+    });
+    await setIndicator(tabId, 'paused');
+  } catch {
+    // 読み込めないページ（エラーの画面など）では、アイコンの文字だけで示します。
+  }
+}
+
+/**
+ * ページの枠と文字を、実行中または一時停止中の表示に切り替えます（#37）。
+ * @param {number} tabId
+ * @param {'running' | 'paused'} indicator
+ */
+async function setIndicator(tabId, indicator) {
+  await chrome.tabs
+    .sendMessage(tabId, { kind: 'runner/indicator', indicator }, { frameId: 0 })
+    .catch(() => {});
+}
+
+/**
+ * 一時停止中、または以降を人が操作することを、ツールバーのアイコンに紫の「WAIT」で示します（#13、#37）。
+ * @param {number} tabId
+ */
+async function showWaitBadge(tabId) {
+  await chrome.action.setBadgeText({ tabId, text: 'WAIT' });
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: PAUSED_BADGE_COLOR });
+  await chrome.action.setBadgeTextColor({ tabId, color: '#ffffff' });
 }
 
 /**
@@ -801,6 +987,7 @@ async function throwIfStopRequested(runId) {
 
 /**
  * 指定した時間だけ待ちます（#15）。待っている間も停止の指示を確かめ、指示があれば StopRequested を投げます。
+ * 一時停止を求められた場合は、その時点で待つのをやめます。
  * 確かめるたびに chrome.storage を読むため、Service Worker は長い待機の間も停止しません
  * （拡張機能の API の呼び出しで、停止までの時間が数え直されます）。
  * https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle
@@ -811,6 +998,10 @@ async function waitWithStopCheck(runId, ms) {
   const deadline = Date.now() + ms;
   for (let rest = ms; rest > 0; rest = deadline - Date.now()) {
     await throwIfStopRequested(runId);
+    // 一時停止を求められた場合は、待つのをやめます（#37）。止まっている間に十分な時間が経つためです。
+    if (await isPauseRequested(runId)) {
+      return;
+    }
     await sleep(Math.min(rest, STOP_CHECK_INTERVAL_MS));
   }
   await throwIfStopRequested(runId);

@@ -13,7 +13,7 @@ import {
   saveFlow,
 } from '../common/flow-store.js';
 import { requestPermission } from '../common/permissions.js';
-import { describeStep, formatDateTime } from '../shared/describe.js';
+import { describeStep, formatDateTime, runStatusText } from '../shared/describe.js';
 import { orderFlow } from '../shared/flow.js';
 import {
   RUN_KEY_PREFIX,
@@ -594,7 +594,7 @@ async function renderRuns(runs) {
       if (run.status === 'failed') {
         card.classList.add('lm-card-failed');
         showNotice(status, text, 'error');
-      } else if (run.status === 'halted') {
+      } else if (run.status === 'halted' || run.status === 'paused') {
         showNotice(status, text, 'warning');
       } else if (run.status === 'done') {
         showNotice(status, text, 'success');
@@ -607,13 +607,26 @@ async function renderRuns(runs) {
       const buttons = document.createElement('div');
       buttons.className = 'lm-buttons mt-3';
       if (isActiveRun(run)) {
+        // 一時停止中は［再開］、それ以外は［一時停止］を置きます（#37）。
+        const paused = run.status === 'paused';
+        const toggle = button(paused ? '再開' : '一時停止', 'btn btn-sm', () => {
+          chrome.runtime
+            .sendMessage({ kind: paused ? 'runner/resume' : 'runner/pause', runId: run.runId })
+            .then((response) => {
+              if (!response?.ok) {
+                showNotice(status, response?.error ?? '再開できませんでした。', 'error');
+              }
+            })
+            .catch((error) => showNotice(status, String(error), 'error'));
+        });
+        toggle.disabled = run.status !== 'running' && !paused;
         const stop = button('実行停止', 'btn btn-sm btn-danger', () => {
           chrome.runtime
             .sendMessage({ kind: 'runner/stop', runId: run.runId })
             .catch(console.error);
         });
         stop.disabled = run.status === 'stopping';
-        buttons.append(stop);
+        buttons.append(toggle, stop);
       } else {
         buttons.append(
           button('閉じる', 'btn btn-sm', () => {
@@ -629,31 +642,6 @@ async function renderRuns(runs) {
     }),
   );
   elements.runs.replaceChildren(...cards);
-}
-
-/**
- * 実行の状態の説明です。
- * @param {RunState} run
- * @param {import('../shared/flow.js').Step | undefined} step 実行中、または止まった手順
- * @returns {string}
- */
-function runStatusText(run, step) {
-  const where = `手順 ${run.stepIndex + 1} / ${run.total}${step ? `（${describeStep(step)}）` : ''}`;
-  switch (run.status) {
-    case 'running':
-      return `「${run.flowName}」を実行中です。${where}`;
-    case 'stopping':
-      return `「${run.flowName}」を停止しています。${where}`;
-    case 'done':
-      return `「${run.flowName}」の実行が完了しました。`;
-    case 'stopped':
-      return `「${run.flowName}」の実行を停止しました。完了した手順は ${run.total} 件中 ${run.stepIndex} 件です。`;
-    case 'failed':
-      return `「${run.flowName}」の実行は ${where} で止まりました。${run.error ?? ''}`;
-    case 'halted':
-      // 止まった理由（error）に手順の説明が含まれるため、手順の番号だけを示します。
-      return `「${run.flowName}」の実行は 手順 ${run.stepIndex + 1} / ${run.total} で止まりました。${run.error ?? ''}`;
-  }
 }
 
 /**

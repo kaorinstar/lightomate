@@ -7,6 +7,7 @@ import {
   findConflictingRun,
   flowsForOrigin,
   flowsToShow,
+  isActiveRun,
   pageOrigin,
   runStatesFrom,
   uniqueName,
@@ -87,6 +88,17 @@ test('同じサイトで実行中、または停止の処理中のフローを�
   const stopping = run('納品書', shop, 'stopping');
   assert.equal(findConflictingRun(shop, [run('A', www, 'running'), running]), running);
   assert.equal(findConflictingRun(shop, [stopping]), stopping);
+});
+
+test('一時停止の処理中と一時停止中のフローも、重なる実行として返す（#37）', () => {
+  const pausing = run('領収書', shop, 'pausing');
+  const paused = run('納品書', shop, 'paused');
+  assert.equal(findConflictingRun(shop, [pausing]), pausing);
+  assert.equal(findConflictingRun(shop, [paused]), paused);
+  // Service Worker の起動時に、実行中のまま残った状態を中断として記録する判定にも使います。
+  assert.equal(isActiveRun(paused), true);
+  assert.equal(isActiveRun(pausing), true);
+  assert.equal(isActiveRun(run('A', shop, 'halted')), false);
 });
 
 test('別のサイトの実行と、終わった実行は、重ならないものとして扱う', () => {
