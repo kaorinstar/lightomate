@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   MAX_STEPS,
   SCHEMA_VERSION,
+  formatFlowJson,
   orderFlow,
   replaceJsonName,
   validateFlow,
@@ -170,6 +171,49 @@ test('JSON として読み取れない、または最上位がオブジェクト
   assert.equal(replaceJsonName('[1, 2]', '新しい名前'), null);
   assert.equal(replaceJsonName('"文字列"', '新しい名前'), null);
   assert.equal(replaceJsonName('null', '新しい名前'), null);
+});
+
+// ---- JSON の整形（#50） ----
+
+test('1 行に詰まった JSON を、字下げ 2 文字で整形する', () => {
+  const result = formatFlowJson(JSON.stringify(validFlow));
+  assert.ok(result.ok);
+  assert.equal(result.text, JSON.stringify(validFlow, null, 2));
+  assert.match(result.text, /^\{\n {2}"schemaVersion"/);
+});
+
+test('形式を満たすフローは、表示を開き直したときと同じ順序に並べ直す', () => {
+  // chrome.storage から読み込んだ場合と同じく、項目を名前の順に並べた JSON です。
+  const sorted = JSON.stringify(validFlow, (_key, value) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+      : value,
+  );
+  const result = formatFlowJson(sorted);
+  assert.ok(result.ok);
+  const formatted = JSON.parse(result.text);
+  // 並び順以外は変えません。
+  assert.deepEqual(formatted, validFlow);
+  assert.deepEqual(Object.keys(formatted).slice(0, 3), ['schemaVersion', 'name', 'origin']);
+  for (const step of formatted.steps) {
+    assert.equal(Object.keys(step)[0], 'type');
+  }
+});
+
+test('形式に誤りがあるフローは、順序を変えずに字下げだけを直す', () => {
+  const invalid = { steps: 'まだ書いていない', name: '', note: '編集中' };
+  const result = formatFlowJson(JSON.stringify(invalid));
+  assert.ok(result.ok);
+  assert.equal(result.text, JSON.stringify(invalid, null, 2));
+  // 最上位がオブジェクトでない値も、そのまま整形します。
+  assert.deepEqual(formatFlowJson('[1,2]'), { ok: true, text: '[\n  1,\n  2\n]' });
+});
+
+test('JSON として読み取れない場合は、整形結果を返さず誤りを返す', () => {
+  const result = formatFlowJson('{ "name": "途中');
+  assert.equal(result.ok, false);
+  assert.ok(!result.ok && result.error.startsWith('JSON として読み取れません。'));
+  assert.equal('text' in result, false);
 });
 
 // ---- PDF の保存（savePdf）と読み取り（extract）（#16） ----

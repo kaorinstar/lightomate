@@ -144,6 +144,24 @@ export function replaceJsonName(text, name) {
 }
 
 /**
+ * 編集中の JSON の文字列を、字下げ 2 文字で整形します（#50）。保存時・書き出し時と同じ字下げです。
+ * フロー定義の形式を満たす場合だけ、表示を開き直したときと同じ順序（orderFlow）に並べ直します。
+ * 形式に誤りがある場合は項目の順序を変えず、字下げだけを直します。検証は保存と追加の時点で行います。
+ * @param {string} text
+ * @returns {{ ok: true, text: string } | { ok: false, error: string }}
+ */
+export function formatFlowJson(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    return { ok: false, error: `JSON として読み取れません。${String(error)}` };
+  }
+  const ordered = validateFlow(value).length === 0 ? orderFlow(/** @type {Flow} */ (value)) : value;
+  return { ok: true, text: JSON.stringify(ordered, null, 2) };
+}
+
+/**
  * フロー定義の項目を、読みやすい順序に並べ直します。
  * chrome.storage は保存した項目を名前の順に並べ替えるため、表示や書き出しの前に使います。
  * @param {Flow} flow

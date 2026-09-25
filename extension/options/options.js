@@ -22,7 +22,13 @@ import {
 } from '../common/stop-rules-store.js';
 import { listHistory, onHistoryChanged } from '../common/history-store.js';
 import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
-import { isWebOrigin, orderFlow, replaceJsonName, validateFlow } from '../shared/flow.js';
+import {
+  formatFlowJson,
+  isWebOrigin,
+  orderFlow,
+  replaceJsonName,
+  validateFlow,
+} from '../shared/flow.js';
 import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
 import { attachCombobox } from '../shared/combobox.js';
 import { buildFlowGroups } from '../shared/flow-groups.js';
@@ -90,6 +96,7 @@ const elements = {
   jsonNotice: byId('json-notice'),
   jsonFeedback: byId('json-feedback'),
   json: /** @type {HTMLTextAreaElement} */ (byId('json')),
+  format: byId('format'),
   save: byId('save'),
   exportFlow: byId('export'),
   deleteFlow: byId('delete'),
@@ -98,6 +105,7 @@ const elements = {
   file: /** @type {HTMLInputElement} */ (byId('file')),
   importJson: /** @type {HTMLTextAreaElement} */ (byId('import-json')),
   importJsonFeedback: byId('import-json-feedback'),
+  importFormat: byId('import-format'),
   importFlow: byId('import'),
   stopList: byId('stop-list'),
   stopEmpty: byId('stop-empty'),
@@ -223,6 +231,32 @@ elements.newFlow.addEventListener('click', () => {
   elements.placeholder.hidden = true;
   elements.importJson.focus();
 });
+
+/**
+ * 編集欄の JSON を整形します（#50）。整形だけでは保存しません。
+ * 読み取れない場合は欄の内容を変えず、誤りを欄の直下に出します。
+ * @param {HTMLTextAreaElement} textarea
+ * @param {HTMLElement} feedback 編集欄の直後に置いた、誤りを表示する要素
+ * @param {string} message 整形した後に、トーストで出す知らせ
+ */
+function formatJson(textarea, feedback, message) {
+  clearNotices();
+  const result = formatFlowJson(textarea.value);
+  if (!result.ok) {
+    showFieldError(textarea, feedback, result.error);
+    return;
+  }
+  textarea.value = result.text;
+  showToast(elements.toast, message);
+}
+
+elements.format.addEventListener('click', () =>
+  formatJson(
+    elements.json,
+    elements.jsonFeedback,
+    '整形しました。保存するには［JSON を保存］を押してください。',
+  ),
+);
 
 elements.save.addEventListener('click', async () => {
   clearNotices();
@@ -558,6 +592,10 @@ elements.file.addEventListener('change', async () => {
     elements.importJson.value = await file.text();
   }
 });
+
+elements.importFormat.addEventListener('click', () =>
+  formatJson(elements.importJson, elements.importJsonFeedback, '整形しました。'),
+);
 
 elements.importFlow.addEventListener('click', async () => {
   clearNotices();
