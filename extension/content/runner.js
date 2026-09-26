@@ -27,6 +27,9 @@
     handOver: ['■ 停止：ここから手で操作してください（Lightomate）', '#8e24aa', '#ffffff'],
   };
 
+  /** 1 行目の目印として返す長さの上限です（#95）。比べるだけのため、全文は要りません。 */
+  const FIRST_KEY_MAX_LENGTH = 500;
+
   let overlay = showStatusOverlay(...indicators.running);
 
   /**
@@ -202,7 +205,9 @@
    * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} items
    * @param {unknown} scope 外側の繰り返しで処理中の行の指定
    * @param {number} timeoutMs 行を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true, count: number } | { ok: false, error: string, notFound?: true }>}
+   * @returns {Promise<{ ok: true, count: number, firstKey?: string } | { ok: false, error: string, notFound?: true }>}
+   *   firstKey は 1 行目の目印です（rowKey）。「次へ」のクリックの後に一覧が差し替わったか、一覧のページへ
+   *   戻った後に同じ一覧かを判定するために使います（#95）
    */
   async function countItems(items, scope, timeoutMs) {
     const base = searchRoot(items, scope);
@@ -219,7 +224,40 @@
     if (currentStep.signal.aborted) {
       return { ok: false, error: '停止を指示されました。' };
     }
-    return { ok: true, count: first ? findAllTargets(items, base.root).length : 0 };
+    const rows = first ? findAllTargets(items, base.root) : [];
+    return {
+      ok: true,
+      count: rows.length,
+      firstKey: rows.length > 0 ? rowKey(rows[0]) : undefined,
+    };
+  }
+
+  /**
+   * 行の目印です（#95）。行の中のリンク先（a 要素の href の値）を並べたものです。リンクがない行では、
+   * 画像の src の値を並べます。どちらもない行では undefined を返し、行数だけで確かめてもらいます。
+   * 表示の文字は使いません。Chrome の翻訳などが表示の後に文字を置き換えるため、同じ一覧でも読み取った時点に
+   * よって文字が異なるためです。href と src の値は、翻訳では変わりません。
+   * @param {Element} row
+   * @returns {string | undefined}
+   */
+  function rowKey(row) {
+    /**
+     * @param {string} selector
+     * @param {string} name
+     */
+    const values = (selector, name) =>
+      [row, ...row.querySelectorAll(selector)]
+        .filter((element) => element.matches(selector))
+        .map((element) => element.getAttribute(name) ?? '');
+    const links = values('a[href]', 'href');
+    if (links.length > 0) {
+      return `link:${links.join(' ')}`.slice(0, FIRST_KEY_MAX_LENGTH);
+    }
+    const images = values('img[src]', 'src');
+    if (images.length > 0) {
+      return `image:${images.join(' ')}`.slice(0, FIRST_KEY_MAX_LENGTH);
+    }
+    return undefined;
   }
 
   /**

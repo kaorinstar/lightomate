@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
   isNewPageLoaded,
+  isPageTurned,
   lastPageNavigationIndex,
+  pageNumber,
   resolveSteps,
   samePage,
 } from '../extension/background/runner.js';
@@ -218,4 +220,42 @@ test('if と forEach の内側の手順にも値を当てはめ、値を記録�
   const missing = resolveSteps(nested, { q: 'ねじ' }, {}, new Date(2026, 8, 24));
   assert.equal(missing.ok, false);
   assert.match(missing.ok ? '' : missing.error, /手順 3（パスワード）/);
+});
+
+test('「次へ」の後は、新しいページが読み込まれたか、1 行目の目印が変わった場合に次のページとする（#95）', () => {
+  const before = { documentId: 'a', firstKey: '注文 1' };
+  // 新しいページの読み込みが完了した場合です。
+  assert.equal(
+    isPageTurned(before, { documentId: 'b', status: 'complete', firstKey: undefined }),
+    true,
+  );
+  assert.equal(
+    isPageTurned(before, { documentId: 'b', status: 'loading', firstKey: undefined }),
+    false,
+  );
+  // ページを読み込まずに、一覧だけが差し替わった場合です。
+  assert.equal(
+    isPageTurned(before, { documentId: 'a', status: 'complete', firstKey: '注文 11' }),
+    true,
+  );
+  assert.equal(
+    isPageTurned(before, { documentId: 'a', status: 'complete', firstKey: '注文 1' }),
+    false,
+  );
+  // 1 行目の目印を読み取れなかった場合は、まだ変わっていないとします。
+  assert.equal(
+    isPageTurned(before, { documentId: 'a', status: 'complete', firstKey: undefined }),
+    false,
+  );
+});
+
+test('何ページ目かは、ページ送りを使う繰り返しの中でだけ返す（#95）', () => {
+  const items = { selectors: ['tr'], tag: 'tr', label: '注文' };
+  const next = { selectors: ['a.next'], tag: 'a', label: '次へ' };
+  const paged = compileSteps([{ type: 'forEach', items, nextPage: next, steps: [] }]);
+  assert.equal(pageNumber(paged, []), undefined);
+  assert.equal(pageNumber(paged, [{ startPc: 0, index: 0, count: 1 }]), 1);
+  assert.equal(pageNumber(paged, [{ startPc: 0, index: 0, count: 1, page: 2 }]), 3);
+  const plain = compileSteps([{ type: 'forEach', items, steps: [] }]);
+  assert.equal(pageNumber(plain, [{ startPc: 0, index: 0, count: 1 }]), undefined);
 });

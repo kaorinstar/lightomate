@@ -51,9 +51,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜5 のフローは、そのまま版 6 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 6);
-  for (const schemaVersion of [1, 2, 3, 4, 5]) {
+test('版 1〜6 のフローは、そのまま版 7 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 7);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -633,6 +633,122 @@ test('forEach の内側には navigate の手順を書けない（#6）', () => 
     ),
     [],
   );
+});
+
+// 繰り返しの中でのページの移動と、ページ送り（#95）の検証です。
+const nextTarget = { selectors: ['a.next'], tag: 'a', label: '次へ' };
+
+/**
+ * 版 7 のフローです。
+ * @param {unknown[]} steps
+ */
+const v7 = (steps) => ({ ...validFlow, schemaVersion: 7, steps });
+
+test('版 7 では、forEach の内側にページの操作による移動（cause: page）を書ける（#95）', () => {
+  const loop = (/** @type {string} */ cause) => ({
+    type: 'forEach',
+    items: rowTarget,
+    steps: [
+      { type: 'click', target: { ...inRow, tag: 'a', label: '領収書' } },
+      { type: 'navigate', cause, url: 'https://www.example.com/receipt' },
+      { type: 'savePdf' },
+    ],
+  });
+  assert.deepEqual(validateFlow(v7([loop('page')])), []);
+  // 一覧のページへは自動で戻るため、利用者の操作による移動は書けません。
+  const errors = validateFlow(v7([loop('user')]));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^steps\[0\]\.steps\[1\]: .*cause が user/);
+  // 版 6 以前のフローでは、これまでどおり誤りです。
+  const old = validateFlow(v6([loop('page')]));
+  assert.equal(old.length, 1);
+  assert.match(old[0], /schemaVersion が 7 以上/);
+});
+
+test('nextPage と maxPages を書いた forEach は、形式を満たす（#95）', () => {
+  const flow = v7([
+    { type: 'forEach', items: rowTarget, nextPage: nextTarget, maxPages: 50, steps: [] },
+    { type: 'forEach', items: rowTarget, nextPage: nextTarget, steps: [] },
+  ]);
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('maxPages は、1 以上 50 以下の整数だけを受け付ける（#95）', () => {
+  const loop = (/** @type {unknown} */ maxPages) => ({
+    type: 'forEach',
+    items: rowTarget,
+    nextPage: nextTarget,
+    maxPages,
+    steps: [],
+  });
+  assert.deepEqual(validateFlow(v7([loop(1)])), []);
+  assert.deepEqual(validateFlow(v7([loop(50)])), []);
+  for (const maxPages of [0, 51, 1.5, '10', null]) {
+    assert.equal(validateFlow(v7([loop(maxPages)])).length, 1, `値: ${String(maxPages)}`);
+  }
+});
+
+test('nextPage は要素の指定として検証し、scope は書けない（#95）', () => {
+  assert.ok(
+    validateFlow(v7([{ type: 'forEach', items: rowTarget, nextPage: { tag: 'a' }, steps: [] }]))
+      .length > 0,
+  );
+  const errors = validateFlow(
+    v7([
+      {
+        type: 'forEach',
+        items: rowTarget,
+        nextPage: { ...nextTarget, scope: 'item' },
+        steps: [],
+      },
+    ]),
+  );
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /nextPage\.scope/);
+});
+
+test('nextPage と maxPages は、外側に forEach がない forEach にだけ書ける（#95）', () => {
+  const inner = { type: 'forEach', items: inRow, nextPage: nextTarget, steps: [] };
+  const errors = validateFlow(v7([{ type: 'forEach', items: rowTarget, steps: [inner] }]));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^steps\[0\]\.steps\[0\]: .*外側に forEach がない/);
+  // if の中の forEach には書けます。
+  assert.deepEqual(
+    validateFlow(
+      v7([
+        {
+          type: 'if',
+          condition: { target, exists: true },
+          then: [{ type: 'forEach', items: rowTarget, nextPage: nextTarget, steps: [] }],
+        },
+      ]),
+    ),
+    [],
+  );
+});
+
+test('nextPage と maxPages は、版 6 以前のフローには書けない（#95）', () => {
+  const errors = validateFlow(
+    v6([{ type: 'forEach', items: rowTarget, nextPage: nextTarget, maxPages: 5, steps: [] }]),
+  );
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /schemaVersion が 7 以上/);
+});
+
+test('整形すると、forEach の nextPage と maxPages は max の後、steps の前に並ぶ（#95）', () => {
+  const flow = /** @type {import('../extension/shared/flow.js').Flow} */ (
+    v7([
+      { steps: [], maxPages: 3, nextPage: nextTarget, items: rowTarget, type: 'forEach', max: 9 },
+    ])
+  );
+  assert.deepEqual(Object.keys(orderFlow(flow).steps[0]), [
+    'type',
+    'items',
+    'max',
+    'nextPage',
+    'maxPages',
+    'steps',
+  ]);
 });
 
 test('内側の手順のパラメータの参照と、読み取った名前の参照も検証する（#6）', () => {

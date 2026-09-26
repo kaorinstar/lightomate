@@ -4,12 +4,17 @@ import assert from 'node:assert/strict';
 
 import {
   advance,
+  afterRow,
   compileSteps,
   displayNumber,
   flattenSteps,
   itemScope,
   itemText,
+  needsReturn,
   outlineSteps,
+  pageLimitError,
+  returnedListError,
+  rowLimitError,
   stepAt,
 } from '../extension/shared/control-flow.js';
 
@@ -231,4 +236,151 @@ test('何件目かの表示', () => {
   assert.equal(itemText([]), '');
   assert.equal(itemText([3]), '3 件目');
   assert.equal(itemText([2, 3]), '2 件目の 3 件目');
+});
+
+test('ページ送りでは、何ページ目かを先頭に添える（#95）', () => {
+  assert.equal(itemText([3], 2), '2 ページ目の 3 件目');
+  assert.equal(itemText([1, 4], 1), '1 ページ目の 1 件目の 4 件目');
+  assert.equal(itemText(undefined, 2), '');
+});
+
+// ページ送り（#95）の実行位置の計算です。
+const nextPage = { selectors: ['a.next'], tag: 'a', label: '次へ' };
+
+/**
+ * @param {Step[]} steps
+ * @param {{ max?: number, maxPages?: number }} [limits]
+ * @returns {import('../extension/shared/flow.js').ForEachStep}
+ */
+const paged = (steps, limits = {}) => ({
+  type: 'forEach',
+  items: { selectors: ['.注文'], tag: 'tr', label: '注文' },
+  nextPage,
+  ...limits,
+  steps,
+});
+
+/**
+ * ページ送りを含めて命令の一覧を最後まで実行し、行った手順の名前（「名前@ページ-件」）を返します。
+ * 止まった場合は、最後に「停止：理由」を加えます。
+ * @param {Step[]} steps
+ * @param {number[]} pages ページごとの行数。最後のページの後は「次へ」がありません
+ * @returns {string[]}
+ */
+function simulatePages(steps, pages) {
+  const program = compileSteps(steps);
+  /** @type {string[]} */
+  const done = [];
+  let position = { pc: 0, frames: /** @type {LoopFrame[]} */ ([]) };
+  for (let guard = 0; position.pc < program.length; guard += 1) {
+    assert.ok(guard < 1000, '命令の実行が終わりません。');
+    const instruction = program[position.pc];
+    /** @type {boolean | number | undefined} */
+    let result;
+    if (instruction.op === 'forEach') {
+      result = pages[0] ?? 0;
+    } else if (instruction.op === 'next') {
+      const frame = /** @type {LoopFrame} */ (position.frames.at(-1));
+      const loop = program[instruction.startPc];
+      assert.ok(loop.op === 'forEach');
+      if (afterRow(loop.step, frame) === 'page') {
+        const nextCount = pages[(frame.page ?? 0) + 1];
+        if (nextCount !== undefined) {
+          const error =
+            pageLimitError(loop.step, frame) ?? rowLimitError(loop.step, frame, nextCount);
+          if (error) {
+            done.push(`停止：${error}`);
+            return done;
+          }
+        }
+        result = nextCount ?? 0;
+      }
+    } else if (instruction.op === 'step') {
+      const frame = position.frames[0];
+      const name = /** @type {{ name?: string }} */ (instruction.step).name ?? '';
+      done.push(frame ? `${name}@${(frame.page ?? 0) + 1}-${frame.index + 1}` : name);
+    }
+    position = advance(program, position.pc, position.frames, result);
+  }
+  return done;
+}
+
+test('ページの最後の行の後は、次のページの 1 行目へ進み、最後のページの後に次の手順へ進む（#95）', () => {
+  const steps = [paged([wait('保存')]), wait('後')];
+  assert.deepEqual(simulatePages(steps, [2, 1, 2]), [
+    '保存@1-1',
+    '保存@1-2',
+    '保存@2-1',
+    '保存@3-1',
+    '保存@3-2',
+    '後',
+  ]);
+});
+
+test('次のページの行が 0 件の場合は、繰り返しを終える（#95）', () => {
+  const steps = [paged([wait('保存')]), wait('後')];
+  assert.deepEqual(simulatePages(steps, [1, 0, 3]), ['保存@1-1', '後']);
+});
+
+test('nextPage がない forEach は、ページを送らずに繰り返しを終える（#95）', () => {
+  const step = forEach('注文', [wait('保存')]);
+  assert.ok(step.type === 'forEach');
+  assert.equal(afterRow(step, { startPc: 0, index: 0, count: 1 }), 'end');
+  assert.equal(afterRow(step, { startPc: 0, index: 0, count: 2 }), 'row');
+  assert.equal(afterRow(paged([]), { startPc: 0, index: 1, count: 2 }), 'page');
+});
+
+test('ページ送りの上限（maxPages）に達して次のページがある場合は、止める（#95）', () => {
+  const steps = [paged([wait('保存')], { maxPages: 2 }), wait('後')];
+  const done = simulatePages(steps, [1, 1, 1]);
+  assert.deepEqual(done.slice(0, 2), ['保存@1-1', '保存@2-1']);
+  assert.match(done[2], /^停止：.*上限（2 ページ）/);
+  // 上限のページが最後のページであれば、止まりません。
+  assert.deepEqual(simulatePages(steps, [1, 1]), ['保存@1-1', '保存@2-1', '後']);
+  // 省略した場合の上限は 10 ページです。
+  const many = simulatePages([paged([wait('保存')])], Array(11).fill(1));
+  assert.match(/** @type {string} */ (many.at(-1)), /上限（10 ページ）/);
+});
+
+test('max は、全ページの行の合計の上限とする（#95）', () => {
+  const steps = [paged([wait('保存')], { max: 4 })];
+  assert.deepEqual(simulatePages(steps, [2, 2]).length, 4);
+  const done = simulatePages(steps, [2, 2, 1]);
+  assert.equal(done.length, 5);
+  assert.match(done[4], /^停止：.*3 ページ目までで 5 件.*上限（4 件）/);
+});
+
+test('ページを送った後の記録は、ページの番号と、前のページまでに処理した行の数を持つ（#95）', () => {
+  const program = compileSteps([paged([wait('保存')])]);
+  const frames = [{ startPc: 0, index: 2, count: 3, page: 1, done: 5 }];
+  const moved = advance(program, 2, frames, 4);
+  assert.equal(moved.pc, 1);
+  assert.deepEqual(moved.frames, [{ startPc: 0, index: 0, count: 4, page: 2, done: 8 }]);
+});
+
+test('行の処理の途中でページが移動した場合だけ、一覧のページへ戻る（#95）', () => {
+  assert.equal(needsReturn('list', 'list'), false);
+  assert.equal(needsReturn('list', 'detail'), true);
+  // ページの識別子が分からない場合は、戻りません。
+  assert.equal(needsReturn(undefined, 'detail'), false);
+  assert.equal(needsReturn('list', undefined), false);
+});
+
+test('一覧のページへ戻った後の行数か 1 行目が、最初と異なる場合は止める（#95）', () => {
+  const list = { count: 3, firstKey: '注文 1' };
+  assert.equal(returnedListError('注文', list, { count: 3, firstKey: '注文 1' }), undefined);
+  assert.match(
+    /** @type {string} */ (returnedListError('注文', list, { count: 2, firstKey: '注文 1' })),
+    /「注文」の行が 2 件になり、最初に数えた 3 件と異なる/,
+  );
+  // URL を開き直すと 1 ページ目に戻るページ送りでは、行数が同じでも 1 行目が異なります。
+  assert.match(
+    /** @type {string} */ (returnedListError('注文', list, { count: 3, firstKey: '注文 11' })),
+    /「注文」の 1 行目が最初と異なる/,
+  );
+  // 1 行目の目印が分からない場合は、行数だけで確かめます。
+  assert.equal(
+    returnedListError('注文', { count: 3 }, { count: 3, firstKey: '注文 11' }),
+    undefined,
+  );
 });
