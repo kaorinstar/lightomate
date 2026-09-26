@@ -6,7 +6,7 @@
 // Service Worker から停止の連絡を受けると終了します。
 // 記録した手順は Service Worker へ送り、ここでは保存しません。
 
-/* global buildTarget, elementKeys, elementTexts, matchStopSelector, showNotice, showStatusOverlay */
+/* global buildTarget, elementKeys, elementTexts, isPageTranslated, matchStopSelector, showNotice, showStatusOverlay */
 
 (() => {
   /** 同じページに 2 回読み込まれた場合に、記録が二重にならないようにする目印です。 */
@@ -130,8 +130,10 @@
    * @param {string[]} [keys] クリックした要素の、翻訳で変わらない手がかり（#97）
    */
   function send(step, texts, matchedSelector, keys) {
+    // 記録したときにページが翻訳されていたことを残します。実行時に見つからなかった場合の説明に使います（#99）。
+    const recorded = isPageTranslated() ? { ...step, translated: true } : step;
     chrome.runtime
-      .sendMessage({ kind: 'recording/step', step, texts, matchedSelector, keys })
+      .sendMessage({ kind: 'recording/step', step: recorded, texts, matchedSelector, keys })
       .catch(() => {
         // 拡張機能を再読み込みした後など、Service Worker と接続できない場合は記録を続けられません。
         overlay.remove();

@@ -51,9 +51,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜6 のフローは、そのまま版 7 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 7);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6]) {
+test('版 1〜7 のフローは、そのまま版 8 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 8);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -783,4 +783,37 @@ test('整形すると、内側の手順も type が先頭に来る（#6）', () 
   assert.deepEqual(Object.keys(ordered.steps[0]), ['type', 'condition', 'then']);
   const inner = /** @type {import('../extension/shared/flow.js').IfStep} */ (ordered.steps[0]);
   assert.deepEqual(Object.keys(inner.then[0]), ['type', 'target']);
+});
+
+// 記録したときにページが翻訳されていたこと（#99）の検証です。
+
+test('版 8 では、click・input・select・extract の手順に translated: true を書ける（#99）', () => {
+  const steps = [
+    { type: 'click', target, translated: true },
+    { type: 'input', target: { ...target, tag: 'input' }, value: 'a', translated: true },
+    { type: 'select', target, values: ['1'], labels: ['1 個'], translated: true },
+    { type: 'extract', target, name: 'title', translated: true },
+  ];
+  assert.deepEqual(validateFlow({ ...validFlow, schemaVersion: 8, steps }), []);
+  // 版 7 以前のフローでは誤りです。
+  const errors = validateFlow({ ...validFlow, schemaVersion: 7, steps });
+  assert.equal(errors.length, 4);
+  assert.match(errors[0], /^steps\[0\]: translated は、schemaVersion が 8 以上/);
+});
+
+test('translated は true だけを受け付け、ページを操作しない手順には書けない（#99）', () => {
+  for (const translated of [false, 'true', 1, null]) {
+    assert.deepEqual(validateStep({ type: 'click', target, translated }), [
+      'translated が true ではありません。',
+    ]);
+  }
+  for (const step of [
+    { type: 'navigate', url: 'https://www.example.com/', cause: 'user' },
+    { type: 'pause' },
+    { type: 'savePdf' },
+  ]) {
+    assert.deepEqual(validateStep({ ...step, translated: true }), [
+      'translated は、click、input、select、extract の手順にだけ書けます。',
+    ]);
+  }
 });

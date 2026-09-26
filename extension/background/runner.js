@@ -34,6 +34,7 @@ import {
   shouldPauseForAuth,
 } from '../shared/run-guard.js';
 import { getStopRule } from '../common/stop-rules-store.js';
+import { recordedTranslation, translationNote } from '../shared/translation.js';
 import {
   DEFAULT_FOREACH_MAX,
   advance,
@@ -147,7 +148,17 @@ class AuthRequired extends Error {
 }
 
 /** 手順の要素が見つからなかったことを示す誤りです。この失敗だけをやり直します（#18）。 */
-class ElementNotFound extends Error {}
+class ElementNotFound extends Error {
+  /**
+   * @param {string} detail ページから届いた、見つからなかった理由
+   * @param {string | undefined} note 翻訳の有無についての説明（#99）。やり直しの回数の後に置きます
+   */
+  constructor(detail, note) {
+    super(note === undefined ? detail : `${detail}${note}`);
+    this.detail = detail;
+    this.note = note;
+  }
+}
 
 /**
  * この Service Worker で実行中の実行の id と、そのオリジンです。停止すると失われるため、
@@ -1203,7 +1214,7 @@ async function withRetry(runId, flow, action) {
       }
       if (attempt >= MAX_RETRIES) {
         throw new Error(
-          `${error.message}${MAX_RETRIES} 回やり直しましたが、見つかりませんでした。`,
+          `${error.detail}${MAX_RETRIES} 回やり直しましたが、見つかりませんでした。${error.note ?? ''}`,
           {
             cause: error,
           },
@@ -1336,13 +1347,18 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
   await throwIfAuthScreen(runId, tabId, url, step, expectedUrl);
 
   if (step.type === 'click') {
-    const inspected = await requestPage(runId, tabId, {
-      kind: 'runner/inspect',
-      step,
-      scope,
-      timeoutMs: ELEMENT_TIMEOUT_MS,
-      stopSelectors: rule.selectors,
-    });
+    const inspected = await requestPage(
+      runId,
+      tabId,
+      {
+        kind: 'runner/inspect',
+        step,
+        scope,
+        timeoutMs: ELEMENT_TIMEOUT_MS,
+        stopSelectors: rule.selectors,
+      },
+      recordedTranslation(flow, step),
+    );
     // 利用者が明示した指定のため、文言による判定より先に確かめます。
     // ページから届いた値は、指定の一覧に含まれるものだけを受け付けます。
     if (
@@ -1368,12 +1384,12 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
       throw new Halted(confirmPauseNote(confirmText));
     }
   }
-  const response = await requestPage(runId, tabId, {
-    kind: 'runner/step',
-    step,
-    scope,
-    timeoutMs: ELEMENT_TIMEOUT_MS,
-  });
+  const response = await requestPage(
+    runId,
+    tabId,
+    { kind: 'runner/step', step, scope, timeoutMs: ELEMENT_TIMEOUT_MS },
+    recordedTranslation(flow, step),
+  );
   return { documentId, response };
 }
 
@@ -1524,9 +1540,11 @@ async function waitForDownload(runId, downloadId) {
  * @param {string} runId
  * @param {number} tabId
  * @param {object} message
+ * @param {boolean | undefined} [recorded] 手順を記録したときにページが翻訳されていたか。不明な場合は
+ *   undefined です。要素や選択肢が見つからなかった場合に、翻訳の有無の説明を加えるために使います（#99）
  * @returns {Promise<Record<string, any>>}
  */
-async function requestPage(runId, tabId, message) {
+async function requestPage(runId, tabId, message, recorded) {
   // 要素を待っている間（最大 10 秒）も停止の指示に応じられるよう、応答を待ちながら指示を確かめます。
   const reply = chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).then(
     (response) => ({ response, error: undefined }),
@@ -1552,7 +1570,10 @@ async function requestPage(runId, tabId, message) {
   const { response } = result;
   if (!response?.ok) {
     const text = response?.error ?? 'ページから応答がありませんでした。';
-    throw isRetryableFailure(response) ? new ElementNotFound(text) : new Error(text);
+    const note = translationNote(recorded, response?.translated);
+    throw isRetryableFailure(response)
+      ? new ElementNotFound(text, note)
+      : new Error(note === undefined ? text : `${text}${note}`);
   }
   return response;
 }
