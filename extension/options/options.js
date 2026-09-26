@@ -8,6 +8,7 @@
 import {
   addFlows,
   deleteFlow,
+  deleteFlows,
   getFlow,
   listFlows,
   onFlowsChanged,
@@ -35,6 +36,7 @@ import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/fl
 import { attachCombobox } from '../shared/combobox.js';
 import { flowFileName, flowFileText, parseFlowFile, splitDuplicates } from '../shared/flow-file.js';
 import { buildFlowGroups } from '../shared/flow-groups.js';
+import { pruneSelection, selectAllState, splitDeletable } from '../shared/flow-selection.js';
 import { MATCH_MODES, filterFlows, groupByHost, suggestions } from '../shared/flow-search.js';
 import {
   NO_FIRST_PAGE,
@@ -108,7 +110,14 @@ const elements = {
   format: byId('format'),
   save: byId('save'),
   exportFlow: byId('export'),
-  exportAll: byId('export-all'),
+  bulkArea: byId('bulk-area'),
+  selectAll: /** @type {HTMLInputElement} */ (byId('select-all')),
+  bulkBar: byId('bulk-bar'),
+  bulkCount: byId('bulk-count'),
+  bulkExport: byId('bulk-export'),
+  bulkDelete: byId('bulk-delete'),
+  bulkConfirm: byId('bulk-confirm'),
+  bulkNotice: byId('bulk-notice'),
   flowsNotice: byId('flows-notice'),
   deleteFlow: byId('delete'),
   importer: byId('importer'),
@@ -147,6 +156,7 @@ const elements = {
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
 const notices = [
   elements.flowsNotice,
+  elements.bulkNotice,
   elements.importNotice,
   elements.editorNotice,
   elements.runNotice,
@@ -578,15 +588,114 @@ elements.exportFlow.addEventListener('click', async () => {
   }
 });
 
-// 一覧に表示中のフロー（検索で絞り込んでいる場合は、その結果）を 1 つのファイルに書き出します（#27）。
-elements.exportAll.addEventListener('click', async () => {
+// ---- 一覧のチェックボックスと一括操作（#83） ----
+// 操作の対象は、一覧に表示中（検索で絞り込んだ結果）で、選んでいるフローだけです。
+// 検索語を変えて表示から外れたフローは、render() で選択を外します。
+
+/** 一覧で選んでいるフローの id です。 */
+let checkedIds = new Set();
+
+/** 一覧に表示中のフローです。render() のたびに更新します。 */
+/** @type {StoredFlow[]} */
+let shownFlows = [];
+
+/** @returns {StoredFlow[]} 表示中で、選んでいるフロー */
+function checkedFlows() {
+  return shownFlows.filter((stored) => checkedIds.has(stored.id));
+}
+
+/** ［すべて選択］と操作の帯を、選んでいる状態に合わせます。 */
+function renderBulk() {
+  elements.bulkArea.hidden = shownFlows.length === 0;
+  const state = selectAllState(
+    shownFlows.map((stored) => stored.id),
+    checkedIds,
+  );
+  elements.selectAll.checked = state === 'all';
+  elements.selectAll.indeterminate = state === 'some';
+  const count = checkedFlows().length;
+  elements.bulkBar.hidden = count === 0;
+  elements.bulkCount.textContent = count > 0 ? `${count} 件を選択中` : '';
+  if (count === 0) {
+    elements.bulkConfirm.replaceChildren();
+    elements.bulkConfirm.hidden = true;
+  }
+}
+
+elements.selectAll.addEventListener('change', () => {
   clearNotices();
-  const shown = filterFlows(await listFlows(), elements.search.value, searchMode());
-  if (shown.length === 0) {
-    showNotice(elements.flowsNotice, '書き出すフローがありません。', 'warning');
+  // 閉じたまとまりの中のフローも選びます。まとまりの見出しに選んだ件数を示します。
+  for (const stored of shownFlows) {
+    if (elements.selectAll.checked) {
+      checkedIds.add(stored.id);
+    } else {
+      checkedIds.delete(stored.id);
+    }
+  }
+  render().catch(console.error);
+});
+
+// 選んだフローを 1 つのファイルに書き出します（#27 と同じ形式とファイル名）。
+elements.bulkExport.addEventListener('click', () => {
+  clearNotices();
+  const flows = checkedFlows();
+  if (flows.length > 0) {
+    downloadFlows(flows.map((stored) => stored.flow));
+  }
+});
+
+elements.bulkDelete.addEventListener('click', async () => {
+  clearNotices();
+  const flows = checkedFlows();
+  if (flows.length === 0) {
     return;
   }
-  downloadFlows(shown.map((stored) => stored.flow));
+  const runs = /** @type {{ flowId: string, status: string }[]} */ (
+    /** @type {unknown} */ (runStatesFrom(await chrome.storage.session.get(null)))
+  );
+  const { remove, running } = splitDeletable(
+    flows.map((stored) => stored.id),
+    runs,
+  );
+  /** @param {string[]} ids */
+  const names = (ids) =>
+    flows
+      .filter((stored) => ids.includes(stored.id))
+      .map((stored) => `・${stored.flow.name}（${stored.flow.origin}）`)
+      .join('\n');
+  if (remove.length === 0) {
+    showNotice(
+      elements.bulkNotice,
+      '選んだフローはすべて実行中のため、削除できません。実行が終わってから削除してください。',
+      'warning',
+    );
+    return;
+  }
+  const runningText =
+    running.length === 0
+      ? ''
+      : `\n\n次の ${running.length} 件は実行中のため、削除しません。\n${names(running)}`;
+  if (
+    !(await confirmInline(elements.bulkConfirm, {
+      message: `次の ${remove.length} 件のフローを削除します。元に戻せません。\n${names(remove)}${runningText}`,
+      confirmLabel: '削除する',
+      danger: true,
+    }))
+  ) {
+    return;
+  }
+  await deleteFlows(remove);
+  for (const id of remove) {
+    checkedIds.delete(id);
+  }
+  if (remove.includes(selectedId)) {
+    select('');
+  }
+  showToast(
+    elements.toast,
+    `${remove.length} 件のフローを削除しました。` +
+      (running.length === 0 ? '' : `実行中の ${running.length} 件は削除しませんでした。`),
+  );
 });
 
 /**
@@ -1160,11 +1269,25 @@ async function render() {
   allFlows = flows;
   elements.searchArea.hidden = flows.length === 0;
   const query = elements.search.value;
-  const groups = groupByHost(filterFlows(flows, query, searchMode()));
+  shownFlows = filterFlows(flows, query, searchMode());
+  checkedIds = pruneSelection(
+    checkedIds,
+    shownFlows.map((stored) => stored.id),
+  );
+  const groups = groupByHost(shownFlows);
   elements.noMatch.hidden = flows.length === 0 || groups.length > 0;
+  // 作り直す前に、フォーカスのあった行のチェックボックスを控えます。押した直後に作り直すためです。
+  const focusedId =
+    document.activeElement instanceof HTMLInputElement
+      ? document.activeElement.dataset.flowId
+      : undefined;
   elements.flows.replaceChildren(
     ...buildFlowGroups(document, groups, {
       renderItem: flowListItem,
+      note: (items) => {
+        const count = items.filter((stored) => checkedIds.has(stored.id)).length;
+        return count > 0 ? `・${count} 件選択` : '';
+      },
       // 検索中は、該当するフローが見えるよう、すべてのまとまりを開きます。
       isOpen: (host) => query.trim() !== '' || !collapsedHosts.has(host),
       onToggle: (host, open) => {
@@ -1179,6 +1302,13 @@ async function render() {
       },
     }),
   );
+  if (focusedId !== undefined) {
+    const input = elements.flows.querySelector(`input[data-flow-id="${CSS.escape(focusedId)}"]`);
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+    }
+  }
+  renderBulk();
 
   const stored = selectedId ? await getFlow(selectedId) : undefined;
   elements.editor.hidden = !stored;
@@ -1267,22 +1397,44 @@ function definition(term, description) {
 }
 
 /**
- * フローの一覧の 1 行です。
+ * フローの一覧の 1 行です。左端に選ぶためのチェックボックス、その右に詳細を開くボタンを置きます（#83）。
+ * ボタンの中にはチェックボックスを置けないため、2 つに分けます。
  * @param {StoredFlow} stored
- * @returns {HTMLButtonElement}
+ * @returns {HTMLDivElement}
  */
 function flowListItem(stored) {
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.className = 'lm-check lm-flow-check';
+  check.checked = checkedIds.has(stored.id);
+  check.dataset.flowId = stored.id;
+  check.setAttribute('aria-label', `「${stored.flow.name}」を選択`);
+  check.addEventListener('change', () => {
+    clearNotices();
+    if (check.checked) {
+      checkedIds.add(stored.id);
+    } else {
+      checkedIds.delete(stored.id);
+    }
+    render().catch(console.error);
+  });
+
   const detail = document.createElement('div');
   detail.className = 'lm-sub';
   detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
   const button = listButton(stored.flow.name, detail);
+  button.className = 'list-group-item-action lm-flow-open';
+  button.addEventListener('click', () => select(stored.id));
+
+  const row = document.createElement('div');
+  row.className = 'list-group-item lm-flow-row';
   const current = stored.id === selectedId;
-  button.classList.toggle('active', current);
+  row.classList.toggle('active', current);
   if (current) {
     button.setAttribute('aria-current', 'true');
   }
-  button.addEventListener('click', () => select(stored.id));
-  return button;
+  row.append(check, button);
+  return row;
 }
 
 /**

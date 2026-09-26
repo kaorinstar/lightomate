@@ -60,7 +60,6 @@
               保存したフロー<span class="lm-count" id="flow-count"></span>
             </h2>
             <div class="lm-buttons">
-              <button type="button" class="btn btn-sm" id="export-all">まとめて書き出し</button>
               <button type="button" class="btn btn-sm" id="new">JSON から追加</button>
             </div>
           </div>
@@ -81,6 +80,23 @@
               id="search-mode"
               aria-label="一致方法"
             ></select>
+          </div>
+          <div class="lm-bulk" id="bulk-area" hidden>
+            <label class="lm-select-all">
+              <input type="checkbox" class="lm-check" id="select-all" />
+              すべて選択
+            </label>
+            <div class="lm-bulk-bar" id="bulk-bar" hidden>
+              <span id="bulk-count" role="status"></span>
+              <div class="lm-buttons">
+                <button type="button" class="btn btn-sm" id="bulk-export">書き出し</button>
+                <button type="button" class="btn btn-sm btn-ghost-danger" id="bulk-delete">
+                  削除
+                </button>
+              </div>
+            </div>
+            <div id="bulk-confirm" hidden></div>
+            <p id="bulk-notice" hidden></p>
           </div>
           <p id="no-match" class="lm-empty" hidden>該当するフローはありません。</p>
           <p id="empty" class="lm-empty">
@@ -208,8 +224,9 @@
             </div>
             <div class="card-body">
               <p class="lm-sub">
-                フロー定義の JSON を貼り付けるか、ファイルを選んでください。［まとめて書き出し］で
-                作った複数のフローのファイルも読み込めます。追加する前に、フローが操作するサイトを確認します。
+                フロー定義の JSON
+                を貼り付けるか、ファイルを選んでください。一覧で複数のフローを選んで
+                書き出したファイルも読み込めます。追加する前に、フローが操作するサイトを確認します。
               </p>
               <input
                 type="file"

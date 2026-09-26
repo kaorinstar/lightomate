@@ -145,6 +145,19 @@ export async function deleteFlow(id) {
 }
 
 /**
+ * 複数のフローを、1 回の書き込みで削除します（#83）。
+ * 途中で失敗して一部だけが削除された状態にならないよう、まとめて書き込みます。
+ * @param {string[]} ids
+ */
+export async function deleteFlows(ids) {
+  const all = await readAll();
+  for (const id of ids) {
+    delete all[id];
+  }
+  await chrome.storage.local.set({ [FLOWS_KEY]: all });
+}
+
+/**
  * 保存したフローが変わったときに呼び出す処理を登録します。
  * @param {() => void} listener
  */

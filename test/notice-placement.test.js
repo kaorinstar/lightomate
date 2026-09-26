@@ -40,6 +40,13 @@ const cases = [
     notices: ['editor-confirm', 'editor-notice'],
   },
   { page: '管理画面', html: options, button: 'new', notices: ['flows-notice'] },
+  // 操作の帯のボタンは、帯の直下の表示欄に出します（#83）。帯の最後のボタンの直後です。
+  {
+    page: '管理画面',
+    html: options,
+    button: 'bulk-delete',
+    notices: ['bulk-confirm', 'bulk-notice'],
+  },
   { page: '管理画面', html: options, button: 'save', notices: ['json-notice'] },
   { page: '管理画面', html: options, button: 'speed-save', notices: ['speed-notice'] },
   {
