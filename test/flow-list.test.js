@@ -204,3 +204,20 @@ test('追加のサイトと、移動の手順の URL のサイトのページで
   assert.deepEqual(flowsForOrigin(flows, 'https://www.rakuten.co.jp'), []);
   assert.deepEqual([...flowSites(flows[0].flow)], [item, cart, login]);
 });
+
+test('if と forEach の内側の移動の手順のサイトも、フローに関係するサイトに含める（#6）', () => {
+  const sites = flowSites({
+    name: 'a',
+    origin: 'https://www.example.com',
+    steps: /** @type {{ type: string, url?: string }[]} */ (
+      /** @type {unknown} */ ([
+        {
+          type: 'if',
+          condition: { target: { selectors: ['#a'], tag: 'a', label: 'a' }, exists: true },
+          then: [{ type: 'navigate', cause: 'page', url: 'https://login.example.com/signin' }],
+        },
+      ])
+    ),
+  });
+  assert.deepEqual([...sites], ['https://www.example.com', 'https://login.example.com']);
+});

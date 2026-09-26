@@ -62,3 +62,28 @@ test('一時停止の処理中の説明に、実行中の手順を含める（#3
   const run = { flowName: '領収書', status: 'pausing', stepIndex: 0, total: 8 };
   assert.match(runStatusText(run, { type: 'click', target }), /手順 1 \/ 8（クリック：注文履歴）/);
 });
+
+test('条件分岐と繰り返しの手順の説明（#6）', () => {
+  assert.equal(
+    describeStep({ type: 'if', condition: { target, exists: true }, then: [] }),
+    '条件：「注文履歴」がある場合',
+  );
+  assert.equal(
+    describeStep({ type: 'if', condition: { target, exists: false }, then: [] }),
+    '条件：「注文履歴」がない場合',
+  );
+  assert.equal(
+    describeStep({ type: 'forEach', items: target, steps: [] }),
+    '繰り返し：「注文履歴」の各行（上限 100 件）',
+  );
+  assert.equal(stepKindLabel({ type: 'forEach', items: target, max: 5, steps: [] }), '繰り返し');
+  assert.equal(
+    stepKindLabel({ type: 'if', condition: { target, exists: true }, then: [] }),
+    '条件',
+  );
+});
+
+test('繰り返しの中では、手順の番号に何件目かを添える（#6）', () => {
+  const run = { flowName: 'a', status: 'running', stepIndex: 4, total: 9, items: [3] };
+  assert.equal(runStatusText(run, undefined), '「a」を実行中です。手順 5 / 9（3 件目）');
+});

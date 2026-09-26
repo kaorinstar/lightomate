@@ -51,9 +51,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜4 のフローは、そのまま版 5 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 5);
-  for (const schemaVersion of [1, 2, 3, 4]) {
+test('版 1〜5 のフローは、そのまま版 6 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 6);
+  for (const schemaVersion of [1, 2, 3, 4, 5]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -454,4 +454,217 @@ test('フローが操作するサイトと、手順を実行してよいサイ�
     stepOrigin(flow, { type: 'click', target, origin: 'https://b.example' }),
     'https://b.example',
   );
+});
+
+// 条件分岐と繰り返し（#6）の検証です。
+const rowTarget = { selectors: ['tr.order'], tag: 'tr', label: '注文の行' };
+const inRow = { selectors: ['.number'], tag: 'span', label: '注文番号', scope: 'item' };
+
+/**
+ * 版 6 のフローです。
+ * @param {unknown[]} steps
+ */
+const v6 = (steps) => ({ ...validFlow, schemaVersion: 6, steps });
+
+test('if と forEach を含むフローは、形式を満たす（#6）', () => {
+  const flow = v6([
+    {
+      type: 'if',
+      condition: { target, exists: true },
+      then: [{ type: 'click', target }],
+      else: [{ type: 'wait', ms: 1000 }],
+    },
+    {
+      type: 'forEach',
+      items: rowTarget,
+      max: 500,
+      steps: [
+        { type: 'extract', target: inRow, name: 'orderNumber' },
+        {
+          type: 'if',
+          condition: { target: { ...inRow, label: '領収書' }, exists: true },
+          then: [{ type: 'click', target: { ...inRow, label: '領収書' } }],
+        },
+        { type: 'savePdf', path: '{{orderNumber}}.pdf' },
+      ],
+    },
+  ]);
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('if と forEach は、版 6 より古いフローには書けない（#6）', () => {
+  const steps = [{ type: 'if', condition: { target, exists: true }, then: [] }];
+  assert.equal(validateFlow({ ...validFlow, schemaVersion: 5, steps }).length, 1);
+});
+
+test('if の必須項目がない場合は誤りを報告する（#6）', () => {
+  for (const step of [
+    { type: 'if', then: [] },
+    { type: 'if', condition: { target, exists: 'yes' }, then: [] },
+    { type: 'if', condition: { target: {}, exists: true }, then: [] },
+    { type: 'if', condition: { target, exists: true } },
+    { type: 'if', condition: { target, exists: true }, then: [], else: {} },
+  ]) {
+    assert.ok(validateFlow(v6([step])).length > 0, JSON.stringify(step));
+  }
+});
+
+test('forEach の max は、1 以上 500 以下の整数だけを受け付ける（#6）', () => {
+  const forEach = (/** @type {unknown} */ max) => ({
+    type: 'forEach',
+    items: rowTarget,
+    ...(max === undefined ? {} : { max }),
+    steps: [],
+  });
+  assert.deepEqual(validateFlow(v6([forEach(undefined)])), []);
+  assert.deepEqual(validateFlow(v6([forEach(1)])), []);
+  assert.deepEqual(validateFlow(v6([forEach(500)])), []);
+  for (const max of [0, 501, 1.5, '10']) {
+    assert.equal(validateFlow(v6([forEach(max)])).length, 1, `値: ${String(max)}`);
+  }
+  assert.ok(validateFlow(v6([{ type: 'forEach', items: rowTarget }])).length > 0);
+  assert.ok(validateFlow(v6([{ type: 'forEach', steps: [] }])).length > 0);
+});
+
+test('内側の手順の誤りは、位置を付けて報告する（#6）', () => {
+  const errors = validateFlow(
+    v6([
+      {
+        type: 'if',
+        condition: { target, exists: true },
+        then: [{ type: 'click' }],
+      },
+    ]),
+  );
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^steps\[0\]\.then\[0\]: /);
+});
+
+test('if と forEach の入れ子は 3 段まで（#6）', () => {
+  /** @param {unknown[]} steps */
+  const nest = (steps) => ({ type: 'if', condition: { target, exists: true }, then: steps });
+  assert.deepEqual(validateFlow(v6([nest([nest([nest([{ type: 'click', target }])])])])), []);
+  const errors = validateFlow(v6([nest([nest([nest([nest([])])])])]));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /3 段まで/);
+});
+
+test('手順の件数の上限は、内側の手順も数える（#6）', () => {
+  const click = { type: 'click', target };
+  const half = Array.from({ length: MAX_STEPS / 2 }, () => click);
+  const loop = { type: 'forEach', items: rowTarget, steps: half };
+  // forEach 自身の 1 件と内側の 500 件、外側の 500 件で、上限を 1 件超えます。
+  assert.equal(validateFlow(v6([loop, ...half])).length, 1);
+  assert.deepEqual(validateFlow(v6([loop, ...half.slice(1)])), []);
+});
+
+test('scope: item は、forEach の内側の手順にだけ書ける（#6）', () => {
+  assert.equal(validateFlow(v6([{ type: 'click', target: inRow }])).length, 1);
+  assert.equal(
+    validateFlow(v6([{ type: 'if', condition: { target: inRow, exists: true }, then: [] }])).length,
+    1,
+  );
+  // 外側に繰り返しがない forEach の items にも書けません。
+  assert.equal(
+    validateFlow(v6([{ type: 'forEach', items: { ...rowTarget, scope: 'item' }, steps: [] }]))
+      .length,
+    1,
+  );
+  // 入れ子の forEach の items には書けます。外側の行の内側で探します。
+  assert.deepEqual(
+    validateFlow(
+      v6([
+        {
+          type: 'forEach',
+          items: rowTarget,
+          steps: [{ type: 'forEach', items: { ...inRow, label: '商品' }, steps: [] }],
+        },
+      ]),
+    ),
+    [],
+  );
+  assert.equal(
+    validateFlow(
+      v6([
+        {
+          type: 'forEach',
+          items: rowTarget,
+          steps: [{ type: 'click', target: { ...inRow, scope: 'row' } }],
+        },
+      ]),
+    ).length,
+    1,
+  );
+  assert.equal(
+    validateFlow({ ...validFlow, schemaVersion: 5, steps: [{ type: 'click', target: inRow }] })
+      .length,
+    1,
+  );
+});
+
+test('forEach の内側には navigate の手順を書けない（#6）', () => {
+  const errors = validateFlow(
+    v6([
+      {
+        type: 'forEach',
+        items: rowTarget,
+        steps: [
+          {
+            type: 'if',
+            condition: { target, exists: true },
+            then: [{ type: 'navigate', cause: 'page', url: 'https://www.example.com/a' }],
+          },
+        ],
+      },
+    ]),
+  );
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /navigate/);
+  // if の中の移動は書けます。
+  assert.deepEqual(
+    validateFlow(
+      v6([
+        {
+          type: 'if',
+          condition: { target, exists: true },
+          then: [{ type: 'navigate', cause: 'page', url: 'https://www.example.com/a' }],
+        },
+      ]),
+    ),
+    [],
+  );
+});
+
+test('内側の手順のパラメータの参照と、読み取った名前の参照も検証する（#6）', () => {
+  const errors = validateFlow(
+    v6([
+      {
+        type: 'forEach',
+        items: rowTarget,
+        steps: [
+          { type: 'input', target, value: '{{unknown}}' },
+          { type: 'savePdf', path: '{{missing}}.pdf' },
+        ],
+      },
+    ]),
+  );
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /^steps\[0\]\.steps\[0\]: /);
+  assert.match(errors[1], /^steps\[0\]\.steps\[1\]: /);
+});
+
+test('整形すると、内側の手順も type が先頭に来る（#6）', () => {
+  const flow = /** @type {import('../extension/shared/flow.js').Flow} */ (
+    v6([
+      {
+        then: [{ target, type: 'click' }],
+        condition: { target, exists: true },
+        type: 'if',
+      },
+    ])
+  );
+  const ordered = orderFlow(flow);
+  assert.deepEqual(Object.keys(ordered.steps[0]), ['type', 'condition', 'then']);
+  const inner = /** @type {import('../extension/shared/flow.js').IfStep} */ (ordered.steps[0]);
+  assert.deepEqual(Object.keys(inner.then[0]), ['type', 'target']);
 });

@@ -12,9 +12,10 @@ import {
 } from './params.js';
 import { RESERVED_NAMES, nonBuiltinReferences, validateSaveTemplate } from './save-path.js';
 import { validateInterval, validateWaitMs } from './speed.js';
+import { CONTROL_STEP_TYPES, FOREACH_MAX_LIMIT, MAX_NESTING } from './control-flow.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -22,21 +23,26 @@ export const SCHEMA_VERSION = 5;
  * 版 4 は、版 3 に手順の間隔（interval）と待機の手順（wait）を加えたものです（#15）。
  * 版 5 は、版 4 に追加のサイトの一覧（extraOrigins）と、手順を記録したサイト（手順の origin）を
  * 加えたものです（#41）。
+ * 版 6 は、版 5 に条件分岐（if）と繰り返し（forEach）、行の内側で要素を探す指定（target の scope）を
+ * 加えたものです（#6）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
  * @type {Record<string, number>}
  */
-const MIN_SCHEMA_VERSION = { pause: 2, savePdf: 3, extract: 3, wait: 4 };
+const MIN_SCHEMA_VERSION = { pause: 2, savePdf: 3, extract: 3, wait: 4, if: 6, forEach: 6 };
 
 /** interval を使える最も古い版です。 */
 const INTERVAL_MIN_SCHEMA_VERSION = 4;
 
 /** extraOrigins と手順の origin を使える最も古い版です（#41）。 */
 const ORIGINS_MIN_SCHEMA_VERSION = 5;
+
+/** target の scope を使える最も古い版です（#6）。 */
+const SCOPE_MIN_SCHEMA_VERSION = 6;
 
 /**
  * 追加のサイト（extraOrigins）の件数の上限です（#41）。記録中は確認を出さずに加えるため、
@@ -47,7 +53,10 @@ export const MAX_EXTRA_ORIGINS = 10;
 /** 手順を記録したサイト（origin）を持てる手順の種類です。ページを操作する手順です（#41）。 */
 export const PAGE_STEP_TYPES = ['click', 'input', 'select', 'extract'];
 
-/** 1 つのフローに含められる手順の数の上限です。保存領域を使い切ることを防ぎます。 */
+/**
+ * 1 つのフローに含められる手順の数の上限です。保存領域を使い切ることを防ぎます。
+ * if と forEach の内側の手順も数えます（#6）。
+ */
 export const MAX_STEPS = 1000;
 
 /** 文字列の項目の長さの上限です。 */
@@ -60,6 +69,8 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string} tag 要素のタグ名（小文字）
  * @property {string} label 人が読むための説明（ボタンの表示文字列など）
  * @property {string} [text] 要素の表示文字列。セレクターで見つからない場合の手がかりに使います。
+ * @property {'item'} [scope] item の場合は、ページ全体ではなく、forEach で処理中の行の内側だけで
+ *   要素を探します（#6）。forEach の内側の手順にだけ書けます。版 6 で加えました。
  */
 
 /**
@@ -136,7 +147,27 @@ export const MAX_TEXT_LENGTH = 2000;
  */
 
 /**
- * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep | WaitStep} Step
+ * 条件分岐です（#6）。要素があるか（ないか）で、行う手順を分けます。版 6 で加えました。
+ * @typedef {object} IfStep
+ * @property {'if'} type
+ * @property {{ target: Target, exists: boolean }} condition 条件。exists が true の場合は要素がある
+ *   ことを、false の場合は要素がないことを条件にします
+ * @property {Step[]} then 条件を満たす場合に行う手順
+ * @property {Step[]} [else] 条件を満たさない場合に行う手順
+ */
+
+/**
+ * 繰り返しです（#6）。同じページの一覧の各行で、同じ手順を行います。版 6 で加えました。
+ * @typedef {object} ForEachStep
+ * @property {'forEach'} type
+ * @property {Target} items 一覧の各行を指す指定。selectors は、すべての行に一致するセレクターです
+ * @property {number} [max] 繰り返しの上限。行がこれより多い場合は、繰り返しを始めずに止めます。
+ *   省略した場合は control-flow.js の DEFAULT_FOREACH_MAX です
+ * @property {Step[]} steps 各行で行う手順
+ */
+
+/**
+ * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep | WaitStep | IfStep | ForEachStep} Step
  */
 
 /** @typedef {import('./params.js').Param} Param */
@@ -251,8 +282,42 @@ export function orderFlow({ schemaVersion, name, origin, extraOrigins, params, s
         }
       : {}),
     ...rest,
-    steps: steps.map(({ type, ...stepRest }) => /** @type {Step} */ ({ type, ...stepRest })),
+    steps: steps.map(orderStep),
   };
+}
+
+/**
+ * 手順の項目を、種類（type）が先頭に来る順序に並べ直します。if と forEach は、内側の手順も並べ直します。
+ * @param {Step} step
+ * @returns {Step}
+ */
+function orderStep(step) {
+  switch (step.type) {
+    case 'if': {
+      const { type, condition, then, else: otherwise, ...rest } = step;
+      return {
+        type,
+        condition,
+        ...rest,
+        then: then.map(orderStep),
+        ...(otherwise ? { else: otherwise.map(orderStep) } : {}),
+      };
+    }
+    case 'forEach': {
+      const { type, items, max, steps, ...rest } = step;
+      return {
+        type,
+        items,
+        ...(max !== undefined ? { max } : {}),
+        ...rest,
+        steps: steps.map(orderStep),
+      };
+    }
+    default: {
+      const { type, ...rest } = step;
+      return /** @type {Step} */ ({ type, ...rest });
+    }
+  }
 }
 
 /**
@@ -309,84 +374,191 @@ export function validateFlow(value) {
 
   if (!Array.isArray(value.steps)) {
     errors.push('steps が配列ではありません。');
-  } else if (value.steps.length > MAX_STEPS) {
-    errors.push(`steps が上限の ${MAX_STEPS} 件を超えています。`);
+  } else if (countSteps(value.steps, 0) > MAX_STEPS) {
+    errors.push(
+      `steps が、if と forEach の内側の手順を含めて上限の ${MAX_STEPS} 件を超えています。`,
+    );
   } else {
-    /** 前の手順の extract で付けた名前です。savePdf の path で参照できます。 */
-    const extracted = new Set();
-    const params = /** @type {Param[]} */ (paramErrors.length === 0 ? (value.params ?? []) : []);
-    value.steps.forEach((step, index) => {
-      for (const error of validateStep(step)) {
-        errors.push(`steps[${index}]: ${error}`);
-      }
-      const type = isRecord(step) && typeof step.type === 'string' ? step.type : '';
-      const minVersion = MIN_SCHEMA_VERSION[type];
-      if (
-        minVersion !== undefined &&
-        typeof value.schemaVersion === 'number' &&
-        value.schemaVersion < minVersion
-      ) {
-        errors.push(
-          `steps[${index}]: ${type} の手順は、schemaVersion が ${minVersion} 以上のフローでだけ使えます。`,
-        );
-      }
-      if (isRecord(step) && typeof step.origin === 'string' && PAGE_STEP_TYPES.includes(type)) {
-        if (
-          typeof value.schemaVersion === 'number' &&
-          value.schemaVersion < ORIGINS_MIN_SCHEMA_VERSION
-        ) {
-          errors.push(
-            `steps[${index}]: origin は、schemaVersion が ${ORIGINS_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
-          );
-        } else if (origins && !origins.includes(step.origin)) {
-          errors.push(
-            `steps[${index}]: origin の「${step.origin}」が、フローの origin にも extraOrigins にもありません。`,
-          );
-        }
-      }
-      if (isRecord(step) && step.type === 'extract' && typeof step.name === 'string') {
-        if (params.some((param) => param.name === step.name)) {
-          errors.push(
-            `steps[${index}]: name の「${step.name}」は、パラメータと同じ名前のため使えません。`,
-          );
-        }
-        extracted.add(step.name);
-      }
-      if (isRecord(step) && step.type === 'savePdf' && typeof step.path === 'string') {
-        for (const { name, part } of nonBuiltinReferences(step.path)) {
-          if (part === undefined && extracted.has(name)) {
-            continue;
-          }
-          if (
-            part === undefined &&
-            !params.some((param) => param.name === name) &&
-            paramErrors.length === 0
-          ) {
-            errors.push(
-              `steps[${index}]: path の「${name}」は、パラメータにも、前の手順の extract で付けた名前にもありません。`,
-            );
-          } else if (paramErrors.length === 0) {
-            for (const error of validateReferences(
-              `{{${part ? `${name}.${part}` : name}}}`,
-              params,
-            )) {
-              errors.push(`steps[${index}]: path の${error}`);
-            }
-          }
-        }
-      }
-      // パラメータの定義に誤りがある場合、参照の検証は定義を直してから行います。
-      if (paramErrors.length === 0) {
-        for (const text of templateTexts(step)) {
-          for (const error of validateReferences(text, params)) {
-            errors.push(`steps[${index}]: ${error}`);
-          }
-        }
-      }
+    validateStepList(value.steps, 'steps', 0, false, {
+      errors,
+      version: typeof value.schemaVersion === 'number' ? value.schemaVersion : undefined,
+      origins,
+      params: /** @type {Param[]} */ (paramErrors.length === 0 ? (value.params ?? []) : []),
+      paramErrors: paramErrors.length > 0,
+      extracted: new Set(),
     });
   }
 
   return errors;
+}
+
+/**
+ * 手順の一覧を検証するときに、手順の間で受け渡す情報です。
+ * @typedef {object} StepContext
+ * @property {string[]} errors 誤りを加えていく一覧
+ * @property {number | undefined} version フローの版番号
+ * @property {string[] | undefined} origins 手順の origin に書けるサイト。一覧に誤りがある場合は undefined です
+ * @property {Param[]} params パラメータの定義
+ * @property {boolean} paramErrors パラメータの定義に誤りがあるか
+ * @property {Set<string>} extracted 前の手順の extract で付けた名前。savePdf の path で参照できます
+ */
+
+/**
+ * 手順の一覧を、内側の手順を含めて検証します（#6）。
+ * @param {unknown[]} list
+ * @param {string} path 誤りの説明に付ける、一覧の位置（例：steps、steps[2].then）
+ * @param {number} depth if と forEach の入れ子の段数。最上位は 0 です
+ * @param {boolean} inLoop forEach の内側か
+ * @param {StepContext} context
+ */
+function validateStepList(list, path, depth, inLoop, context) {
+  const { errors, version, origins, params } = context;
+  list.forEach((step, index) => {
+    const at = `${path}[${index}]`;
+    for (const error of validateStep(step)) {
+      errors.push(`${at}: ${error}`);
+    }
+    if (!isRecord(step)) {
+      return;
+    }
+    const type = typeof step.type === 'string' ? step.type : '';
+    const minVersion = MIN_SCHEMA_VERSION[type];
+    if (minVersion !== undefined && version !== undefined && version < minVersion) {
+      errors.push(
+        `${at}: ${type} の手順は、schemaVersion が ${minVersion} 以上のフローでだけ使えます。`,
+      );
+    }
+    for (const [name, target] of stepTargets(step)) {
+      if (!isRecord(target) || target.scope === undefined) {
+        continue;
+      }
+      if (version !== undefined && version < SCOPE_MIN_SCHEMA_VERSION) {
+        errors.push(
+          `${at}: ${name}.scope は、schemaVersion が ${SCOPE_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+        );
+      } else if (!inLoop) {
+        errors.push(`${at}: ${name}.scope は、forEach の内側の手順にだけ書けます。`);
+      }
+    }
+    if (inLoop && type === 'navigate') {
+      errors.push(
+        `${at}: forEach の内側には navigate の手順を書けません。繰り返しの中でのページの移動には、まだ対応していません。`,
+      );
+    }
+    if (typeof step.origin === 'string' && PAGE_STEP_TYPES.includes(type)) {
+      if (version !== undefined && version < ORIGINS_MIN_SCHEMA_VERSION) {
+        errors.push(
+          `${at}: origin は、schemaVersion が ${ORIGINS_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+        );
+      } else if (origins && !origins.includes(step.origin)) {
+        errors.push(
+          `${at}: origin の「${step.origin}」が、フローの origin にも extraOrigins にもありません。`,
+        );
+      }
+    }
+    if (type === 'extract' && typeof step.name === 'string') {
+      if (params.some((param) => param.name === step.name)) {
+        errors.push(`${at}: name の「${step.name}」は、パラメータと同じ名前のため使えません。`);
+      }
+      context.extracted.add(step.name);
+    }
+    if (type === 'savePdf' && typeof step.path === 'string') {
+      validatePathReferences(step.path, at, context);
+    }
+    // パラメータの定義に誤りがある場合、参照の検証は定義を直してから行います。
+    if (!context.paramErrors) {
+      for (const text of templateTexts(step)) {
+        for (const error of validateReferences(text, params)) {
+          errors.push(`${at}: ${error}`);
+        }
+      }
+    }
+
+    if (CONTROL_STEP_TYPES.includes(type)) {
+      if (depth >= MAX_NESTING) {
+        errors.push(`${at}: if と forEach の入れ子は ${MAX_NESTING} 段までです。`);
+        return;
+      }
+      if (type === 'if') {
+        if (Array.isArray(step.then)) {
+          validateStepList(step.then, `${at}.then`, depth + 1, inLoop, context);
+        }
+        if (Array.isArray(step.else)) {
+          validateStepList(step.else, `${at}.else`, depth + 1, inLoop, context);
+        }
+      } else if (Array.isArray(step.steps)) {
+        validateStepList(step.steps, `${at}.steps`, depth + 1, true, context);
+      }
+    }
+  });
+}
+
+/**
+ * savePdf の path が参照する名前を検証します。
+ * @param {string} path
+ * @param {string} at 誤りの説明に付ける、手順の位置
+ * @param {StepContext} context
+ */
+function validatePathReferences(path, at, context) {
+  const { errors, params } = context;
+  for (const { name, part } of nonBuiltinReferences(path)) {
+    if (part === undefined && context.extracted.has(name)) {
+      continue;
+    }
+    if (context.paramErrors) {
+      continue;
+    }
+    if (part === undefined && !params.some((param) => param.name === name)) {
+      errors.push(
+        `${at}: path の「${name}」は、パラメータにも、前の手順の extract で付けた名前にもありません。`,
+      );
+    } else {
+      for (const error of validateReferences(`{{${part ? `${name}.${part}` : name}}}`, params)) {
+        errors.push(`${at}: path の${error}`);
+      }
+    }
+  }
+}
+
+/**
+ * 手順が持つ要素の指定と、その項目名です。
+ * @param {Record<string, unknown>} step
+ * @returns {[string, unknown][]}
+ */
+function stepTargets(step) {
+  switch (step.type) {
+    case 'if':
+      return isRecord(step.condition) ? [['condition.target', step.condition.target]] : [];
+    case 'forEach':
+      return [['items', step.items]];
+    default:
+      return 'target' in step ? [['target', step.target]] : [];
+  }
+}
+
+/**
+ * if と forEach の内側を含めた、手順の数を数えます。形式に誤りがあっても例外を投げません。
+ * 入れ子の段数の上限を超えた内側は数えません。その誤りは validateStepList が報告します。
+ * @param {unknown[]} list
+ * @param {number} depth
+ * @returns {number}
+ */
+function countSteps(list, depth) {
+  let count = list.length;
+  if (depth >= MAX_NESTING) {
+    return count;
+  }
+  for (const step of list) {
+    if (!isRecord(step)) {
+      continue;
+    }
+    for (const children of [step.then, step.else, step.steps]) {
+      if ((step.type === 'if' || step.type === 'forEach') && Array.isArray(children)) {
+        count += countSteps(children, depth + 1);
+      }
+    }
+  }
+  return count;
 }
 
 /**
@@ -487,9 +659,45 @@ export function validateStep(step) {
     case 'wait':
       return validateWaitMs(step.ms);
 
+    case 'if': {
+      /** @type {string[]} */
+      const errors = [];
+      if (!isRecord(step.condition)) {
+        errors.push('condition がオブジェクトではありません。');
+      } else {
+        errors.push(...validateTarget(step.condition.target, 'condition.target'));
+        if (typeof step.condition.exists !== 'boolean') {
+          errors.push('condition.exists が true または false ではありません。');
+        }
+      }
+      if (!Array.isArray(step.then)) {
+        errors.push('then が配列ではありません。');
+      }
+      if (step.else !== undefined && !Array.isArray(step.else)) {
+        errors.push('else が配列ではありません。');
+      }
+      return errors;
+    }
+
+    case 'forEach': {
+      const errors = validateTarget(step.items, 'items');
+      if (
+        step.max !== undefined &&
+        (!Number.isInteger(step.max) ||
+          /** @type {number} */ (step.max) < 1 ||
+          /** @type {number} */ (step.max) > FOREACH_MAX_LIMIT)
+      ) {
+        errors.push(`max が 1 以上 ${FOREACH_MAX_LIMIT} 以下の整数ではありません。`);
+      }
+      if (!Array.isArray(step.steps)) {
+        errors.push('steps が配列ではありません。');
+      }
+      return errors;
+    }
+
     default:
       return [
-        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait のいずれでもありません。',
+        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait、if、forEach のいずれでもありません。',
       ];
   }
 }
@@ -576,11 +784,12 @@ export function stepOrigin(flow, step) {
 
 /**
  * @param {unknown} target
+ * @param {string} [name] 誤りの説明に使う項目名
  * @returns {string[]}
  */
-function validateTarget(target) {
+function validateTarget(target, name = 'target') {
   if (!isRecord(target)) {
-    return ['target がオブジェクトではありません。'];
+    return [`${name} がオブジェクトではありません。`];
   }
 
   /** @type {string[]} */
@@ -590,16 +799,19 @@ function validateTarget(target) {
     target.selectors.length === 0 ||
     target.selectors.some((selector) => selector === '')
   ) {
-    errors.push('target.selectors が、空でない文字列の配列ではありません。');
+    errors.push(`${name}.selectors が、空でない文字列の配列ではありません。`);
   }
   if (!isText(target.tag) || target.tag === '') {
-    errors.push('target.tag が空か、文字列ではありません。');
+    errors.push(`${name}.tag が空か、文字列ではありません。`);
   }
   if (!isText(target.label)) {
-    errors.push('target.label が文字列ではありません。');
+    errors.push(`${name}.label が文字列ではありません。`);
   }
   if (target.text !== undefined && !isText(target.text)) {
-    errors.push('target.text が文字列ではありません。');
+    errors.push(`${name}.text が文字列ではありません。`);
+  }
+  if (target.scope !== undefined && target.scope !== 'item') {
+    errors.push(`${name}.scope が item ではありません。`);
   }
   return errors;
 }

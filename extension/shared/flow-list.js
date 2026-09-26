@@ -1,5 +1,6 @@
 // 保存したフローの一覧と、実行を始めてよいかの判定です。chrome.* を使わない処理だけを置きます。
 
+import { flattenSteps } from './control-flow.js';
 import { isWebUrl } from './flow.js';
 
 /**
@@ -38,7 +39,9 @@ const NUMBER_SUFFIX = /\s\((\d+)\)$/;
  */
 export function flowSites(flow) {
   const sites = new Set([flow.origin, ...(flow.extraOrigins ?? [])]);
-  for (const step of flow.steps ?? []) {
+  // if と forEach の内側の移動の手順も含めます（#6）。
+  const steps = /** @type {import('./flow.js').Step[]} */ (flow.steps ?? []);
+  for (const { step } of flattenSteps(steps)) {
     if (step.type === 'navigate' && typeof step.url === 'string' && isWebUrl(step.url)) {
       const url = new URL(step.url);
       if (!url.host.includes('{{') && !url.host.includes('%7B')) {

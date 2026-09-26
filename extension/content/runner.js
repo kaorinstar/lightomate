@@ -4,7 +4,7 @@
 // Service Worker が手順ごとに読み込みます。同じページに 2 回読み込まれても、受け取りは 1 つだけです。
 // どの手順を実行するかは Service Worker が決めます。このスクリプトは、届いた手順を実行するだけです。
 
-/* global elementTexts, matchStopSelector, showStatusOverlay, waitForTarget */
+/* global elementTexts, findAllTargets, matchStopSelector, searchRoot, showStatusOverlay, waitForTarget */
 
 (() => {
   const installedKey = '__lightomateRunner';
@@ -95,7 +95,20 @@
       return false;
     }
     if (message?.kind === 'runner/inspect') {
-      inspect(message.step, message.timeoutMs, message.stopSelectors).then(sendResponse, (error) =>
+      inspect(message.step, message.scope, message.timeoutMs, message.stopSelectors).then(
+        sendResponse,
+        (error) => sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+    }
+    if (message?.kind === 'runner/exists') {
+      exists(message.target, message.scope, message.timeoutMs).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+    }
+    if (message?.kind === 'runner/count') {
+      countItems(message.items, message.scope, message.timeoutMs).then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
       );
       return true;
@@ -103,7 +116,7 @@
     if (message?.kind !== 'runner/step') {
       return false;
     }
-    runStep(message.step, message.timeoutMs).then(sendResponse, (error) =>
+    runStep(message.step, message.scope, message.timeoutMs).then(sendResponse, (error) =>
       sendResponse({ ok: false, error: String(error) }),
     );
     return true;
@@ -113,14 +126,15 @@
 
   /**
    * クリックする要素を探し、押さずに、その要素の文言と、止める要素の指定に一致したかを返します。
-   * @param {{ target: { selectors: string[], tag: string, text?: string } }} step
+   * @param {{ target: { selectors: string[], tag: string, text?: string, scope?: string } }} step
+   * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
    * @param {unknown} stopSelectors サイトごとの止める要素の指定（#54）
    * @returns {Promise<{ ok: true, texts: string[], matchedSelector?: string } | { ok: false, error: string, notFound?: true }>}
    */
-  async function inspect(step, timeoutMs, stopSelectors) {
+  async function inspect(step, scope, timeoutMs, stopSelectors) {
     inspected = null;
-    const found = await findElement(step, timeoutMs);
+    const found = await findElement(step.target, scope, timeoutMs);
     if (!found.ok) {
       return found;
     }
@@ -134,13 +148,19 @@
 
   /**
    * 手順の要素を探します。
-   * @param {{ target: { selectors: string[], tag: string, text?: string } }} step
+   * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} target
+   * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs
    * @returns {Promise<{ ok: true, element: Element } | { ok: false, error: string, notFound?: true }>}
    */
-  async function findElement(step, timeoutMs) {
+  async function findElement(target, scope, timeoutMs) {
+    const base = searchRoot(target, scope);
+    if (!base.ok) {
+      // 行が見つからない場合も、表示の遅れの可能性があるため、やり直してよいことにします。
+      return { ok: false, notFound: true, error: base.error };
+    }
     currentStep = new AbortController();
-    const element = await waitForTarget(step.target, timeoutMs, currentStep.signal);
+    const element = await waitForTarget(target, timeoutMs, currentStep.signal, base.root);
     if (currentStep.signal.aborted) {
       return { ok: false, error: '停止を指示されました。' };
     }
@@ -156,13 +176,61 @@
   }
 
   /**
+   * if の条件の要素があるかを調べます（#6）。ページは変更しません。
+   * 要素がない場合は、上限の時間まで待ってから、ないと判定します。
+   * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} target
+   * @param {unknown} scope 繰り返しで処理中の行の指定
+   * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
+   * @returns {Promise<{ ok: true, exists: boolean } | { ok: false, error: string, notFound?: true }>}
+   */
+  async function exists(target, scope, timeoutMs) {
+    const base = searchRoot(target, scope);
+    if (!base.ok) {
+      return { ok: false, notFound: true, error: base.error };
+    }
+    currentStep = new AbortController();
+    const element = await waitForTarget(target, timeoutMs, currentStep.signal, base.root);
+    if (currentStep.signal.aborted) {
+      return { ok: false, error: '停止を指示されました。' };
+    }
+    return { ok: true, exists: element !== null };
+  }
+
+  /**
+   * forEach の行の数を数えます（#6）。ページは変更しません。
+   * 行が 1 つも見つからない場合は、上限の時間まで待ってから 0 件と判定します。
+   * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} items
+   * @param {unknown} scope 外側の繰り返しで処理中の行の指定
+   * @param {number} timeoutMs 行を待つ上限（ミリ秒）
+   * @returns {Promise<{ ok: true, count: number } | { ok: false, error: string, notFound?: true }>}
+   */
+  async function countItems(items, scope, timeoutMs) {
+    const base = searchRoot(items, scope);
+    if (!base.ok) {
+      return { ok: false, notFound: true, error: base.error };
+    }
+    currentStep = new AbortController();
+    const first = await waitForTarget(
+      { ...items, text: undefined },
+      timeoutMs,
+      currentStep.signal,
+      base.root,
+    );
+    if (currentStep.signal.aborted) {
+      return { ok: false, error: '停止を指示されました。' };
+    }
+    return { ok: true, count: first ? findAllTargets(items, base.root).length : 0 };
+  }
+
+  /**
    * 手順を 1 つ実行します。
-   * @param {{ type: string, target: { selectors: string[], tag: string, text?: string }, value?: string, values?: string[], labels?: string[] }} step
+   * @param {{ type: string, target: { selectors: string[], tag: string, text?: string, scope?: string }, value?: string, values?: string[], labels?: string[] }} step
    *   値の中のパラメータは、Service Worker で置き換え済みです。
+   * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
    * @returns {Promise<{ ok: true, text?: string } | { ok: false, error: string, notFound?: true }>}
    */
-  async function runStep(step, timeoutMs) {
+  async function runStep(step, scope, timeoutMs) {
     /** @type {Element} */
     let element;
     if (step.type === 'click') {
@@ -178,7 +246,7 @@
       }
       element = checked;
     } else {
-      const found = await findElement(step, timeoutMs);
+      const found = await findElement(step.target, scope, timeoutMs);
       if (!found.ok) {
         return found;
       }

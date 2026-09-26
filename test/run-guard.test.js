@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 
 import {
   authPauseNoteForPage,
-  expectedPageUrl,
   isLoginUrl,
   isRetryableFailure,
   shouldPauseForAuth,
@@ -15,19 +14,6 @@ const target = { selectors: ['#a'], tag: 'button', label: 'ボタン' };
 const click = { type: 'click', target };
 const none = { password: false, oneTimeCode: false, captcha: false, loginForm: false };
 const password = { ...none, password: true };
-
-test('直前のページの移動の URL を返す', () => {
-  /** @type {import('../extension/shared/flow.js').Step[]} */
-  const steps = [
-    { type: 'navigate', cause: 'user', url: 'https://a.example.com/orders' },
-    click,
-    { type: 'navigate', cause: 'page', url: 'https://a.example.com/orders/1' },
-    click,
-  ];
-  assert.equal(expectedPageUrl(steps, 1), 'https://a.example.com/orders');
-  assert.equal(expectedPageUrl(steps, 3), 'https://a.example.com/orders/1');
-  assert.equal(expectedPageUrl(steps, 0), undefined);
-});
 
 test('認証の画面の印があり、パスが直前の移動と異なる場合は止める', () => {
   for (const signals of [password, { ...none, oneTimeCode: true }, { ...none, captcha: true }]) {

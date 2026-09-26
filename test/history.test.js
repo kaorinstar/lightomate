@@ -8,6 +8,7 @@ import {
   historyEntryFromRun,
   historyToCsv,
   redactValues,
+  stepText,
   withoutHistoryEntries,
 } from '../extension/shared/history.js';
 
@@ -193,4 +194,13 @@ test('保存したファイルのパスを記録する（#16）', () => {
   // 元の配列を後から変更しても、履歴は変わりません。
   files.push('b.pdf');
   assert.equal(result?.files.length, 1);
+});
+
+test('繰り返しの中で止まった実行は、何件目の行かを持ち、止まった手順に添えて表示する（#6）', () => {
+  const result = historyEntryFromRun({ ...run, status: 'failed', items: [2, 3] }, '', []);
+  assert.ok(result);
+  assert.deepEqual(result.items, [2, 3]);
+  assert.equal(stepText(result), `2 / ${run.total}（2 件目の 3 件目）`);
+  const done = historyEntryFromRun({ ...run, status: 'done', items: [2] }, '', []);
+  assert.equal(done?.items, undefined);
 });
