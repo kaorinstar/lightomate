@@ -29,6 +29,7 @@ import { pickDelay, stepInterval } from '../shared/speed.js';
 import {
   AUTH_PAUSE_NOTE,
   MAX_RETRIES,
+  authPauseNoteForPage,
   expectedPageUrl,
   isRetryableFailure,
   shouldPauseForAuth,
@@ -101,9 +102,19 @@ class Halted extends Error {}
 
 /**
  * ログインや認証の画面が表示されたため、手順を行わずに一時停止することを示すものです（#18）。
- * ［再開］を押されたら、同じ手順からやり直します。
+ * ［再開］を押されたら、resumeIndex の手順から続けます。クリックなどの手順は同じ手順からやり直し、
+ * ページの移動の手順は、人が移動先の画面を表示した後の次の手順から続けます。
  */
-class AuthRequired extends Error {}
+class AuthRequired extends Error {
+  /**
+   * @param {string} message
+   * @param {number} [resumeIndex] 再開したときに実行する手順の番号。省略した場合は同じ手順です
+   */
+  constructor(message, resumeIndex) {
+    super(message);
+    this.resumeIndex = resumeIndex;
+  }
+}
 
 /** 手順の要素が見つからなかったことを示す誤りです。この失敗だけをやり直します（#18）。 */
 class ElementNotFound extends Error {}
@@ -468,6 +479,8 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           await waitForNewPage(runId, tabId, documentBefore, step.url);
           index = lastPageNavigationIndex(steps, index);
           documentBefore = await getDocumentId(tabId);
+          // ログインの有効期限切れなどで、認証の画面に転送されていないかを調べます（#18）。
+          await checkAuthAfterNavigation(runId, flow, tabId, steps[index], index);
         } else if (step.type === 'wait') {
           await waitWithStopCheck(runId, step.ms);
         } else if (step.type === 'pause') {
@@ -481,10 +494,23 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           await pauseRun(runId, flow, tabId, index, step.note);
           continue;
         } else if (step.type === 'navigate') {
+          const shownBefore = await getDocumentId(tabId);
           if (index > 0) {
             await chrome.tabs.update(tabId, { url: step.url });
           }
-          await waitForLoad(runId, tabId, (url) => samePage(url, step.url), step.url);
+          // 移動先ではなく認証の画面に転送された場合は、30 秒待たずに一時停止します（#18）。
+          // 移動する前から表示していたページは調べません。ログインの画面から移動する場合に、
+          // 移動前のログインの画面で止まらないようにするためです。
+          await waitForLoad(
+            runId,
+            tabId,
+            (url) => samePage(url, step.url),
+            step.url,
+            (documentId) =>
+              documentId === shownBefore && index > 0
+                ? Promise.resolve()
+                : checkAuthAfterNavigation(runId, flow, tabId, step, index),
+          );
           documentBefore = await getDocumentId(tabId);
         } else if (step.type === 'savePdf') {
           await checkAuthScreen(runId, flow, tabId, step, expectedPageUrl(steps, index));
@@ -516,6 +542,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
         // ログインや認証の画面が表示された場合は、手順を行わずに一時停止します（#18）。
         // ［再開］を押されたら、同じ手順からやり直します。やり直す前に、もう一度画面を調べます。
         if (error instanceof AuthRequired) {
+          index = error.resumeIndex ?? index;
           await pauseRun(runId, flow, tabId, index, error.message);
           continue;
         }
@@ -724,6 +751,33 @@ async function checkAuthScreen(runId, flow, tabId, step, expectedUrl) {
   }
   await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
   await throwIfAuthScreen(runId, tabId, tab.url, step, expectedUrl);
+}
+
+/**
+ * ページの移動の手順の後に、認証の画面に転送されていれば AuthRequired を投げます（#18）。
+ * 表示中の URL のパスが移動先と異なり、認証の画面の印がある場合です。再開したときは次の手順から続けます。
+ * @param {string} runId
+ * @param {Flow} flow
+ * @param {number} tabId
+ * @param {Step} step ページの移動の手順
+ * @param {number} index その手順の番号
+ */
+async function checkAuthAfterNavigation(runId, flow, tabId, step, index) {
+  if (step.type !== 'navigate') {
+    return;
+  }
+  try {
+    await checkAuthScreen(runId, flow, tabId, step, step.url);
+  } catch (error) {
+    if (error instanceof AuthRequired) {
+      throw new AuthRequired(authPauseNoteForPage(step.url), index + 1);
+    }
+    if (error instanceof StopRequested) {
+      throw error;
+    }
+    // 転送の途中のページや、エラーの画面ではスクリプトを読み込めないことがあります。その場合は調べずに
+    // 進みます。移動先のページで止まるべき場合は、次の手順の前の確認で止まります。
+  }
 }
 
 /**
@@ -1054,10 +1108,14 @@ async function waitForNewPage(runId, tabId, documentBefore, recordedUrl) {
  * @param {number} tabId
  * @param {(url: string) => boolean} isExpected
  * @param {string} description 待っているページの説明（失敗時の表示に使います）
+ * @param {(documentId: string | undefined) => Promise<void>} [onOtherPage] 想定と異なるページの
+ *   読み込みが終わったときに、ページごとに 1 回呼ぶ処理。例外を投げると、待つのをやめます（#18）
  */
-async function waitForLoad(runId, tabId, isExpected, description) {
+async function waitForLoad(runId, tabId, isExpected, description, onOtherPage) {
   const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
   let lastUrl = '';
+  /** onOtherPage を呼んだページの識別子です。 */
+  let checked;
   while (Date.now() < deadline) {
     let tab;
     try {
@@ -1068,6 +1126,13 @@ async function waitForLoad(runId, tabId, isExpected, description) {
     lastUrl = tab.url ?? tab.pendingUrl ?? '';
     if (tab.status === 'complete' && lastUrl && isExpected(lastUrl)) {
       return;
+    }
+    if (onOtherPage && tab.status === 'complete' && lastUrl) {
+      const documentId = await getDocumentId(tabId);
+      if (documentId !== checked) {
+        checked = documentId;
+        await onOtherPage(documentId);
+      }
     }
     await throwIfStopRequested(runId);
     await sleep(STOP_CHECK_INTERVAL_MS);

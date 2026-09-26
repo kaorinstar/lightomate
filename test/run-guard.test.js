@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  authPauseNoteForPage,
   expectedPageUrl,
   isRetryableFailure,
   shouldPauseForAuth,
@@ -105,4 +106,10 @@ test('要素が見つからなかった失敗だけを、やり直す', () => {
   ]) {
     assert.equal(isRetryableFailure(response), false, JSON.stringify(response));
   }
+});
+
+test('ページの移動の後に止まった場合は、表示してほしい移動先を説明に含める', () => {
+  const note = authPauseNoteForPage('https://a.example.com/orders');
+  assert.match(note, /［再開］/);
+  assert.ok(note.endsWith('https://a.example.com/orders'));
 });
