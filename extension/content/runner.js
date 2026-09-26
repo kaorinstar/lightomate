@@ -4,7 +4,7 @@
 // Service Worker が手順ごとに読み込みます。同じページに 2 回読み込まれても、受け取りは 1 つだけです。
 // どの手順を実行するかは Service Worker が決めます。このスクリプトは、届いた手順を実行するだけです。
 
-/* global elementTexts, findAllTargets, matchStopSelector, searchRoot, showStatusOverlay, waitForTarget */
+/* global elementKeys, elementTexts, findAllTargets, matchStopSelector, searchRoot, showStatusOverlay, waitForTarget */
 
 (() => {
   const installedKey = '__lightomateRunner';
@@ -133,7 +133,8 @@
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
    * @param {unknown} stopSelectors サイトごとの止める要素の指定（#54）
-   * @returns {Promise<{ ok: true, texts: string[], matchedSelector?: string } | { ok: false, error: string, notFound?: true }>}
+   * @returns {Promise<{ ok: true, texts: string[], keys: string[], matchedSelector?: string } | { ok: false, error: string, notFound?: true }>}
+   *   keys は、翻訳で変わらない手がかりです（#97）
    */
   async function inspect(step, scope, timeoutMs, stopSelectors) {
     inspected = null;
@@ -145,6 +146,7 @@
     return {
       ok: true,
       texts: elementTexts(found.element),
+      keys: elementKeys(found.element),
       matchedSelector: matchStopSelector(found.element, stopSelectors),
     };
   }

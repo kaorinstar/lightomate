@@ -152,8 +152,15 @@ Lightomate が記録した操作は、この形式の JSON になります。検
 
 確定ボタンかどうかは、要素の表示文字列、`aria-label`、`title`、`value`、要素の中の画像の `alt` に、
 確定を表す語（「注文を確定」「購入する」「Place your order」「Buy now」など）が含まれるかで判定します。
-語の一覧は `extension/shared/purchase-guard.js` にあります。文言で判定するため、画像だけで説明のない
-ボタンや、独自の文言のボタンは検出できない場合があります。確定ではないボタンを確定ボタンと判定し、
+語の一覧は `extension/shared/purchase-guard.js` にあります。
+
+文言は Chrome の翻訳で置き換わるため、翻訳で変わらない手がかりでも判定します（#97）。要素の `id`、`name`、
+`class`、`data-testid`、`data-test`、`data-qa`、`formaction`、リンクの `href`、フォームを送信するボタンの
+フォームの `action`、手順の `target.selectors` のいずれかに、確定を表す英語の語（`placeorder`、`buynow`、
+`submitorder` など）が含まれていれば、確定ボタンと判定します。英数字以外の文字を除いて比べるため、
+`place-order`、`place_order`、`placeOrder` はどれも一致します。
+
+画像だけで説明のないボタンや、文言にも属性にも手がかりのないボタンは検出できない場合があります。確定ではないボタンを確定ボタンと判定し、
 不要に止まる場合もあります。
 
 文言で判定できないボタンや画面に備え、利用者はフローの管理画面で、サイト（オリジン）ごとに「必ず

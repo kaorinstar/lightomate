@@ -161,8 +161,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
 
     case 'recording/step':
-      addStep(message.step, sender, message.texts, message.matchedSelector).catch((error) =>
-        console.error('手順を記録できませんでした。', error),
+      addStep(message.step, sender, message.texts, message.matchedSelector, message.keys).catch(
+        (error) => console.error('手順を記録できませんでした。', error),
       );
       return false;
 

@@ -6,7 +6,7 @@
 // Service Worker から停止の連絡を受けると終了します。
 // 記録した手順は Service Worker へ送り、ここでは保存しません。
 
-/* global buildTarget, elementTexts, matchStopSelector, showNotice, showStatusOverlay */
+/* global buildTarget, elementKeys, elementTexts, matchStopSelector, showNotice, showStatusOverlay */
 
 (() => {
   /** 同じページに 2 回読み込まれた場合に、記録が二重にならないようにする目印です。 */
@@ -57,6 +57,7 @@
       { type: 'click', target: buildTarget(element) },
       elementTexts(element),
       matchStopSelector(event.target, scope.__lightomateStopSelectors),
+      elementKeys(element),
     );
   };
 
@@ -126,10 +127,11 @@
    * @param {object} step
    * @param {string[]} [texts] クリックした要素の文言
    * @param {string} [matchedSelector] クリックした要素が一致した、止める要素の指定
+   * @param {string[]} [keys] クリックした要素の、翻訳で変わらない手がかり（#97）
    */
-  function send(step, texts, matchedSelector) {
+  function send(step, texts, matchedSelector, keys) {
     chrome.runtime
-      .sendMessage({ kind: 'recording/step', step, texts, matchedSelector })
+      .sendMessage({ kind: 'recording/step', step, texts, matchedSelector, keys })
       .catch(() => {
         // 拡張機能を再読み込みした後など、Service Worker と接続できない場合は記録を続けられません。
         overlay.remove();
