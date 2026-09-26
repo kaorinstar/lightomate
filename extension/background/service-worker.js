@@ -19,6 +19,7 @@ import {
 import { removeHistory } from '../common/history-store.js';
 import {
   markInterruptedRuns,
+  registerDialogEvents,
   requestPause,
   requestResume,
   requestStop,
@@ -35,6 +36,7 @@ chrome.sidePanel
 
 const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
 
+registerDialogEvents();
 markInterruptedRuns().catch((error) => console.error('実行の状態を確認できませんでした。', error));
 
 // 緊急停止のキー（#18）です。既定は Alt+Shift+Q で、chrome://extensions/shortcuts で変えられます。

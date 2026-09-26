@@ -21,9 +21,10 @@ import {
 } from './control-flow.js';
 import { MONTH_VALUE_PATTERN, isDateValue } from './condition.js';
 import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
+import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -38,9 +39,10 @@ export const SCHEMA_VERSION = 9;
  * 版 8 は、版 7 に、手順を記録したときにページが翻訳されていたこと（手順の translated）を加えたものです（#99）。
  * 版 9 は、版 8 に条件を満たす間の繰り返し（while）と、文字・日付による条件（condition の contains、equals、
  * month、from、to）を加えたものです（#103）。
+ * 版 10 は、版 9 に、手順の後に開いたダイアログへの応答の指定（手順の dialog）を加えたものです（#88）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -107,6 +109,8 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string} url 移動先の URL
  * @property {'user' | 'page'} cause 利用者の操作（URL の入力、再読み込み、戻る）による移動か、
  *   ページの操作（リンク、フォームの送信、転送）による移動か
+ * @property {import('./dialog.js').DialogResponse[]} [dialog] この手順の後に開いたダイアログへの応答。
+ *   開いた順に使います（#88）。版 10 で加えました
  */
 
 /**
@@ -116,6 +120,8 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {Target} target
  * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
  * @property {true} [translated] 記録したときに、ページが Chrome の翻訳で表示されていたこと（#99）
+ * @property {import('./dialog.js').DialogResponse[]} [dialog] この手順の後に開いたダイアログへの応答。
+ *   開いた順に使います（#88）。版 10 で加えました
  */
 
 /**
@@ -127,6 +133,8 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {true} [secret] パスワードなど、値を記録しない入力欄であること
  * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
  * @property {true} [translated] 記録したときに、ページが Chrome の翻訳で表示されていたこと（#99）
+ * @property {import('./dialog.js').DialogResponse[]} [dialog] この手順の後に開いたダイアログへの応答。
+ *   開いた順に使います（#88）。版 10 で加えました
  */
 
 /**
@@ -138,6 +146,8 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string[]} labels 選んだ選択肢の表示文字列
  * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
  * @property {true} [translated] 記録したときに、ページが Chrome の翻訳で表示されていたこと（#99）
+ * @property {import('./dialog.js').DialogResponse[]} [dialog] この手順の後に開いたダイアログへの応答。
+ *   開いた順に使います（#88）。版 10 で加えました
  */
 
 /**
@@ -574,6 +584,11 @@ function validateStepList(list, path, depth, inLoop, context) {
         `${at}: translated は、schemaVersion が ${TRANSLATED_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
       );
     }
+    if (step.dialog !== undefined && version !== undefined && version < DIALOG_MIN_SCHEMA_VERSION) {
+      errors.push(
+        `${at}: dialog は、schemaVersion が ${DIALOG_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+      );
+    }
     if (type === 'extract' && typeof step.name === 'string') {
       if (params.some((param) => param.name === step.name)) {
         errors.push(`${at}: name の「${step.name}」は、パラメータと同じ名前のため使えません。`);
@@ -711,6 +726,16 @@ export function validateStep(step) {
     }
     if (step.translated !== true) {
       return ['translated が true ではありません。'];
+    }
+  }
+
+  if (step.dialog !== undefined) {
+    if (typeof step.type !== 'string' || !DIALOG_STEP_TYPES.includes(step.type)) {
+      return ['dialog は、click、input、select、navigate の手順にだけ書けます。'];
+    }
+    const errors = validateDialog(step.dialog);
+    if (errors.length > 0) {
+      return errors;
     }
   }
 
