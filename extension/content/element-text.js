@@ -4,7 +4,7 @@
 // ES モジュールの extension/shared/ を読み込めないため、ここでは文言を集めて送るだけにします。
 // 同じページに 2 回読み込まれても誤りにならないよう、最上位には関数の宣言だけを置きます。
 
-/* exported elementTexts, matchStopSelector */
+/* exported elementKeys, elementTexts, matchStopSelector */
 
 /**
  * 要素の表示文字列、aria-label、title、value と、要素の中の画像の alt を返します。
@@ -35,6 +35,41 @@ function elementTexts(element) {
     add(image.getAttribute('alt') ?? image.getAttribute('aria-label'));
   }
   return texts;
+}
+
+/**
+ * 要素の、翻訳で変わらない手がかりを返します（#97）。確定ボタンかどうかの判定に、文言とあわせて使います。
+ * Chrome の翻訳は表示の文字を置き換えますが、ここで集める属性の値は変えません。
+ * - 要素の id、name、class、data-testid、data-test、data-qa、formaction
+ * - リンクの場合は、リンク先（href）
+ * - フォームを送信するボタンの場合は、フォームの送信先（action）。フォームの中のほかのボタンでは
+ *   止まらないよう、送信するボタンに限ります
+ * @param {Element} element
+ * @returns {string[]}
+ */
+function elementKeys(element) {
+  const limit = 200;
+  /** @type {string[]} */
+  const keys = [];
+  const add = (/** @type {string | null | undefined} */ value) => {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      keys.push(trimmed.slice(0, limit));
+    }
+  };
+  for (const name of ['id', 'name', 'class', 'data-testid', 'data-test', 'data-qa', 'formaction']) {
+    add(element.getAttribute(name));
+  }
+  if (element instanceof HTMLAnchorElement) {
+    add(element.getAttribute('href'));
+  }
+  const submits =
+    (element instanceof HTMLButtonElement && element.type === 'submit') ||
+    (element instanceof HTMLInputElement && ['submit', 'image'].includes(element.type));
+  if (submits) {
+    add(/** @type {HTMLButtonElement | HTMLInputElement} */ (element).form?.getAttribute('action'));
+  }
+  return keys;
 }
 
 /**
