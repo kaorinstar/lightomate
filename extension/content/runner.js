@@ -4,7 +4,7 @@
 // Service Worker が手順ごとに読み込みます。同じページに 2 回読み込まれても、受け取りは 1 つだけです。
 // どの手順を実行するかは Service Worker が決めます。このスクリプトは、届いた手順を実行するだけです。
 
-/* global elementKeys, elementTexts, findAllTargets, matchStopSelector, searchRoot, showStatusOverlay, waitForTarget */
+/* global elementKeys, elementTexts, findAllTargets, isPageTranslated, matchStopSelector, searchRoot, showStatusOverlay, waitForTarget */
 
 (() => {
   const installedKey = '__lightomateRunner';
@@ -133,7 +133,7 @@
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
    * @param {unknown} stopSelectors サイトごとの止める要素の指定（#54）
-   * @returns {Promise<{ ok: true, texts: string[], keys: string[], matchedSelector?: string } | { ok: false, error: string, notFound?: true }>}
+   * @returns {Promise<{ ok: true, texts: string[], keys: string[], matchedSelector?: string } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
    *   keys は、翻訳で変わらない手がかりです（#97）
    */
   async function inspect(step, scope, timeoutMs, stopSelectors) {
@@ -156,13 +156,14 @@
    * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} target
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs
-   * @returns {Promise<{ ok: true, element: Element } | { ok: false, error: string, notFound?: true }>}
+   * @returns {Promise<{ ok: true, element: Element } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
+   *   translated は、見つからなかったときにページが翻訳されていたかです。止まった理由の説明に使います（#99）
    */
   async function findElement(target, scope, timeoutMs) {
     const base = searchRoot(target, scope);
     if (!base.ok) {
       // 行が見つからない場合も、表示の遅れの可能性があるため、やり直してよいことにします。
-      return { ok: false, notFound: true, error: base.error };
+      return { ok: false, notFound: true, error: base.error, translated: isPageTranslated() };
     }
     currentStep = new AbortController();
     const element = await waitForTarget(target, timeoutMs, currentStep.signal, base.root);
@@ -175,6 +176,7 @@
         ok: false,
         notFound: true,
         error: `要素が見つかりません（${Math.round(timeoutMs / 1000)} 秒待ちました）。`,
+        translated: isPageTranslated(),
       };
     }
     return { ok: true, element };
@@ -268,7 +270,7 @@
    *   値の中のパラメータは、Service Worker で置き換え済みです。
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true, text?: string } | { ok: false, error: string, notFound?: true }>}
+   * @returns {Promise<{ ok: true, text?: string } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
    */
   async function runStep(step, scope, timeoutMs) {
     /** @type {Element} */
@@ -416,7 +418,7 @@
    * @param {Element} element
    * @param {string[]} values
    * @param {string[]} labels
-   * @returns {{ ok: true } | { ok: false, error: string }}
+   * @returns {{ ok: true } | { ok: false, error: string, translated?: boolean }}
    */
   function selectOptions(element, values, labels) {
     if (!(element instanceof HTMLSelectElement)) {
@@ -430,7 +432,12 @@
     );
     const missing = chosen.findIndex((option) => !option);
     if (missing >= 0) {
-      return { ok: false, error: `選択肢「${labels[missing] ?? values[missing]}」がありません。` };
+      // 選択肢の表示名は翻訳で置き換わるため、翻訳の有無を添えます（#99）。
+      return {
+        ok: false,
+        error: `選択肢「${labels[missing] ?? values[missing]}」がありません。`,
+        translated: isPageTranslated(),
+      };
     }
     element.focus();
     for (const option of options) {

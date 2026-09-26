@@ -4,7 +4,7 @@
 // ES モジュールの extension/shared/ を読み込めないため、ここでは文言を集めて送るだけにします。
 // 同じページに 2 回読み込まれても誤りにならないよう、最上位には関数の宣言だけを置きます。
 
-/* exported elementKeys, elementTexts, matchStopSelector */
+/* exported elementKeys, elementTexts, isPageTranslated, matchStopSelector */
 
 /**
  * 要素の表示文字列、aria-label、title、value と、要素の中の画像の alt を返します。
@@ -90,4 +90,19 @@ function matchStopSelector(element, selectors) {
       return false;
     }
   });
+}
+
+/**
+ * ページが Chrome の翻訳で表示されているかを判定します（#99）。
+ * Chrome の翻訳（Google 翻訳のスクリプト）は、翻訳したページの html 要素に translated-ltr か
+ * translated-rtl の class を付けます。止まった理由の説明にだけ使い、操作するかどうかの判定には使いません。
+ * class の名前が変わった場合は、翻訳していないと判定し、説明を加えないだけです。
+ * @returns {boolean}
+ */
+function isPageTranslated() {
+  return [document.documentElement, document.body].some(
+    (element) =>
+      element?.classList.contains('translated-ltr') ||
+      element?.classList.contains('translated-rtl'),
+  );
 }

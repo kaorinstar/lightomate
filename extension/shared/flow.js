@@ -18,9 +18,10 @@ import {
   MAX_NESTING,
   MAX_PAGES_LIMIT,
 } from './control-flow.js';
+import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -32,9 +33,10 @@ export const SCHEMA_VERSION = 7;
  * 加えたものです（#6）。
  * 版 7 は、版 6 に forEach のページ送り（nextPage、maxPages）と、forEach の内側のページの操作による
  * 移動（navigate、cause が page）を加えたものです（#95）。
+ * 版 8 は、版 7 に、手順を記録したときにページが翻訳されていたこと（手順の translated）を加えたものです（#99）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -98,6 +100,7 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {'click'} type
  * @property {Target} target
  * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
+ * @property {true} [translated] 記録したときに、ページが Chrome の翻訳で表示されていたこと（#99）
  */
 
 /**
@@ -108,6 +111,7 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string} [value] 入力した値
  * @property {true} [secret] パスワードなど、値を記録しない入力欄であること
  * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
+ * @property {true} [translated] 記録したときに、ページが Chrome の翻訳で表示されていたこと（#99）
  */
 
 /**
@@ -118,6 +122,7 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string[]} values 選んだ選択肢の value
  * @property {string[]} labels 選んだ選択肢の表示文字列
  * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
+ * @property {true} [translated] 記録したときに、ページが Chrome の翻訳で表示されていたこと（#99）
  */
 
 /**
@@ -147,6 +152,7 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {Target} target
  * @property {string} name 読み取った値に付ける名前
  * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
+ * @property {true} [translated] 記録したときに、ページが Chrome の翻訳で表示されていたこと（#99）
  */
 
 /**
@@ -496,6 +502,15 @@ function validateStepList(list, path, depth, inLoop, context) {
         );
       }
     }
+    if (
+      step.translated !== undefined &&
+      version !== undefined &&
+      version < TRANSLATED_MIN_SCHEMA_VERSION
+    ) {
+      errors.push(
+        `${at}: translated は、schemaVersion が ${TRANSLATED_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+      );
+    }
     if (type === 'extract' && typeof step.name === 'string') {
       if (params.some((param) => param.name === step.name)) {
         errors.push(`${at}: name の「${step.name}」は、パラメータと同じ名前のため使えません。`);
@@ -621,6 +636,15 @@ export function validateStep(step) {
     }
     if (typeof step.origin !== 'string' || !isWebOrigin(step.origin)) {
       return ['origin が https:// または http:// で始まるオリジンではありません。'];
+    }
+  }
+
+  if (step.translated !== undefined) {
+    if (typeof step.type !== 'string' || !PAGE_STEP_TYPES.includes(step.type)) {
+      return ['translated は、click、input、select、extract の手順にだけ書けます。'];
+    }
+    if (step.translated !== true) {
+      return ['translated が true ではありません。'];
     }
   }
 
