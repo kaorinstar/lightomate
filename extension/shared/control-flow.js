@@ -1,7 +1,8 @@
 // 条件分岐（if）と繰り返し（forEach）の手順を扱います（#6）。chrome.* は使いません。
 // 繰り返しの中でのページの移動と、ページ送り（forEach の nextPage）は #95 で加えました。
+// 条件を満たす間の繰り返し（while）は #103 で加えました。
 //
-// フロー定義では、if と forEach の内側の手順を入れ子の一覧として書きます。実行の前に、入れ子の手順を
+// フロー定義では、if、forEach、while の内側の手順を入れ子の一覧として書きます。実行の前に、入れ子の手順を
 // 「条件に応じて飛ぶ先」を持つ平らな命令の一覧（program）に変換します。実行は命令の番号（pc）を
 // 1 つずつ進めるだけになり、これまでの手順の番号による実行の仕組みをほぼそのまま使えます。
 // 繰り返しの何件目かは、命令の番号とは別に、繰り返しの段ごとの記録（LoopFrame）で持ちます。
@@ -10,9 +11,9 @@
 /** @typedef {import('./flow.js').Target} Target */
 
 /** 内側に手順を持つ手順の種類です。 */
-export const CONTROL_STEP_TYPES = ['if', 'forEach'];
+export const CONTROL_STEP_TYPES = ['if', 'forEach', 'while'];
 
-/** if と forEach を入れ子にできる段数の上限です。 */
+/** if、forEach、while を入れ子にできる段数の上限です。 */
 export const MAX_NESTING = 3;
 
 /** forEach の繰り返しの上限（max）の既定値です。 */
@@ -20,6 +21,12 @@ export const DEFAULT_FOREACH_MAX = 100;
 
 /** forEach の繰り返しの上限（max）に書ける最大の値です。 */
 export const FOREACH_MAX_LIMIT = 500;
+
+/** while の繰り返しの上限（max）の既定値です（#103）。 */
+export const DEFAULT_WHILE_MAX = 100;
+
+/** while の繰り返しの上限（max）に書ける最大の値です（#103）。 */
+export const WHILE_MAX_LIMIT = 500;
 
 /** ページ送りの上限（maxPages）の既定値です（#95）。 */
 export const DEFAULT_MAX_PAGES = 10;
@@ -29,23 +36,25 @@ export const MAX_PAGES_LIMIT = 50;
 
 /**
  * 実行する命令です。number は、サイドパネルと実行履歴に表示する手順の番号（0 から数えます）です。
- * 入れ子を展開した通し番号で、flattenSteps の number と同じです。jump と next は、対応する手順が
+ * 入れ子を展開した通し番号で、flattenSteps の number と同じです。jump、next、loop は、対応する手順が
  * ないため number を持ちません。
  * @typedef {(
  *   { op: 'step', number: number, step: Step } |
  *   { op: 'if', number: number, step: import('./flow.js').IfStep, elsePc: number } |
  *   { op: 'jump', to: number } |
  *   { op: 'forEach', number: number, step: import('./flow.js').ForEachStep, endPc: number } |
- *   { op: 'next', startPc: number }
+ *   { op: 'next', startPc: number } |
+ *   { op: 'while', number: number, step: import('./flow.js').WhileStep, endPc: number } |
+ *   { op: 'loop', startPc: number }
  * )} Instruction
  */
 
 /**
- * 実行中の繰り返しの 1 段分の記録です。
+ * 実行中の繰り返しの 1 段分の記録です。forEach と while（#103）の両方で使います。
  * @typedef {object} LoopFrame
- * @property {number} startPc forEach の命令の番号
- * @property {number} index 処理中の行の番号（0 から数えます）
- * @property {number} count 処理中のページで、繰り返しを始めた時点の行数
+ * @property {number} startPc forEach か while の命令の番号
+ * @property {number} index forEach では処理中の行の番号、while では処理中の回の番号（どちらも 0 から数えます）
+ * @property {number} count forEach では、処理中のページで繰り返しを始めた時点の行数。while では使わず、0 です
  * @property {number} [page] 処理中のページの番号（0 から数えます）。ページ送り（#95）で増えます。
  *   省略した場合は 0 です
  * @property {number} [done] 前のページまでに処理した行の数（#95）。省略した場合は 0 です
@@ -112,7 +121,7 @@ export function outlineSteps(steps) {
           rows.push({ kind: 'else', depth });
           visit(step.else, depth + 1);
         }
-      } else if (step.type === 'forEach') {
+      } else if (step.type === 'forEach' || step.type === 'while') {
         visit(step.steps, depth + 1);
       }
     }
@@ -131,6 +140,7 @@ function childLists(step) {
     case 'if':
       return step.else ? [step.then, step.else] : [step.then];
     case 'forEach':
+    case 'while':
       return [step.steps];
     default:
       return [];
@@ -143,6 +153,8 @@ function childLists(step) {
  * - if：条件を満たさない場合は elsePc へ飛びます。then の最後には、else を飛び越える jump を置きます。
  * - forEach：行が 0 件の場合は endPc（繰り返しの後）へ飛びます。内側の手順の後には next を置き、
  *   次の行があれば forEach の直後へ戻ります。
+ * - while：条件を満たさない場合は endPc（繰り返しの後）へ飛びます。内側の手順の後には loop を置き、
+ *   while の命令へ戻って条件を判定し直します（#103）。
  * @param {Step[]} steps
  * @returns {Instruction[]}
  */
@@ -175,6 +187,13 @@ export function compileSteps(steps) {
         emit(step.steps);
         program.push({ op: 'next', startPc });
         instruction.endPc = program.length;
+      } else if (step.type === 'while') {
+        const startPc = program.length;
+        const instruction = { op: /** @type {const} */ ('while'), number: own, step, endPc: -1 };
+        program.push(instruction);
+        emit(step.steps);
+        program.push({ op: 'loop', startPc });
+        instruction.endPc = program.length;
       } else {
         program.push({ op: 'step', number: own, step });
       }
@@ -189,7 +208,7 @@ export function compileSteps(steps) {
  * @param {Instruction[]} program
  * @param {number} pc 終えた命令の番号
  * @param {LoopFrame[]} frames 繰り返しの記録（外側の段から順）
- * @param {boolean | number} [result] if では条件を満たしたか、forEach では処理する行数、next では
+ * @param {boolean | number} [result] if と while では条件を満たしたか、forEach では処理する行数、next では
  *   次のページへ送った後の行数（ページを送らない場合は省略します、#95）
  * @returns {{ pc: number, frames: LoopFrame[] }}
  */
@@ -200,6 +219,26 @@ export function advance(program, pc, frames, result) {
       return { pc: result === true ? pc + 1 : instruction.elsePc, frames };
     case 'jump':
       return { pc: instruction.to, frames };
+    case 'while': {
+      // 初めて判定する場合は、繰り返しの記録を加えます。loop から戻った場合は、記録がすでにあります。
+      const top = frames.at(-1);
+      const entered = top !== undefined && top.startPc === pc;
+      const outer = entered ? frames.slice(0, -1) : frames;
+      if (result !== true) {
+        return { pc: instruction.endPc, frames: outer };
+      }
+      return {
+        pc: pc + 1,
+        frames: entered ? frames : [...frames, { startPc: pc, index: 0, count: 0 }],
+      };
+    }
+    case 'loop': {
+      const frame = frames.at(-1);
+      return {
+        pc: instruction.startPc,
+        frames: frame ? [...frames.slice(0, -1), { ...frame, index: frame.index + 1 }] : frames,
+      };
+    }
     case 'forEach': {
       const count = typeof result === 'number' ? result : 0;
       if (count <= 0) {
@@ -242,7 +281,7 @@ export function advance(program, pc, frames, result) {
 }
 
 /**
- * 命令の番号に対応する、画面に表示する手順の番号です。jump と next は、その先で次に実行する手順の
+ * 命令の番号に対応する、画面に表示する手順の番号です。jump、next、loop は、その先で次に実行する手順の
  * 番号を返します。命令の一覧の終わりでは、手順の総数を返します。
  * @param {Instruction[]} program
  * @param {number} pc
@@ -257,7 +296,7 @@ export function displayNumber(program, pc, frames, total) {
     if (instruction === undefined) {
       return total;
     }
-    if (instruction.op !== 'jump' && instruction.op !== 'next') {
+    if (instruction.op !== 'jump' && instruction.op !== 'next' && instruction.op !== 'loop') {
       return instruction.number;
     }
     position = advance(program, position.pc, position.frames);
@@ -267,32 +306,70 @@ export function displayNumber(program, pc, frames, total) {
 /**
  * ページで要素を探す範囲です。繰り返しの段ごとに、行の指定（forEach の items）と処理中の行の番号を、
  * 外側の段から順に並べます。content script はこれをたどって、処理中の行を探します。
+ * while の段（#103）は行を持たないため、含めません。
  * @param {Instruction[]} program
  * @param {LoopFrame[]} frames
  * @returns {{ items: Target, index: number }[]}
  */
 export function itemScope(program, frames) {
-  return frames.map((frame) => {
+  return frames.flatMap((frame) => {
     const instruction = program[frame.startPc];
-    if (instruction.op !== 'forEach') {
-      throw new Error('繰り返しの記録が、forEach の命令を指していません。');
+    if (instruction.op === 'while') {
+      return [];
     }
-    return { items: instruction.step.items, index: frame.index };
+    if (instruction.op !== 'forEach') {
+      throw new Error('繰り返しの記録が、forEach か while の命令を指していません。');
+    }
+    return [{ items: instruction.step.items, index: frame.index }];
   });
+}
+
+/**
+ * 繰り返しの段ごとの種類です（#103）。forEach の段は item（何件目）、while の段は round（何回目）です。
+ * @param {Instruction[]} program
+ * @param {LoopFrame[]} frames
+ * @returns {('item' | 'round')[]}
+ */
+export function loopKinds(program, frames) {
+  return frames.map((frame) => (program[frame.startPc]?.op === 'while' ? 'round' : 'item'));
+}
+
+/**
+ * while の条件を満たして次の回を始める前に、上限（max）に達していないかを確かめます（#103）。
+ * 達している場合は、止める理由を返します。while は「条件がなくなるまで」の繰り返しのため、上限に
+ * 達しても条件を満たしていることは想定外の状態だからです。
+ * @param {import('./flow.js').WhileStep} step
+ * @param {LoopFrame | undefined} frame この while の記録。初めて判定する場合は undefined です
+ * @param {string} condition 条件の説明（condition.js の describeCondition）
+ * @returns {string | undefined}
+ */
+export function whileLimitError(step, frame, condition) {
+  const max = step.max ?? DEFAULT_WHILE_MAX;
+  if ((frame?.index ?? 0) >= max) {
+    return (
+      `繰り返し（while）が上限（${max} 回）に達しましたが、条件（${condition}）をまだ満たしています。` +
+      'フローの while の max を増やすか、条件を見直してください。'
+    );
+  }
+  return undefined;
 }
 
 /**
  * 繰り返しの何件目かの表示です（例：「3 件目」、入れ子の場合は「2 件目の 3 件目」）。
  * ページ送り（#95）を使う繰り返しでは、何ページ目かを先頭に添えます（例：「2 ページ目の 3 件目」）。
- * @param {number[] | undefined} items 繰り返しの段ごとの、処理中の行の番号（1 から数えます）
+ * while の段（#103）は、何回目かを表示します（例：「3 回目」）。
+ * @param {number[] | undefined} items 繰り返しの段ごとの、処理中の行か回の番号（1 から数えます）
  * @param {number} [page] 処理中のページの番号（1 から数えます）。ページ送りを使わない場合は省略します
+ * @param {('item' | 'round')[]} [kinds] 段ごとの種類（loopKinds）。省略した場合は、すべて item です
  * @returns {string}
  */
-export function itemText(items, page) {
+export function itemText(items, page, kinds) {
   if (!items || items.length === 0) {
     return '';
   }
-  const rows = items.map((item) => `${item} 件目`).join('の ');
+  const rows = items
+    .map((item, index) => `${item} ${kinds?.[index] === 'round' ? '回目' : '件目'}`)
+    .join('の ');
   return page === undefined ? rows : `${page} ページ目の ${rows}`;
 }
 

@@ -10,12 +10,14 @@ import {
   flattenSteps,
   itemScope,
   itemText,
+  loopKinds,
   needsReturn,
   outlineSteps,
   pageLimitError,
   returnedListError,
   rowLimitError,
   stepAt,
+  whileLimitError,
 } from '../extension/shared/control-flow.js';
 
 /** @typedef {import('../extension/shared/flow.js').Step} Step */
@@ -54,13 +56,27 @@ const forEach = (label, steps) => ({
 });
 
 /**
+ * @param {string} label
+ * @param {Step[]} steps
+ * @param {number} [max]
+ * @returns {Step}
+ */
+const whileStep = (label, steps, max) => ({
+  type: 'while',
+  condition: { target: { selectors: [`#${label}`], tag: 'button', label }, exists: true },
+  ...(max !== undefined ? { max } : {}),
+  steps,
+});
+
+/**
  * 命令の一覧を最後まで実行し、行った手順の名前を返します。
  * @param {Step[]} steps
- * @param {{ conditions?: Record<string, boolean>, counts?: Record<string, number> }} page
- *   条件の要素があるか（label ごと）と、一覧の行数（label ごと）
+ * @param {{ conditions?: Record<string, boolean>, counts?: Record<string, number>, rounds?: Record<string, number> }} page
+ *   条件の要素があるか（label ごと）と、一覧の行数（label ごと）と、while の条件を満たす回数（label ごと）。
+ *   while の条件は、繰り返しの記録の回の番号が rounds より小さい間だけ満たします。
  * @returns {string[]}
  */
-function simulate(steps, { conditions = {}, counts = {} }) {
+function simulate(steps, { conditions = {}, counts = {}, rounds = {} }) {
   const program = compileSteps(steps);
   /** @type {string[]} */
   const done = [];
@@ -71,8 +87,14 @@ function simulate(steps, { conditions = {}, counts = {} }) {
     /** @type {boolean | number | undefined} */
     let result;
     if (instruction.op === 'if') {
-      const { target, exists } = instruction.step.condition;
-      result = (conditions[target.label] ?? false) === exists;
+      const { condition } = instruction.step;
+      result =
+        (conditions[condition.target.label] ?? false) ===
+        ('exists' in condition && condition.exists);
+    } else if (instruction.op === 'while') {
+      const top = position.frames.at(-1);
+      const round = top?.startPc === position.pc ? top.index : 0;
+      result = round < (rounds[instruction.step.condition.target.label] ?? 0);
     } else if (instruction.op === 'forEach') {
       result = counts[instruction.step.items.label] ?? 0;
     } else if (instruction.op === 'step') {
@@ -383,4 +405,94 @@ test('一覧のページへ戻った後の行数か 1 行目が、最初と異�
     returnedListError('注文', { count: 3 }, { count: 3, firstKey: '注文 11' }),
     undefined,
   );
+});
+
+// 条件を満たす間の繰り返し（while、#103）です。
+
+test('while は、条件を満たす間だけ内側の手順を繰り返し、満たさなくなったら次の手順へ進む（#103）', () => {
+  const steps = [wait('前'), whileStep('もっと見る', [wait('押す')]), wait('後')];
+  assert.deepEqual(simulate(steps, { rounds: { もっと見る: 3 } }), [
+    '前',
+    '押す@1',
+    '押す@2',
+    '押す@3',
+    '後',
+  ]);
+  // 初めから条件を満たさない場合は、内側の手順を行いません。
+  assert.deepEqual(simulate(steps, { rounds: { もっと見る: 0 } }), ['前', '後']);
+});
+
+test('while を forEach の中に入れると、行ごとに繰り返しの記録を作り直す（#103）', () => {
+  const steps = [forEach('行', [whileStep('展開', [wait('押す')]), wait('読む')])];
+  assert.deepEqual(simulate(steps, { counts: { 行: 2 }, rounds: { 展開: 2 } }), [
+    '押す@1-1',
+    '押す@1-2',
+    '読む@1',
+    '押す@2-1',
+    '押す@2-2',
+    '読む@2',
+  ]);
+});
+
+test('while の中の if の後は、while の条件の判定へ戻る（#103）', () => {
+  const steps = [whileStep('次', [ifStep('印', true, [wait('then')], [wait('else')])]), wait('後')];
+  assert.deepEqual(simulate(steps, { rounds: { 次: 2 }, conditions: { 印: true } }), [
+    'then@1',
+    'then@2',
+    '後',
+  ]);
+});
+
+test('while の内側の手順は、flattenSteps と outlineSteps でも展開する（#103）', () => {
+  const steps = [whileStep('次', [wait('a'), wait('b')]), wait('後')];
+  assert.deepEqual(
+    flattenSteps(steps).map(({ number, depth }) => [number, depth]),
+    [
+      [0, 0],
+      [1, 1],
+      [2, 1],
+      [3, 0],
+    ],
+  );
+  assert.equal(outlineSteps(steps).length, 4);
+  const program = compileSteps(steps);
+  assert.deepEqual(
+    program.map((instruction) => instruction.op),
+    ['while', 'step', 'step', 'loop', 'step'],
+  );
+  // loop は、その先で次に実行する手順（while）の番号を表示します。
+  assert.equal(displayNumber(program, 3, [{ startPc: 0, index: 0, count: 0 }], 4), 0);
+});
+
+test('itemScope は while の段を含めず、loopKinds は段ごとの種類を返す（#103）', () => {
+  const program = compileSteps([forEach('行', [whileStep('次', [wait('a')])])]);
+  const frames = [
+    { startPc: 0, index: 1, count: 3 },
+    { startPc: 1, index: 4, count: 0 },
+  ];
+  assert.deepEqual(
+    itemScope(program, frames).map(({ items, index }) => [items.label, index]),
+    [['行', 1]],
+  );
+  assert.deepEqual(loopKinds(program, frames), ['item', 'round']);
+  assert.equal(itemText([2, 5], undefined, ['item', 'round']), '2 件目の 5 回目');
+  assert.equal(itemText([2, 5]), '2 件目の 5 件目');
+});
+
+test('while の上限（max）の回数を終えても条件を満たす場合は、止める理由を返す（#103）', () => {
+  const step = /** @type {import('../extension/shared/flow.js').WhileStep} */ (
+    whileStep('次', [], 3)
+  );
+  assert.equal(whileLimitError(step, undefined, '「次」がある場合'), undefined);
+  assert.equal(whileLimitError(step, { startPc: 0, index: 2, count: 0 }, 'x'), undefined);
+  assert.match(
+    whileLimitError(step, { startPc: 0, index: 3, count: 0 }, '「次」がある場合') ?? '',
+    /上限（3 回）に達しましたが、条件（「次」がある場合）をまだ満たしています/,
+  );
+  // 省略した場合の上限は 100 回です。
+  const unlimited = /** @type {import('../extension/shared/flow.js').WhileStep} */ (
+    whileStep('次', [])
+  );
+  assert.equal(whileLimitError(unlimited, { startPc: 0, index: 99, count: 0 }, 'x'), undefined);
+  assert.ok(whileLimitError(unlimited, { startPc: 0, index: 100, count: 0 }, 'x'));
 });

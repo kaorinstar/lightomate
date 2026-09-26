@@ -351,3 +351,14 @@ test('CSV に、止まった手順の内容、ページ、やり直した回数�
 test('報告用の日時は秒まで示す', () => {
   assert.match(reportDateTime('2026-09-26T01:00:42.000Z'), /:42$/);
 });
+
+test('while の中で止まった実行は、何回目かを持ち、止まった手順に添えて表示する（#103）', () => {
+  const result = historyEntryFromRun(
+    { ...run, status: 'failed', items: [2, 4], loops: ['item', 'round'] },
+    '',
+    [],
+  );
+  assert.ok(result);
+  assert.deepEqual(result.loops, ['item', 'round']);
+  assert.equal(stepText(result), `2 / ${run.total}（2 件目の 4 回目）`);
+});
