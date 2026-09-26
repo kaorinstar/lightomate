@@ -793,7 +793,12 @@ function flowItem(stored) {
   const item = document.createElement('div');
   item.className = 'list-group-item';
   item.dataset.origin = stored.flow.origin;
-  item.dataset.noFirstPage = String(allScope && stored.flow.steps[0]?.type !== 'navigate');
+  // 最初の手順がページを開く手順でないフローは、表示中のタブで実行します。そのため、すべてのフローを
+  // 表示しているときと、フローの origin 以外のサイトのページで表示しているとき（#41）は、押せなくします。
+  item.dataset.noFirstPage = String(
+    stored.flow.steps[0]?.type !== 'navigate' &&
+      (allScope || currentPage?.origin !== stored.flow.origin),
+  );
 
   if (editing?.id === stored.id && editing.mode === 'rename') {
     item.append(renameForm(stored, editing));
