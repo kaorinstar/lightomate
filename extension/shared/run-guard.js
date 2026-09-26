@@ -101,6 +101,34 @@ export function isRetryableFailure(response) {
 }
 
 /**
+ * ページを操作せず、要素を探して調べるだけの依頼の種類です（#90）。
+ * 応答の前にページが移動して通信が途切れた場合も、ページに何も操作していないため、やり直してよい依頼です。
+ */
+const READ_ONLY_REQUESTS = [
+  'runner/inspect',
+  'runner/exists',
+  'runner/read',
+  'runner/count',
+  'runner/authSignals',
+];
+
+/**
+ * ページとの通信が途切れた場合に、やり直してよい依頼かを判定します（#90）。
+ * 要素を待っている間にページが遅れて転送されると、通信が途切れます。調べるだけの依頼は、転送の後の
+ * ページでやり直します。クリック・入力・選択の依頼（runner/step）は、操作の途中で途切れた可能性が
+ * あるため、やり直さずに止めます。
+ * @param {unknown} message content/runner.js に送った依頼
+ * @returns {boolean}
+ */
+export function isReadOnlyRequest(message) {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    READ_ONLY_REQUESTS.includes(String(/** @type {{ kind?: unknown }} */ (message).kind))
+  );
+}
+
+/**
  * URL のパスを、末尾の / を除いて返します。読み取れない場合は、そのまま返します。
  * @param {string} url
  * @returns {string}

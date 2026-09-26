@@ -30,6 +30,7 @@ import {
   AUTH_PAUSE_NOTE,
   MAX_RETRIES,
   authPauseNoteForPage,
+  isReadOnlyRequest,
   isRetryableFailure,
   shouldPauseForAuth,
 } from '../shared/run-guard.js';
@@ -53,6 +54,7 @@ import {
 } from '../shared/control-flow.js';
 import { conditionKind, describeCondition, evaluateCondition } from '../shared/condition.js';
 import { decideDialog } from '../shared/dialog.js';
+import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../shared/redirect.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -884,6 +886,14 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
    * @type {string | undefined}
    */
   let expectedUrl;
+  /**
+   * 直前に実行した手順です。転送を待つ手順が、ページの読み込みの後の転送を待つものかの判定に使います（#90）。
+   * 条件分岐と繰り返しの判定を挟んだ場合は undefined にします。
+   * @type {Step | undefined}
+   */
+  let previousStep;
+  /** 記録時にあった転送が起きなかったため飛ばした、転送先の URL です（#90）。失敗したときの説明に使います。 */
+  let skippedRedirect;
   /** 実行を終えた後も、ページの枠とアイコンで「ここから手で操作する」ことを示すか（#13）。 */
   let handOver = false;
   /** サイドパネルと実行履歴に表示する、現在の位置です。 */
@@ -917,6 +927,9 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
   try {
     while (pc < program.length) {
       const instruction = program[pc];
+      if (instruction.op !== 'step' && instruction.op !== 'jump') {
+        previousStep = undefined;
+      }
       if (instruction.op === 'jump' || instruction.op === 'loop') {
         ({ pc, frames } = advance(program, pc, frames));
         continue;
@@ -1066,6 +1079,18 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           // 終わるのを待ちます。移動先の URL は比べません。サイトが記録時と異なる画面に転送する
           // ことがあるためです（#51）。想定と異なるページに着いた場合は、次の手順の要素が
           // 見つからずに止まります。転送が続いて記録された移動は、まとめて 1 回の移動として扱います。
+          // ページの読み込みの後の転送が、実行時に起きなかった場合は、30 秒待たずに飛ばします（#90）。
+          if (
+            isRedirectAfterLoad(step, previousStep) &&
+            documentBefore !== undefined &&
+            (await isRedirectMissing(runId, tabId, documentBefore))
+          ) {
+            skippedRedirect = step.url;
+            pc = lastPageNavigationIndex(program, pc);
+            previousStep = step;
+            ({ pc, frames } = advance(program, pc, frames));
+            continue;
+          }
           await waitForNewPage(runId, tabId, documentBefore, step.url);
           pc = lastPageNavigationIndex(program, pc);
           const last = program[pc];
@@ -1145,6 +1170,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
         throw error;
       }
 
+      previousStep = instruction.op === 'step' ? instruction.step : undefined;
       ({ pc, frames } = advance(program, pc, frames));
       // 手順と手順の間に、フローの設定の範囲から毎回決めた時間だけ待ちます（#15）。最後の手順の後には待ちません。
       if (pc < program.length) {
@@ -1179,7 +1205,10 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       {
         status: 'failed',
         ...position(),
-        error: error instanceof Error ? error.message : String(error),
+        error:
+          (error instanceof Error ? error.message : String(error)) +
+          // 転送を飛ばした後に失敗した場合は、原因を推測できるよう、飛ばしたことを加えます（#90）。
+          (skippedRedirect === undefined ? '' : skippedRedirectNote(skippedRedirect)),
       },
       stoppedStep(),
     );
@@ -1950,6 +1979,13 @@ async function requestPage(runId, tabId, message, recorded) {
   // 要素を待っている間（最大 10 秒）も停止の指示に応じられるよう、応答を待ちながら指示を確かめます。
   // ダイアログが開いている間は応答がないため、ダイアログへの対応もこの間に行います（#88）。
   const reply = chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).catch((error) => {
+    // 調べるだけの依頼は、要素を待っている間にページが移動して通信が途切れた場合も、やり直します（#90）。
+    if (isReadOnlyRequest(message)) {
+      throw new ElementNotFound(
+        'ページが移動したため、要素を最後まで探せませんでした。',
+        undefined,
+      );
+    }
     throw new Error(`ページと通信できませんでした（${String(error)}）。`, { cause: error });
   });
   const response = await waitForPage(runId, tabId, reply);
@@ -2006,6 +2042,38 @@ export function isNewPageLoaded(before, current) {
 async function getDocumentId(tabId) {
   const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => null);
   return frame?.documentId;
+}
+
+/**
+ * ページの読み込みの後の転送が、起きなかったかを判定します（#90）。
+ * 移動が始まらない状態が MISSING_REDIRECT_MS 続いたら true を返します。移動が始まった場合は、
+ * すぐに false を返し、呼び出し元が新しいページの読み込みを待ちます。
+ * @param {string} runId
+ * @param {number} tabId
+ * @param {string} documentBefore 直前の移動の後のページの識別子
+ * @returns {Promise<boolean>}
+ */
+async function isRedirectMissing(runId, tabId, documentBefore) {
+  const since = Date.now();
+  for (;;) {
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch {
+      throw new Error('実行中のタブが閉じられたため、停止しました。');
+    }
+    const result = observeRedirect(
+      documentBefore,
+      { documentId: await getDocumentId(tabId), status: tab.status, pendingUrl: tab.pendingUrl },
+      since,
+      Date.now(),
+    );
+    if (result !== 'waiting') {
+      return result === 'missing';
+    }
+    await throwIfStopRequested(runId);
+    await sleep(STOP_CHECK_INTERVAL_MS);
+  }
 }
 
 /**
