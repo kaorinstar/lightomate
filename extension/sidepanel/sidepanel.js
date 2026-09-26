@@ -651,13 +651,17 @@ async function renderRuns(runs) {
       } else if (run.status === 'done') {
         showNotice(status, text, 'success');
       } else {
-        status.className = 'm-0';
+        // 実行中の文は手順ごとに長さが変わるため、高さを固定し、はみ出す分は省略します（#98）。
+        // 省略した部分は、マウスを重ねると表示します。
+        status.className = 'm-0 lm-run-progress';
         status.setAttribute('role', 'status');
         status.textContent = text;
+        status.title = text;
       }
 
+      // ボタンは状態の文より上に置きます。文の行数が変わっても、ボタンの位置が動かないようにするためです（#98）。
       const buttons = document.createElement('div');
-      buttons.className = 'lm-buttons mt-3';
+      buttons.className = 'lm-buttons mb-3';
       if (isActiveRun(run)) {
         // 一時停止中は［再開］、それ以外は［一時停止］を置きます（#37）。
         const paused = run.status === 'paused';
@@ -689,7 +693,7 @@ async function renderRuns(runs) {
           buttons.append(editLink(stored, 'フローを編集'));
         }
       }
-      body.append(status, buttons);
+      body.append(buttons, status);
       return card;
     }),
   );
