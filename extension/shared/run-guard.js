@@ -1,0 +1,91 @@
+// 実行中の異常への対応です（#18）。chrome.* は使いません。
+//
+// - 認証の画面の検出：ログインの有効期限切れなどで、ログインや確認コード、画像認証の画面が表示された
+//   場合に、手順を行わずに一時停止するかを判定します。CAPTCHA や二段階認証を自動で通過することはしません。
+// - 再試行：要素が見つからなかった手順だけを、決まった回数までやり直します。ページに何も操作して
+//   いないため、やり直しても購入などの操作が重なることはありません。
+
+/** @typedef {import('./flow.js').Step} Step */
+
+/**
+ * ページで見つけた、認証の画面の印です（content/runner.js が調べます）。
+ * @typedef {object} AuthSignals
+ * @property {boolean} password 表示されているパスワードの入力欄がある
+ * @property {boolean} oneTimeCode 確認コードの入力欄（autocomplete="one-time-code"）がある
+ * @property {boolean} captcha 画像認証の枠（reCAPTCHA、hCaptcha、Cloudflare Turnstile）がある
+ */
+
+/** 要素が見つからなかった手順を、やり直す回数の上限です。 */
+export const MAX_RETRIES = 2;
+
+/** 認証の画面で一時停止したときの説明です。 */
+export const AUTH_PAUSE_NOTE =
+  'ログインや認証の画面が表示されたため、一時停止しました。ログインなどを済ませ、元の画面に戻ってから［再開］を押してください。';
+
+/**
+ * 手順の前に表示しているはずのページの URL を返します。指定した手順より前の、最後のページの移動の手順の URL です。
+ * @param {Step[]} steps
+ * @param {number} index 実行する手順の番号
+ * @returns {string | undefined}
+ */
+export function expectedPageUrl(steps, index) {
+  for (let i = Math.min(index, steps.length) - 1; i >= 0; i -= 1) {
+    const step = steps[i];
+    if (step.type === 'navigate') {
+      return step.url;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 認証の画面のため、手順を行わずに一時停止するかを判定します。
+ * 次の 2 つを両方満たす場合に止めます。
+ * - ページに認証の画面の印（パスワードの入力欄、確認コードの入力欄、画像認証の枠）がある。
+ * - 表示中の URL のパスが、直前のページの移動の URL のパスと異なる。
+ * ログインの画面を記録したフローでは、ログインの画面にいることが想定どおりのため止めません。
+ * ログインの有効期限切れでは、サイトが別のパス（例：/orders から /signin）に転送するため、パスが異なります。
+ * パスワードなど値を記録していない入力欄への入力の手順も、止めません。
+ * @param {{ signals: AuthSignals, currentUrl: string, expectedUrl: string | undefined, step: Step }} input
+ * @returns {boolean}
+ */
+export function shouldPauseForAuth({ signals, currentUrl, expectedUrl, step }) {
+  if (!signals.password && !signals.oneTimeCode && !signals.captcha) {
+    return false;
+  }
+  if (step.type === 'input' && step.secret) {
+    return false;
+  }
+  if (expectedUrl === undefined) {
+    return false;
+  }
+  return pathOf(currentUrl) !== pathOf(expectedUrl);
+}
+
+/**
+ * ページからの応答が、やり直してよい失敗（要素が見つからなかった）かを判定します。
+ * 別のサイトへの移動、確定の手前での停止など、ほかの理由の失敗はやり直しません。
+ * @param {unknown} response content/runner.js の応答
+ * @returns {boolean}
+ */
+export function isRetryableFailure(response) {
+  return (
+    typeof response === 'object' &&
+    response !== null &&
+    /** @type {{ ok?: unknown, notFound?: unknown }} */ (response).ok === false &&
+    /** @type {{ notFound?: unknown }} */ (response).notFound === true
+  );
+}
+
+/**
+ * URL のパスを、末尾の / を除いて返します。読み取れない場合は、そのまま返します。
+ * @param {string} url
+ * @returns {string}
+ */
+function pathOf(url) {
+  try {
+    return new URL(url).pathname.replace(/\/+$/, '') || '/';
+  } catch {
+    return url;
+  }
+}

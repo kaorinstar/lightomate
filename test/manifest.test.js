@@ -49,6 +49,15 @@ test('要求する権限は、SECURITY.md に記載したものだけである',
   assert.equal(manifest.optional_permissions, undefined);
 });
 
+test('キーボードの組み合わせは、緊急停止の 1 つだけを登録する（#18）', () => {
+  assert.deepEqual(manifest.commands, {
+    'emergency-stop': {
+      suggested_key: { default: 'Alt+Shift+Q' },
+      description: '実行中のフローをすべて停止する',
+    },
+  });
+});
+
 test('拡張機能の画面は、外部への通信と外部のコードの読み込みができない', () => {
   const directives = new Map(
     manifest.content_security_policy.extension_pages
