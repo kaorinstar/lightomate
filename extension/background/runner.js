@@ -794,6 +794,7 @@ async function throwIfAuthScreen(runId, tabId, currentUrl, step, expectedUrl) {
     password: signals?.password === true,
     oneTimeCode: signals?.oneTimeCode === true,
     captcha: signals?.captcha === true,
+    loginForm: signals?.loginForm === true,
   };
   if (shouldPauseForAuth({ signals: checked, currentUrl, expectedUrl, step })) {
     throw new AuthRequired(AUTH_PAUSE_NOTE);

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   authPauseNoteForPage,
   expectedPageUrl,
+  isLoginUrl,
   isRetryableFailure,
   shouldPauseForAuth,
 } from '../extension/shared/run-guard.js';
@@ -12,7 +13,7 @@ import {
 const target = { selectors: ['#a'], tag: 'button', label: 'ボタン' };
 /** @type {import('../extension/shared/flow.js').Step} */
 const click = { type: 'click', target };
-const none = { password: false, oneTimeCode: false, captcha: false };
+const none = { password: false, oneTimeCode: false, captcha: false, loginForm: false };
 const password = { ...none, password: true };
 
 test('直前のページの移動の URL を返す', () => {
@@ -112,4 +113,38 @@ test('ページの移動の後に止まった場合は、表示してほしい�
   const note = authPauseNoteForPage('https://a.example.com/orders');
   assert.match(note, /［再開］/);
   assert.ok(note.endsWith('https://a.example.com/orders'));
+});
+
+test('Amazon のように ID だけを尋ねるログインの画面でも、URL から止める', () => {
+  assert.equal(
+    shouldPauseForAuth({
+      signals: none,
+      currentUrl:
+        'https://www.amazon.co.jp/ap/signin?openid.return_to=https%3A%2F%2Fwww.amazon.co.jp',
+      expectedUrl: 'https://www.amazon.co.jp/checkout/entry/cart',
+      step: click,
+    }),
+    true,
+  );
+});
+
+test('ログインの画面を示す語を、区切られた語としてだけ判定する', () => {
+  for (const url of [
+    'https://www.amazon.co.jp/ap/signin?x=1',
+    'https://a.example.com/login',
+    'https://a.example.com/users/sign_in',
+    'https://a.example.com/account/log-in/',
+    'https://a.example.com/auth/start',
+    'https://a.example.com/login.php',
+  ]) {
+    assert.equal(isLoginUrl(url), true, url);
+  }
+  for (const url of [
+    'https://a.example.com/author/1',
+    'https://a.example.com/blog/designing-logins',
+    'https://a.example.com/orders?next=/login',
+    'https://a.example.com/',
+  ]) {
+    assert.equal(isLoginUrl(url), false, url);
+  }
 });

@@ -227,7 +227,7 @@
    * 止めるかどうかは、この結果と URL をもとに Service Worker が判定します（shared/run-guard.js）。
    * 画像認証は、表示されている枠だけを数えます。見えない reCAPTCHA（size=invisible）は、多くのページに
    * 常に置かれているため除きます。
-   * @returns {{ password: boolean, oneTimeCode: boolean, captcha: boolean }}
+   * @returns {{ password: boolean, oneTimeCode: boolean, captcha: boolean, loginForm: boolean }}
    */
   function authSignals() {
     const visible = (/** @type {Element} */ element) => {
@@ -249,6 +249,20 @@
       ].some(
         (frame) => visible(frame) && !/[?&]size=invisible/.test(frame.getAttribute('src') ?? ''),
       ),
+      // パスワードを次の画面で尋ねるサイト（Amazon など）の、ログインの ID の入力欄です。
+      loginForm:
+        any('input[autocomplete~="username"]') ||
+        [...document.querySelectorAll('form')].some(
+          (form) =>
+            /sign[-_]?in|log[-_]?in/i.test(
+              `${form.id} ${form.getAttribute('name') ?? ''} ${form.getAttribute('action') ?? ''}`,
+            ) &&
+            [
+              ...form.querySelectorAll(
+                'input[type="email"], input[type="text"], input:not([type])',
+              ),
+            ].some(visible),
+        ),
     };
   }
 

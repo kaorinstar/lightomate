@@ -13,7 +13,16 @@
  * @property {boolean} password 表示されているパスワードの入力欄がある
  * @property {boolean} oneTimeCode 確認コードの入力欄（autocomplete="one-time-code"）がある
  * @property {boolean} captcha 画像認証の枠（reCAPTCHA、hCaptcha、Cloudflare Turnstile）がある
+ * @property {boolean} loginForm ログインの ID（メールアドレスなど）の入力欄がある。
+ *   autocomplete="username" の入力欄か、id・name・action に signin や login を含むフォームの中の
+ *   メールアドレス・文字の入力欄です。Amazon のように、パスワードを次の画面で尋ねるサイトのためです
  */
+
+/**
+ * ログインの画面の URL のパスに含まれる語です（例：Amazon の /ap/signin）。語の前後が / や - などで
+ * 区切られている場合だけ一致させ、/author のような別の語に一致しないようにします。
+ */
+const LOGIN_PATH = /(^|[/._-])(sign[-_]?in|log[-_]?in|log[-_]?on|authenticate|auth)(?=$|[/._-])/i;
 
 /** 要素が見つからなかった手順を、やり直す回数の上限です。 */
 export const MAX_RETRIES = 2;
@@ -51,7 +60,8 @@ export function expectedPageUrl(steps, index) {
 /**
  * 認証の画面のため、手順を行わずに一時停止するかを判定します。
  * 次の 2 つを両方満たす場合に止めます。
- * - ページに認証の画面の印（パスワードの入力欄、確認コードの入力欄、画像認証の枠）がある。
+ * - ページに認証の画面の印（パスワードの入力欄、確認コードの入力欄、画像認証の枠、ログインの ID の
+ *   入力欄）があるか、URL のパスがログインの画面を示す語（signin、login など）を含む。
  * - 表示中の URL のパスが、直前のページの移動の URL のパスと異なる。
  * ログインの画面を記録したフローでは、ログインの画面にいることが想定どおりのため止めません。
  * ログインの有効期限切れでは、サイトが別のパス（例：/orders から /signin）に転送するため、パスが異なります。
@@ -60,7 +70,13 @@ export function expectedPageUrl(steps, index) {
  * @returns {boolean}
  */
 export function shouldPauseForAuth({ signals, currentUrl, expectedUrl, step }) {
-  if (!signals.password && !signals.oneTimeCode && !signals.captcha) {
+  if (
+    !signals.password &&
+    !signals.oneTimeCode &&
+    !signals.captcha &&
+    !signals.loginForm &&
+    !isLoginUrl(currentUrl)
+  ) {
     return false;
   }
   if (step.type === 'input' && step.secret) {
@@ -70,6 +86,19 @@ export function shouldPauseForAuth({ signals, currentUrl, expectedUrl, step }) {
     return false;
   }
   return pathOf(currentUrl) !== pathOf(expectedUrl);
+}
+
+/**
+ * URL のパスが、ログインの画面を示す語（signin、login など）を含むかを判定します。
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isLoginUrl(url) {
+  try {
+    return LOGIN_PATH.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
 }
 
 /**
