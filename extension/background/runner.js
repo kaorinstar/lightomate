@@ -573,13 +573,22 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
   /** 実行を終えた後も、ページの枠とアイコンで「ここから手で操作する」ことを示すか（#13）。 */
   let handOver = false;
   /** サイドパネルと実行履歴に表示する、現在の位置です。 */
+  /**
+   * 表示する手順の番号です。繰り返しの終わり（一覧のページへの戻りとページ送り、#95）で止まった場合は、
+   * 繰り返しの手順の番号にします。次の手順の番号では、どこで止まったかが分からないためです。
+   */
+  const currentNumber = () => {
+    const instruction = program[pc];
+    const loop = instruction?.op === 'next' ? program[instruction.startPc] : undefined;
+    return loop?.op === 'forEach' ? loop.number : displayNumber(program, pc, frames, total);
+  };
   const position = () => ({
-    stepIndex: displayNumber(program, pc, frames, total),
+    stepIndex: currentNumber(),
     items: frames.length > 0 ? frames.map((frame) => frame.index + 1) : undefined,
     page: pageNumber(program, frames),
   });
   /** 実行履歴に記録する、止まった手順です（#93）。停止した場合は、次に実行する手順です。 */
-  const stoppedStep = () => stepAt(steps, displayNumber(program, pc, frames, total));
+  const stoppedStep = () => stepAt(steps, currentNumber());
   try {
     while (pc < program.length) {
       const instruction = program[pc];
