@@ -49,7 +49,7 @@ import {
   secretStepIndexes,
   showRunFieldErrors,
 } from '../shared/run-form.js';
-import { STATUS_LABELS, historyToCsv, stepText } from '../shared/history.js';
+import { STATUS_LABELS, historyEntryText, historyToCsv, stepText } from '../shared/history.js';
 import { formatSeconds, readIntervalInput } from '../shared/speed.js';
 import { parseLines, stopRuleFieldErrors } from '../shared/stop-rules.js';
 import {
@@ -1027,7 +1027,8 @@ async function renderHistory() {
       const reason = document.createElement('td');
       if (entry.stepNumber !== undefined) {
         const step = document.createElement('div');
-        step.textContent = `手順 ${stepText(entry)}`;
+        // 止まった手順の内容は、サイドパネルの実行の表示と同じく、番号の後に括弧で添えます（#93）。
+        step.textContent = `手順 ${stepText(entry)}${entry.step ? `（${entry.step}）` : ''}`;
         reason.append(step);
       }
       if (entry.reason) {
@@ -1058,7 +1059,33 @@ async function renderHistory() {
         }
       });
       const actions = document.createElement('td');
-      actions.className = 'lm-nowrap';
+      // ［コピー］は成功以外の行にだけ置くため、右に寄せて「×」の位置を行の間でそろえます。
+      actions.className = 'lm-nowrap text-end';
+      // 成功以外の履歴は、原因の調査を依頼するときに貼り付けられるよう、1 件ずつコピーできます（#93）。
+      if (entry.status !== 'done') {
+        const copy = document.createElement('button');
+        copy.type = 'button';
+        copy.className = 'btn btn-sm btn-ghost-secondary';
+        copy.textContent = 'コピー';
+        copy.setAttribute(
+          'aria-label',
+          `${formatDateTime(entry.startedAt)} の「${entry.flowName}」の履歴をコピー`,
+        );
+        copy.addEventListener('click', async () => {
+          clearNotices();
+          try {
+            await navigator.clipboard.writeText(historyEntryText(entry));
+            showToast(elements.toast, `「${entry.flowName}」の履歴をコピーしました。`);
+          } catch (error) {
+            showNotice(
+              elements.historyNotice,
+              `履歴をコピーできませんでした。${String(error)}`,
+              'error',
+            );
+          }
+        });
+        actions.append(copy);
+      }
       actions.append(remove);
 
       const row = document.createElement('tr');

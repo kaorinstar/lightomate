@@ -346,7 +346,8 @@
 
       <section id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
         <p class="lm-panel-note">
-          フローを実行した結果を、新しい順に最大 200 件まで残します。<wbr />実行するときに入力した値は記録しません。止まった理由の中の入力した値は「＊＊＊」に置き換えます。<wbr />履歴を削除しても、保存したファイルは削除しません。
+          フローを実行した結果を、新しい順に最大 200 件まで残します。<wbr />実行するときに入力した値は記録しません。止まった理由、手順、ページの
+          URL の中の入力した値は「＊＊＊」に置き換えます。<wbr />履歴を削除しても、保存したファイルは削除しません。
         </p>
         <div class="card">
           <div class="card-header lm-card-header">
@@ -370,7 +371,7 @@
                   <th scope="col">結果</th>
                   <th scope="col">止まった手順と理由</th>
                   <th scope="col">保存したファイル</th>
-                  <th scope="col"><span class="visually-hidden">削除</span></th>
+                  <th scope="col"><span class="visually-hidden">コピーと削除</span></th>
                 </tr>
               </thead>
               <tbody id="history"></tbody>
