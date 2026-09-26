@@ -51,6 +51,16 @@
         >
           実行履歴
         </button>
+        <button
+          type="button"
+          class="nav-link"
+          role="tab"
+          id="tab-settings"
+          data-tab="settings"
+          aria-controls="panel-settings"
+        >
+          設定
+        </button>
       </div>
 
       <section id="panel-flows" class="lm-layout" role="tabpanel" aria-labelledby="tab-flows">
@@ -365,6 +375,27 @@
               </thead>
               <tbody id="history"></tbody>
             </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+        <div class="card lm-settings">
+          <div class="card-header lm-card-header">
+            <h2 class="card-title">サイトの許可</h2>
+          </div>
+          <div class="card-body">
+            <label class="lm-setting">
+              <input type="checkbox" class="lm-check" id="all-sites" />
+              すべてのサイトを許可
+            </label>
+            <p id="all-sites-notice" hidden></p>
+            <p class="lm-sub mt-2 mb-0">
+              オンにすると、記録と実行で、サイトごとに許可を求める確認を出しません。記録中に別のサイトへ移動した場合も、確認なしで記録を続けます。<wbr />オンにするときに
+              Chrome
+              が表示する確認には「すべてのサイト上にある自分のデータの読み取りと変更」と書かれますが、Lightomate
+              がページを操作するのは、記録中のタブと実行中のタブだけです。実行時は、手順を記録したサイトのページでだけ入力とクリックを行います。<wbr />オフにすると、個別に許可したサイトだけに戻ります。
+            </p>
           </div>
         </div>
       </section>

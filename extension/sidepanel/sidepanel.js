@@ -14,7 +14,7 @@ import {
 } from '../common/flow-store.js';
 import { requestPermission } from '../common/permissions.js';
 import { describeStep, formatDateTime, runStatusText } from '../shared/describe.js';
-import { orderFlow } from '../shared/flow.js';
+import { flowOrigins, orderFlow } from '../shared/flow.js';
 import {
   RUN_KEY_PREFIX,
   conflictMessage,
@@ -46,6 +46,7 @@ import {
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../background/recording.js').Recording} Recording */
+/** @typedef {import('../background/recording.js').RecordingPage} RecordingPage */
 /** @typedef {import('../background/runner.js').RunState} RunState */
 /** @typedef {import('../common/flow-store.js').StoredFlow} StoredFlow */
 /** @typedef {import('../shared/ui.js').NoticeKind} NoticeKind */
@@ -64,6 +65,10 @@ const elements = {
   formNotice: byId('form-notice'),
   recordingSection: byId('recording-section'),
   recordingOrigin: byId('recording-origin'),
+  recordingSite: byId('recording-site'),
+  recordingSiteText: byId('recording-site-text'),
+  recordingAllow: /** @type {HTMLButtonElement} */ (byId('recording-allow')),
+  recordingAllowNotice: byId('recording-allow-notice'),
   recordingNotice: byId('recording-notice'),
   stepCount: byId('step-count'),
   steps: byId('steps'),
@@ -102,6 +107,7 @@ const notices = [
   elements.formNotice,
   elements.recordingNotice,
   elements.recordingDiscardNotice,
+  elements.recordingAllowNotice,
   elements.resultNotice,
   elements.saveNotice,
   elements.jsonNotice,
@@ -170,6 +176,29 @@ elements.start.addEventListener('click', async () => {
   const response = await chrome.runtime.sendMessage({ kind: 'recording/start', tabId });
   if (!response?.ok) {
     showNotice(elements.flowsNotice, response?.error ?? '記録を開始できません。', 'error');
+  }
+});
+
+// 記録中に、許可がないサイトへ移動したときのボタンです（#41）。許可を得てから、そのページでも記録を続けます。
+// Chrome は利用者の操作を起点にしか許可を求められないため、ボタンで求めます。
+elements.recordingAllow.addEventListener('click', async () => {
+  clearNotices();
+  const origin = elements.recordingAllow.dataset.origin ?? '';
+  if (!origin) {
+    return;
+  }
+  const denied = await requestPermission(origin);
+  if (denied) {
+    showNotice(elements.recordingAllowNotice, denied, 'error');
+    return;
+  }
+  const response = await chrome.runtime.sendMessage({ kind: 'recording/allowOrigin', origin });
+  if (!response?.ok) {
+    showNotice(
+      elements.recordingAllowNotice,
+      response?.error ?? 'このサイトでは記録できません。',
+      'error',
+    );
   }
 });
 
@@ -306,7 +335,8 @@ elements.save.addEventListener('click', () => {
 async function onRunClick(stored) {
   clearNotices();
   // 許可を求める処理は、ボタンを押した直後に呼び出す必要があります。この前に待ち時間を入れないでください。
-  const denied = await requestPermission(stored.flow.origin);
+  // フローが操作するすべてのサイト（#41）の許可を、1 回の確認でまとめて求めます。
+  const denied = await requestPermission(flowOrigins(stored.flow));
   if (denied) {
     setRowNotice(stored.id, denied, 'error');
     return;
@@ -473,6 +503,25 @@ async function refreshCurrentPage() {
   await renderFlows();
 }
 
+/**
+ * 記録中のタブが、記録を始めたサイト以外のページを表示しているときの知らせです（#41）。
+ * 許可があるサイトでは、確認を出さずに記録していることを知らせます。許可がないサイトでは、
+ * 記録していないことと［このサイトを許可して記録］を表示します。
+ * @param {Recording} recording
+ * @param {RecordingPage | undefined} page
+ */
+function renderRecordingSite(recording, page) {
+  const other = page && page.origin !== recording.origin ? page : undefined;
+  elements.recordingSite.hidden = !other;
+  elements.recordingAllow.hidden = !other || other.allowed;
+  elements.recordingAllow.dataset.origin = other && !other.allowed ? other.origin : '';
+  elements.recordingSiteText.textContent = !other
+    ? ''
+    : other.allowed
+      ? `${other.origin} でも記録しています。`
+      : `${other.origin} は許可していないため、記録していません。このサイトでの操作も記録する場合は、アドレスバーのサイト名が利用しているサービスのものか確かめてから、下のボタンを押してください。`;
+}
+
 /** 記録と実行の状態に合わせて、画面を表示し直します。 */
 async function render() {
   const stored = await chrome.storage.session.get(null);
@@ -493,7 +542,8 @@ async function render() {
 
   elements.recordingSection.hidden = !recording;
   if (recording) {
-    elements.recordingOrigin.textContent = `記録するページ：${recording.origin}`;
+    elements.recordingOrigin.textContent = `記録するページ：${[recording.origin, ...(recording.extraOrigins ?? [])].join('、')}`;
+    renderRecordingSite(recording, /** @type {RecordingPage | undefined} */ (stored.recordingPage));
     elements.stepCount.textContent = String(recording.steps.length);
     elements.steps.replaceChildren(
       ...stepItems(recording.steps, running, elements.recordingNotice),

@@ -22,6 +22,12 @@ const cases = [
   {
     page: 'サイドパネル',
     html: sidepanel,
+    button: 'recording-allow',
+    notices: ['recording-allow-notice'],
+  },
+  {
+    page: 'サイドパネル',
+    html: sidepanel,
     button: 'recording-discard',
     notices: ['recording-confirm', 'recording-discard-notice'],
   },

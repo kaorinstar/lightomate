@@ -12,7 +12,7 @@
 
 import { getFlow } from '../common/flow-store.js';
 import { addHistory } from '../common/history-store.js';
-import { isWebUrl, validateFlow } from '../shared/flow.js';
+import { flowOrigins, isWebUrl, stepOrigin, validateFlow } from '../shared/flow.js';
 import {
   RUN_KEY_PREFIX,
   conflictMessage,
@@ -46,6 +46,8 @@ import { getStopRule } from '../common/stop-rules-store.js';
  * @property {string} flowId
  * @property {string} flowName
  * @property {string} origin フローのオリジン。同じサイトの実行が重ならないかの判定に使います。
+ * @property {string[]} [origins] フローが操作するサイトの一覧（フローの origin と extraOrigins、#41）。
+ *   一時停止からの再開で、表示中のページを確かめるために使います。
  * @property {number} tabId 実行しているタブ
  * @property {number} stepIndex 実行中の手順の番号（0 から数えます）。完了後は最後の手順の番号、
  *   失敗後は失敗した手順の番号、停止後は停止した時点で完了していた手順の数です。
@@ -230,8 +232,10 @@ export async function startRun(flowId, paramInput, secretInput) {
   if (errors.length > 0) {
     return { ok: false, error: `フローの形式に誤りがあります：${errors.join(' ')}` };
   }
-  if (!(await chrome.permissions.contains({ origins: [`${flow.origin}/*`] }))) {
-    return { ok: false, error: `${flow.origin} を操作する許可がありません。` };
+  // 手順を記録したすべてのサイト（#41）の許可を確かめます。許可はサイドパネルと管理画面の［実行］で求めます。
+  const origins = flowOrigins(flow);
+  if (!(await chrome.permissions.contains({ origins: origins.map((origin) => `${origin}/*`) }))) {
+    return { ok: false, error: `${origins.join('、')} を操作する許可がありません。` };
   }
 
   const now = new Date();
@@ -275,6 +279,7 @@ export async function startRun(flowId, paramInput, secretInput) {
       flowId,
       flowName: flow.name,
       origin: flow.origin,
+      origins,
       tabId,
       stepIndex: 0,
       total: resolved.steps.length,
@@ -354,10 +359,11 @@ export async function requestResume(runId) {
     return { ok: false, error: '実行していたタブが閉じられたため、再開できません。' };
   }
   const url = tab.url ?? '';
-  if (!isWebUrl(url) || new URL(url).origin !== state.origin) {
+  const origins = state.origins ?? [state.origin];
+  if (!isWebUrl(url) || !origins.includes(new URL(url).origin)) {
     return {
       ok: false,
-      error: `フローのサイト（${state.origin}）のページを表示してから、［再開］を押してください。`,
+      error: `フローのサイト（${origins.join('、')}）のページを表示してから、［再開］を押してください。`,
     };
   }
   await setRunState({ ...state, status: 'running', note: undefined });
@@ -384,10 +390,19 @@ export function resolveSteps(flow, paramInput, secretInput, now) {
     switch (step.type) {
       case 'navigate': {
         const url = renderTemplate(step.url, values);
-        if (!isWebUrl(url) || new URL(url).origin !== flow.origin) {
+        // ページの操作による移動（転送など）は、移動が終わるのを待つだけで、ページを操作しないため、
+        // 行き先のサイトを問いません（#41）。ログイン画面などが別のサイトにあるサイトのためです。
+        // 拡張機能が自ら開く移動（利用者の操作による移動）は、フローのサイトの一覧に限ります。
+        if (!isWebUrl(url)) {
           return {
             ok: false,
-            error: `手順 ${index + 1} の移動先（${url}）が、フローのサイト（${flow.origin}）ではありません。`,
+            error: `手順 ${index + 1} の移動先（${url}）が、https:// または http:// で始まる URL ではありません。`,
+          };
+        }
+        if (step.cause === 'user' && !flowOrigins(flow).includes(new URL(url).origin)) {
+          return {
+            ok: false,
+            error: `手順 ${index + 1} の移動先（${url}）が、フローのサイト（${flowOrigins(flow).join('、')}）ではありません。`,
           };
         }
         steps.push({ ...step, url });
@@ -402,7 +417,13 @@ export function resolveSteps(flow, paramInput, secretInput, now) {
               error: `手順 ${index + 1}（${step.target.label}）の値を入力してください。`,
             };
           }
-          steps.push({ type: 'input', target: step.target, value });
+          // 手順を記録したサイト（#41）は残します。ログイン画面のパスワードを、そのサイトでだけ入力するためです。
+          steps.push({
+            type: 'input',
+            target: step.target,
+            value,
+            ...(step.origin ? { origin: step.origin } : {}),
+          });
         } else {
           steps.push({ ...step, value: renderTemplate(step.value ?? '', values) });
         }
@@ -650,13 +671,13 @@ async function pauseRun(runId, flow, tabId, nextIndex, note) {
 
 /**
  * 一時停止中の枠と文字を、ページに表示します（#37）。
- * フローのサイトのページにだけ表示します。そのほかのサイトには、スクリプトを読み込む許可がないためです。
+ * フローのサイト（extraOrigins を含む、#41）のページにだけ表示します。そのほかのサイトには、スクリプトを読み込む許可がないためです。
  * @param {Flow} flow
  * @param {number} tabId
  * @param {string | undefined} url
  */
 async function showPausedFrame(flow, tabId, url) {
-  if (!url || !isWebUrl(url) || new URL(url).origin !== flow.origin) {
+  if (!url || !isWebUrl(url) || !flowOrigins(flow).includes(new URL(url).origin)) {
     return;
   }
   try {
@@ -735,8 +756,8 @@ async function runInPageWithRetry(runId, flow, tabId, step, expectedUrl) {
 
 /**
  * ページに認証の画面の印があり、手順を行わずに一時停止すべき場合に、AuthRequired を投げます（#18）。
- * フローのサイト以外のページでは調べません。そのサイトにはスクリプトを読み込む許可がなく、
- * 手順の処理がフローのサイト以外のページとして止めるためです。
+ * 操作の許可がないサイトのページでは調べません。スクリプトを読み込めず、手順の処理がフローのサイト
+ * 以外のページとして止めるためです。
  * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
@@ -746,7 +767,16 @@ async function runInPageWithRetry(runId, flow, tabId, step, expectedUrl) {
 async function checkAuthScreen(runId, flow, tabId, step, expectedUrl) {
   await waitForLoad(runId, tabId, () => true, '');
   const tab = await chrome.tabs.get(tabId);
-  if (!tab.url || !isWebUrl(tab.url) || new URL(tab.url).origin !== flow.origin) {
+  if (!tab.url || !isWebUrl(tab.url)) {
+    return;
+  }
+  // フローのサイトの一覧にないページでも、操作の許可があれば調べます（#41）。ログインの期限切れで、
+  // 別のサイトのログイン画面に転送された場合も、停止ではなく一時停止にするためです。調べるだけで、操作はしません。
+  const origin = new URL(tab.url).origin;
+  if (
+    !flowOrigins(flow).includes(origin) &&
+    !(await chrome.permissions.contains({ origins: [`${origin}/*`] }))
+  ) {
     return;
   }
   await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
@@ -819,21 +849,28 @@ async function runInPage(runId, flow, tabId, step, expectedUrl) {
   // クリックで移動した場合に、新しいページに切り替わったかを判定できるよう、操作の前に控えます（#51）。
   const documentId = await getDocumentId(tabId);
   const tab = await chrome.tabs.get(tabId);
-  // 別のサイトに移動していた場合は、入力値を別のサイトに入力しないよう停止します（#14）。
-  if (!tab.url || new URL(tab.url).origin !== flow.origin) {
-    throw new Error(`フローのサイト（${flow.origin}）とは別のページに移動したため、停止しました。`);
+  // 手順を記録したサイトと別のサイトに移動していた場合は、入力値を別のサイトに入力しないよう
+  // 停止します（#14、#41）。ログイン画面で記録したパスワードは、そのログイン画面のサイトでだけ入力します。
+  const expected = stepOrigin(flow, step);
+  const url = tab.url ?? '';
+  const pageOrigin = isWebUrl(url) ? new URL(url).origin : undefined;
+  if (pageOrigin !== expected) {
+    throw new Error(
+      `手順を記録したサイト（${expected}）とは別のサイト（${pageOrigin ?? (url || '不明')}）のページに移動したため、停止しました。`,
+    );
   }
 
   // サイトごとの「必ず止まる場所」の指定（#54）です。止める画面では、クリック・入力・選択を行いません。
-  const rule = await getStopRule(flow.origin);
-  const stopPath = findStopPath(rule, tab.url);
+  // 表示中のページのサイト（手順を記録したサイト）の指定を使います（#41）。
+  const rule = await getStopRule(expected);
+  const stopPath = findStopPath(rule, url);
   if (stopPath !== undefined) {
     throw new Halted(stopRuleNote('path', stopPath));
   }
 
   await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
   // ログインの有効期限切れなどで認証の画面が表示されている場合は、操作せずに一時停止します（#18）。
-  await throwIfAuthScreen(runId, tabId, tab.url, step, expectedUrl);
+  await throwIfAuthScreen(runId, tabId, url, step, expectedUrl);
 
   if (step.type === 'click') {
     const inspected = await requestPage(runId, tabId, {
@@ -885,8 +922,11 @@ async function savePdf(runId, flow, tabId, step, pathValues) {
   await waitForLoad(runId, tabId, () => true, '');
   const tab = await chrome.tabs.get(tabId);
   // 別のサイトのページを、このフローの書類として保存しないよう停止します。
-  if (!tab.url || new URL(tab.url).origin !== flow.origin) {
-    throw new Error(`フローのサイト（${flow.origin}）とは別のページに移動したため、停止しました。`);
+  const pageOrigin = tab.url && isWebUrl(tab.url) ? new URL(tab.url).origin : undefined;
+  if (pageOrigin === undefined || !flowOrigins(flow).includes(pageOrigin)) {
+    throw new Error(
+      `フローのサイト（${flowOrigins(flow).join('、')}）とは別のサイト（${pageOrigin ?? tab.url ?? '不明'}）のページに移動したため、停止しました。`,
+    );
   }
   const built = buildSavePath(step.path ?? DEFAULT_SAVE_PATH, pathValues);
   if (!built.ok) {

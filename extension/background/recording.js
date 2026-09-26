@@ -5,7 +5,9 @@
 // Chrome を終了すると消えます。content script からは読み書きできません。
 
 import {
+  MAX_EXTRA_ORIGINS,
   MAX_STEPS,
+  PAGE_STEP_TYPES,
   SCHEMA_VERSION,
   isWebUrl,
   orderFlow,
@@ -24,11 +26,21 @@ import { getStopRule } from '../common/stop-rules-store.js';
  * @typedef {object} Recording
  * @property {number} tabId 記録しているタブ
  * @property {string} origin 記録を始めたページのオリジン
+ * @property {string[]} [extraOrigins] 記録を始めたサイトのほかに、手順を記録したサイト（#41）
  * @property {string} startedAt 記録を始めた日時（ISO 8601）
  * @property {Step[]} steps 記録した手順
  */
 
+/**
+ * 記録中のタブが表示しているページのサイトと、そこで記録しているかです（#41）。サイドパネルが表示に使います。
+ * 手順の記録と競合しないよう、記録中の状態とは別のキーに保存します。
+ * @typedef {object} RecordingPage
+ * @property {string} origin 表示中のページのオリジン
+ * @property {boolean} allowed そのサイトを操作する許可があり、記録しているか
+ */
+
 const RECORDING_KEY = 'recording';
+const RECORDING_PAGE_KEY = 'recordingPage';
 const LAST_FLOW_KEY = 'lastFlow';
 
 /** 手順の削除を、表示が古いために断ったときの理由です。 */
@@ -120,7 +132,7 @@ export function stopRecording() {
       return { ok: false, error: '記録していません。' };
     }
     if (recording.steps.length === 0) {
-      await chrome.storage.session.remove(RECORDING_KEY);
+      await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
       await detach(recording.tabId);
       return { ok: true, flow: null, errors: [] };
     }
@@ -130,10 +142,11 @@ export function stopRecording() {
       schemaVersion: SCHEMA_VERSION,
       name: `記録 ${new Date(recording.startedAt).toLocaleString('ja-JP')}`,
       origin: recording.origin,
+      ...(recording.extraOrigins?.length ? { extraOrigins: recording.extraOrigins } : {}),
       steps: recording.steps,
     };
     await chrome.storage.session.set({ [LAST_FLOW_KEY]: flow });
-    await chrome.storage.session.remove(RECORDING_KEY);
+    await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
     await detach(recording.tabId);
     return { ok: true, flow: orderFlow(flow), errors: validateFlow(flow) };
   });
@@ -190,7 +203,7 @@ export function resetRecording() {
     if (!recording && !lastFlow) {
       return { ok: false, error: '破棄する記録がありません。' };
     }
-    await chrome.storage.session.remove([RECORDING_KEY, LAST_FLOW_KEY]);
+    await chrome.storage.session.remove([RECORDING_KEY, LAST_FLOW_KEY, RECORDING_PAGE_KEY]);
     if (recording) {
       await detach(recording.tabId);
     }
@@ -226,7 +239,9 @@ async function getLastFlow() {
 
 /**
  * content script から届いた手順を、記録中の手順に加えます。
- * 送信元が記録中のタブの、記録を始めたサイトのページであることを確認します。
+ * 送信元が記録中のタブの、操作の許可があるサイトのページであることを確認します。
+ * 記録を始めたサイト以外で記録した手順には、そのサイトを origin として付け、フローの extraOrigins に
+ * 加えます（#41）。サイトは content script から届いた値ではなく、送信元の URL から決めます。
  *
  * 確定ボタンのクリックは、クリックではなく一時停止の手順として記録し、ページにその旨を表示します（#29）。
  * 実行時に確定ボタンを押さないためです。利用者が記録中に押したクリックそのものは止めません。
@@ -247,17 +262,31 @@ export function addStep(step, sender, texts, matchedSelector) {
       sender.tab?.id !== recording.tabId ||
       sender.frameId !== 0 ||
       !sender.url ||
-      new URL(sender.url).origin !== recording.origin ||
+      !isWebUrl(sender.url) ||
       validateStep(step).length > 0 ||
       recording.steps.length >= MAX_STEPS
     ) {
       return;
     }
+    const origin = new URL(sender.url).origin;
+    const extraOrigins = recording.extraOrigins ?? [];
+    const isExtra = origin !== recording.origin;
+    if (
+      isExtra &&
+      !extraOrigins.includes(origin) &&
+      (extraOrigins.length >= MAX_EXTRA_ORIGINS ||
+        !(await chrome.permissions.contains({ origins: [`${origin}/*`] })))
+    ) {
+      return;
+    }
+    // content script から届いた origin は使いません。
+    const received = { .../** @type {Record<string, unknown>} */ (step) };
+    delete received.origin;
     // サイトごとの指定を先に確かめます。利用者が明示した指定のため、文言による判定より優先します。
     const ruled = applyStopRuleToRecordedStep(
-      /** @type {Step} */ (step),
+      /** @type {Step} */ (received),
       recording.steps.at(-1),
-      await getStopRule(recording.origin),
+      await getStopRule(origin),
       sender.url,
       typeof matchedSelector === 'string' ? matchedSelector : undefined,
     );
@@ -270,7 +299,7 @@ export function addStep(step, sender, texts, matchedSelector) {
         'サイトごとの指定に一致したため、クリックの代わりに一時停止を記録しました。実行はこの手前で止まります。';
     } else {
       const guarded = guardRecordedStep(
-        /** @type {Step} */ (step),
+        /** @type {Step} */ (received),
         Array.isArray(texts) ? texts.filter((text) => typeof text === 'string') : [],
       );
       recorded = guarded.step;
@@ -280,6 +309,12 @@ export function addStep(step, sender, texts, matchedSelector) {
       }
     }
     if (recorded) {
+      if (isExtra && PAGE_STEP_TYPES.includes(recorded.type)) {
+        recorded = /** @type {Step} */ ({ ...recorded, origin });
+        if (!extraOrigins.includes(origin)) {
+          recording.extraOrigins = [...extraOrigins, origin];
+        }
+      }
       recording.steps.push(recorded);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
     }
@@ -336,8 +371,11 @@ export async function onTabRemoved(tabId) {
 }
 
 /**
- * 記録中であることをツールバーのアイコンに表示し、記録を始めたサイトのページであれば
- * 記録用のスクリプトを読み込みます。別のサイトのページには読み込みません。
+ * 記録中であることをツールバーのアイコンに表示し、操作の許可があるサイトのページであれば
+ * 記録用のスクリプトを読み込みます。許可がないサイトのページには読み込みません。
+ * 記録を始めたサイト以外でも、許可があれば確認を出さずに記録を続けます（#41）。Chrome はサイトの許可を
+ * 保持するため、一度許可したサイトで毎回確認しないためです。表示中のページのサイトと、記録しているかを
+ * サイドパネルに知らせます。
  * @param {Recording} recording
  */
 async function attach(recording) {
@@ -345,13 +383,24 @@ async function attach(recording) {
   await chrome.action.setBadgeBackgroundColor({ tabId: recording.tabId, color: '#d93025' });
 
   const frame = await chrome.webNavigation.getFrame({ tabId: recording.tabId, frameId: 0 });
-  if (!frame || !isWebUrl(frame.url) || new URL(frame.url).origin !== recording.origin) {
+  if (!frame || !isWebUrl(frame.url)) {
+    await chrome.storage.session.remove(RECORDING_PAGE_KEY);
+    return;
+  }
+  const origin = new URL(frame.url).origin;
+  const allowed =
+    origin === recording.origin ||
+    (await chrome.permissions.contains({ origins: [`${origin}/*`] }));
+  /** @type {RecordingPage} */
+  const page = { origin, allowed };
+  await chrome.storage.session.set({ [RECORDING_PAGE_KEY]: page });
+  if (!allowed) {
     return;
   }
   try {
     // サイトごとの止める要素の指定（#54）を、記録用のスクリプトより先にページへ置きます。
     // 記録用のスクリプトは extension/shared/ を読み込めないため、値として渡します。
-    const { selectors } = await getStopRule(recording.origin);
+    const { selectors } = await getStopRule(origin);
     await chrome.scripting.executeScript({
       target: { tabId: recording.tabId, frameIds: [0] },
       func: (/** @type {string[]} */ stopSelectors) => {
@@ -369,6 +418,45 @@ async function attach(recording) {
     // 読み込みの途中でページを移動した場合などに失敗します。移動先のページで読み込み直します。
     console.warn('記録用のスクリプトを読み込めませんでした。', error);
   }
+}
+
+/**
+ * 記録中のタブで表示しているサイトでも記録を始めます（#41）。サイドパネルの［このサイトを許可して記録］で、
+ * 許可を得た後に呼び出します。記録中のタブが今そのサイトを表示していることと、許可があることを確かめます。
+ * @param {unknown} origin
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export async function allowRecordingOrigin(origin) {
+  const recording = await getRecording();
+  if (!recording) {
+    return { ok: false, error: '記録していません。' };
+  }
+  const frame = await chrome.webNavigation
+    .getFrame({ tabId: recording.tabId, frameId: 0 })
+    .catch(() => null);
+  if (
+    typeof origin !== 'string' ||
+    !frame ||
+    !isWebUrl(frame.url) ||
+    new URL(frame.url).origin !== origin
+  ) {
+    return { ok: false, error: '記録中のタブが、そのサイトのページを表示していません。' };
+  }
+  if (!(await chrome.permissions.contains({ origins: [`${origin}/*`] }))) {
+    return { ok: false, error: `${origin} を操作する許可がありません。` };
+  }
+  if (
+    origin !== recording.origin &&
+    !(recording.extraOrigins ?? []).includes(origin) &&
+    (recording.extraOrigins ?? []).length >= MAX_EXTRA_ORIGINS
+  ) {
+    return {
+      ok: false,
+      error: `記録できるサイトは、記録を始めたサイトのほかに ${MAX_EXTRA_ORIGINS} 件までです。`,
+    };
+  }
+  await attach(recording);
+  return { ok: true };
 }
 
 /**

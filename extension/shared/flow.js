@@ -14,15 +14,17 @@ import { RESERVED_NAMES, nonBuiltinReferences, validateSaveTemplate } from './sa
 import { validateInterval, validateWaitMs } from './speed.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
  * 版 3 は、版 2 に PDF の保存（savePdf）とページの文字の読み取り（extract）を加えたものです（#16）。
  * 版 4 は、版 3 に手順の間隔（interval）と待機の手順（wait）を加えたものです（#15）。
+ * 版 5 は、版 4 に追加のサイトの一覧（extraOrigins）と、手順を記録したサイト（手順の origin）を
+ * 加えたものです（#41）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -32,6 +34,18 @@ const MIN_SCHEMA_VERSION = { pause: 2, savePdf: 3, extract: 3, wait: 4 };
 
 /** interval を使える最も古い版です。 */
 const INTERVAL_MIN_SCHEMA_VERSION = 4;
+
+/** extraOrigins と手順の origin を使える最も古い版です（#41）。 */
+const ORIGINS_MIN_SCHEMA_VERSION = 5;
+
+/**
+ * 追加のサイト（extraOrigins）の件数の上限です（#41）。記録中は確認を出さずに加えるため、
+ * 多くのサブドメインを通るサイト（楽天市場など）も収まる件数にします。
+ */
+export const MAX_EXTRA_ORIGINS = 10;
+
+/** 手順を記録したサイト（origin）を持てる手順の種類です。ページを操作する手順です（#41）。 */
+export const PAGE_STEP_TYPES = ['click', 'input', 'select', 'extract'];
 
 /** 1 つのフローに含められる手順の数の上限です。保存領域を使い切ることを防ぎます。 */
 export const MAX_STEPS = 1000;
@@ -62,6 +76,7 @@ export const MAX_TEXT_LENGTH = 2000;
  * @typedef {object} ClickStep
  * @property {'click'} type
  * @property {Target} target
+ * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
  */
 
 /**
@@ -71,6 +86,7 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {Target} target
  * @property {string} [value] 入力した値
  * @property {true} [secret] パスワードなど、値を記録しない入力欄であること
+ * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
  */
 
 /**
@@ -80,6 +96,7 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {Target} target
  * @property {string[]} values 選んだ選択肢の value
  * @property {string[]} labels 選んだ選択肢の表示文字列
+ * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
  */
 
 /**
@@ -108,6 +125,7 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {'extract'} type
  * @property {Target} target
  * @property {string} name 読み取った値に付ける名前
+ * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
  */
 
 /**
@@ -128,8 +146,10 @@ export const MAX_TEXT_LENGTH = 2000;
  * @typedef {object} Flow
  * @property {number} schemaVersion 形式の版番号
  * @property {string} name フロー名
- * @property {string} origin 記録したサイトのオリジン（例：https://www.amazon.co.jp）。
- *   実行時は、このオリジンのページでだけ手順を実行します。
+ * @property {string} origin 記録を始めたサイトのオリジン（例：https://www.amazon.co.jp）。
+ *   実行時は、手順を記録したサイトのページでだけ手順を実行します。
+ * @property {string[]} [extraOrigins] 記録を始めたサイトのほかに、手順を記録したサイトの一覧です（#41）。
+ *   ログイン画面などが別のサブドメインや別のサイトにある場合に使います。版 5 で加えました。
  * @property {Param[]} [params] パラメータ（実行のたびに入力する値）の定義
  * @property {import('./speed.js').Interval} [interval] 手順と手順の間に待つ時間の範囲（ミリ秒、#15）。
  *   省略した場合は speed.js の DEFAULT_INTERVAL です。版 4 で加えました。
@@ -214,11 +234,12 @@ export function formatFlowJson(text) {
  * @param {Flow} flow
  * @returns {Flow}
  */
-export function orderFlow({ schemaVersion, name, origin, params, steps, ...rest }) {
+export function orderFlow({ schemaVersion, name, origin, extraOrigins, params, steps, ...rest }) {
   return {
     schemaVersion,
     name,
     origin,
+    ...(extraOrigins ? { extraOrigins } : {}),
     ...(params
       ? {
           params: params.map(({ name, label, type, ...paramRest }) => ({
@@ -263,6 +284,14 @@ export function validateFlow(value) {
     errors.push('origin が https:// または http:// で始まるオリジンではありません。');
   }
 
+  const originErrors = validateExtraOrigins(value);
+  errors.push(...originErrors);
+  /** 手順の origin に書けるサイトです。一覧に誤りがある場合は、手順の origin の検証を行いません。 */
+  const origins =
+    originErrors.length === 0 && typeof value.origin === 'string'
+      ? [value.origin, .../** @type {string[]} */ (value.extraOrigins ?? [])]
+      : undefined;
+
   const paramErrors = validateParams(value.params);
   errors.push(...paramErrors);
 
@@ -300,6 +329,20 @@ export function validateFlow(value) {
         errors.push(
           `steps[${index}]: ${type} の手順は、schemaVersion が ${minVersion} 以上のフローでだけ使えます。`,
         );
+      }
+      if (isRecord(step) && typeof step.origin === 'string' && PAGE_STEP_TYPES.includes(type)) {
+        if (
+          typeof value.schemaVersion === 'number' &&
+          value.schemaVersion < ORIGINS_MIN_SCHEMA_VERSION
+        ) {
+          errors.push(
+            `steps[${index}]: origin は、schemaVersion が ${ORIGINS_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+          );
+        } else if (origins && !origins.includes(step.origin)) {
+          errors.push(
+            `steps[${index}]: origin の「${step.origin}」が、フローの origin にも extraOrigins にもありません。`,
+          );
+        }
       }
       if (isRecord(step) && step.type === 'extract' && typeof step.name === 'string') {
         if (params.some((param) => param.name === step.name)) {
@@ -354,6 +397,14 @@ export function validateFlow(value) {
 export function validateStep(step) {
   if (!isRecord(step)) {
     return ['手順がオブジェクトではありません。'];
+  }
+  if (step.origin !== undefined) {
+    if (typeof step.type !== 'string' || !PAGE_STEP_TYPES.includes(step.type)) {
+      return ['origin は、click、input、select、extract の手順にだけ書けます。'];
+    }
+    if (typeof step.origin !== 'string' || !isWebOrigin(step.origin)) {
+      return ['origin が https:// または http:// で始まるオリジンではありません。'];
+    }
   }
 
   switch (step.type) {
@@ -465,6 +516,62 @@ export function templateTexts(step) {
     default:
       return [];
   }
+}
+
+/**
+ * 追加のサイトの一覧（extraOrigins）を検証します（#41）。
+ * @param {Record<string, unknown>} value フロー定義
+ * @returns {string[]}
+ */
+function validateExtraOrigins(value) {
+  const list = value.extraOrigins;
+  if (list === undefined) {
+    return [];
+  }
+  /** @type {string[]} */
+  const errors = [];
+  if (typeof value.schemaVersion === 'number' && value.schemaVersion < ORIGINS_MIN_SCHEMA_VERSION) {
+    errors.push(
+      `extraOrigins は、schemaVersion が ${ORIGINS_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+    );
+  }
+  if (!Array.isArray(list)) {
+    return [...errors, 'extraOrigins が配列ではありません。'];
+  }
+  if (list.length > MAX_EXTRA_ORIGINS) {
+    errors.push(`extraOrigins が上限の ${MAX_EXTRA_ORIGINS} 件を超えています。`);
+  }
+  list.forEach((origin, index) => {
+    if (typeof origin !== 'string' || !isWebOrigin(origin)) {
+      errors.push(
+        `extraOrigins[${index}] が https:// または http:// で始まるオリジンではありません。`,
+      );
+    } else if (origin === value.origin) {
+      errors.push(`extraOrigins[${index}] が、フローの origin と同じです。`);
+    } else if (list.indexOf(origin) !== index) {
+      errors.push(`extraOrigins[${index}] の「${origin}」が重複しています。`);
+    }
+  });
+  return errors;
+}
+
+/**
+ * フローが操作するサイトの一覧です。フローの origin と extraOrigins を合わせたものです（#41）。
+ * @param {Pick<Flow, 'origin' | 'extraOrigins'>} flow
+ * @returns {string[]}
+ */
+export function flowOrigins(flow) {
+  return [flow.origin, ...(flow.extraOrigins ?? [])];
+}
+
+/**
+ * 手順を実行してよいページのサイトです。手順の origin がない場合は、フローの origin です（#41）。
+ * @param {Pick<Flow, 'origin'>} flow
+ * @param {Step} step
+ * @returns {string}
+ */
+export function stepOrigin(flow, step) {
+  return 'origin' in step && typeof step.origin === 'string' ? step.origin : flow.origin;
 }
 
 /**
