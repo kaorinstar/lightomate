@@ -90,6 +90,10 @@
       scope[installedKey] = false;
       return false;
     }
+    if (message?.kind === 'runner/authSignals') {
+      sendResponse({ ok: true, signals: authSignals() });
+      return false;
+    }
     if (message?.kind === 'runner/inspect') {
       inspect(message.step, message.timeoutMs, message.stopSelectors).then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
@@ -112,7 +116,7 @@
    * @param {{ target: { selectors: string[], tag: string, text?: string } }} step
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
    * @param {unknown} stopSelectors サイトごとの止める要素の指定（#54）
-   * @returns {Promise<{ ok: true, texts: string[], matchedSelector?: string } | { ok: false, error: string }>}
+   * @returns {Promise<{ ok: true, texts: string[], matchedSelector?: string } | { ok: false, error: string, notFound?: true }>}
    */
   async function inspect(step, timeoutMs, stopSelectors) {
     inspected = null;
@@ -132,7 +136,7 @@
    * 手順の要素を探します。
    * @param {{ target: { selectors: string[], tag: string, text?: string } }} step
    * @param {number} timeoutMs
-   * @returns {Promise<{ ok: true, element: Element } | { ok: false, error: string }>}
+   * @returns {Promise<{ ok: true, element: Element } | { ok: false, error: string, notFound?: true }>}
    */
   async function findElement(step, timeoutMs) {
     currentStep = new AbortController();
@@ -141,8 +145,10 @@
       return { ok: false, error: '停止を指示されました。' };
     }
     if (!element) {
+      // notFound は、Service Worker がこの手順をやり直してよいことを示します（#18）。
       return {
         ok: false,
+        notFound: true,
         error: `要素が見つかりません（${Math.round(timeoutMs / 1000)} 秒待ちました）。`,
       };
     }
@@ -154,7 +160,7 @@
    * @param {{ type: string, target: { selectors: string[], tag: string, text?: string }, value?: string, values?: string[], labels?: string[] }} step
    *   値の中のパラメータは、Service Worker で置き換え済みです。
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true, text?: string } | { ok: false, error: string }>}
+   * @returns {Promise<{ ok: true, text?: string } | { ok: false, error: string, notFound?: true }>}
    */
   async function runStep(step, timeoutMs) {
     /** @type {Element} */
@@ -214,6 +220,50 @@
       default:
         return { ok: false, error: `この手順の種類（${step.type}）はページでは実行できません。` };
     }
+  }
+
+  /**
+   * ページに、認証の画面の印があるかを調べます（#18）。ページは変更しません。
+   * 止めるかどうかは、この結果と URL をもとに Service Worker が判定します（shared/run-guard.js）。
+   * 画像認証は、表示されている枠だけを数えます。見えない reCAPTCHA（size=invisible）は、多くのページに
+   * 常に置かれているため除きます。
+   * @returns {{ password: boolean, oneTimeCode: boolean, captcha: boolean, loginForm: boolean }}
+   */
+  function authSignals() {
+    const visible = (/** @type {Element} */ element) => {
+      if (element.getClientRects().length === 0) {
+        return false;
+      }
+      const style = getComputedStyle(element);
+      return style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const any = (/** @type {string} */ selector) =>
+      [...document.querySelectorAll(selector)].some(visible);
+    return {
+      password: any('input[type="password"]'),
+      oneTimeCode: any('input[autocomplete~="one-time-code"]'),
+      captcha: [
+        ...document.querySelectorAll(
+          'iframe[src*="recaptcha"], iframe[src*="hcaptcha.com"], iframe[src*="challenges.cloudflare.com"]',
+        ),
+      ].some(
+        (frame) => visible(frame) && !/[?&]size=invisible/.test(frame.getAttribute('src') ?? ''),
+      ),
+      // パスワードを次の画面で尋ねるサイト（Amazon など）の、ログインの ID の入力欄です。
+      loginForm:
+        any('input[autocomplete~="username"]') ||
+        [...document.querySelectorAll('form')].some(
+          (form) =>
+            /sign[-_]?in|log[-_]?in/i.test(
+              `${form.id} ${form.getAttribute('name') ?? ''} ${form.getAttribute('action') ?? ''}`,
+            ) &&
+            [
+              ...form.querySelectorAll(
+                'input[type="email"], input[type="text"], input:not([type])',
+              ),
+            ].some(visible),
+        ),
+    };
   }
 
   /**

@@ -21,6 +21,7 @@ import {
   requestPause,
   requestResume,
   requestStop,
+  requestStopAll,
   startRun,
 } from './runner.js';
 
@@ -34,6 +35,14 @@ chrome.sidePanel
 const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
 
 markInterruptedRuns().catch((error) => console.error('実行の状態を確認できませんでした。', error));
+
+// 緊急停止のキー（#18）です。既定は Alt+Shift+Q で、chrome://extensions/shortcuts で変えられます。
+// サイドパネルを開いていなくても、実行中と一時停止中のすべての実行を停止します。
+chrome.commands.onCommand.addListener((command) => {
+  if (command === 'emergency-stop') {
+    requestStopAll().catch((error) => console.error('実行を停止できませんでした。', error));
+  }
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // この拡張機能以外からのメッセージは受け付けません。

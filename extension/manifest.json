@@ -31,6 +31,12 @@
     "service_worker": "background/service-worker.js",
     "type": "module"
   },
+  "commands": {
+    "emergency-stop": {
+      "suggested_key": { "default": "Alt+Shift+Q" },
+      "description": "実行中のフローをすべて停止する"
+    }
+  },
   "permissions": ["sidePanel", "storage", "scripting", "webNavigation", "debugger", "downloads"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "content_security_policy": {
