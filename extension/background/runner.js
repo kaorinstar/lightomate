@@ -22,7 +22,7 @@ import {
 } from '../shared/flow-list.js';
 import { historyEntryFromRun } from '../shared/history.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
-import { confirmPauseNote, findConfirmText } from '../shared/purchase-guard.js';
+import { confirmPauseNote, findConfirm } from '../shared/purchase-guard.js';
 import { findStopPath, stopRuleNote } from '../shared/stop-rules.js';
 import { DEFAULT_SAVE_PATH, buildSavePath, builtinValues } from '../shared/save-path.js';
 import { pickDelay, stepInterval } from '../shared/speed.js';
@@ -1354,11 +1354,16 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
     const texts = Array.isArray(inspected.texts)
       ? inspected.texts.filter((/** @type {unknown} */ text) => typeof text === 'string')
       : [];
-    const confirmText = findConfirmText([
-      ...texts,
+    // 表示の文字は翻訳で置き換わるため、翻訳で変わらない手がかり（要素の属性と、記録したセレクター）でも
+    // 判定します（#97）。
+    const keys = Array.isArray(inspected.keys)
+      ? inspected.keys.filter((/** @type {unknown} */ key) => typeof key === 'string')
+      : [];
+    const confirmText = findConfirm(
+      [...texts, step.target.label, ...(step.target.text ? [step.target.text] : [])],
+      [...keys, ...step.target.selectors],
       step.target.label,
-      ...(step.target.text ? [step.target.text] : []),
-    ]);
+    );
     if (confirmText !== undefined) {
       throw new Halted(confirmPauseNote(confirmText));
     }

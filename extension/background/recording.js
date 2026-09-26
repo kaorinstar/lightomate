@@ -253,9 +253,10 @@ async function getLastFlow() {
  * @param {chrome.runtime.MessageSender} sender
  * @param {unknown} texts クリックした要素の文言（content/element-text.js）
  * @param {unknown} matchedSelector クリックした要素が一致した、止める要素の指定
+ * @param {unknown} [keys] クリックした要素の、翻訳で変わらない手がかり（content/element-text.js、#97）
  * @returns {Promise<void>}
  */
-export function addStep(step, sender, texts, matchedSelector) {
+export function addStep(step, sender, texts, matchedSelector, keys) {
   return enqueue(async () => {
     const recording = await getRecording();
     if (
@@ -304,6 +305,7 @@ export function addStep(step, sender, texts, matchedSelector) {
       const guarded = guardRecordedStep(
         /** @type {Step} */ (received),
         Array.isArray(texts) ? texts.filter((text) => typeof text === 'string') : [],
+        Array.isArray(keys) ? keys.filter((key) => typeof key === 'string') : [],
       );
       recorded = guarded.step;
       if (guarded.confirmText !== undefined) {
