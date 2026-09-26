@@ -14,6 +14,7 @@ import {
 } from '../common/flow-store.js';
 import { requestPermission } from '../common/permissions.js';
 import { describeStep, formatDateTime, runStatusText } from '../shared/describe.js';
+import { flattenSteps, stepAt } from '../shared/control-flow.js';
 import { flowOrigins, orderFlow } from '../shared/flow.js';
 import {
   RUN_KEY_PREFIX,
@@ -640,7 +641,8 @@ async function renderRuns(runs) {
       card.append(body);
 
       const status = document.createElement('p');
-      const text = runStatusText(run, stored?.flow.steps[run.stepIndex]);
+      // stepIndex は、if と forEach の内側を展開した通し番号です（#6）。
+      const text = runStatusText(run, stored && stepAt(stored.flow.steps, run.stepIndex));
       if (run.status === 'failed') {
         card.classList.add('lm-card-failed');
         showNotice(status, text, 'error');
@@ -810,7 +812,7 @@ function flowItem(stored) {
   name.textContent = stored.flow.name;
   const detail = document.createElement('div');
   detail.className = 'lm-sub';
-  detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
+  detail.textContent = `手順 ${flattenSteps(stored.flow.steps).length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
   const text = document.createElement('div');
   text.className = 'lm-flow-text';
   text.append(name, detail);

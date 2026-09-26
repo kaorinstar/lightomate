@@ -1,5 +1,6 @@
 // 手順を、人が読むための 1 行の説明にします。サイドパネルと設定画面で使います。
 
+import { DEFAULT_FOREACH_MAX, itemText } from './control-flow.js';
 import { DEFAULT_SAVE_PATH } from './save-path.js';
 
 /** @typedef {import('./flow.js').Step} Step */
@@ -28,6 +29,10 @@ export function describeStep(step) {
       return `読み取り：${step.target.label} → {{${step.name}}}`;
     case 'wait':
       return `${step.ms / 1000} 秒待つ`;
+    case 'if':
+      return `条件：「${step.condition.target.label}」が${step.condition.exists ? 'ある' : 'ない'}場合`;
+    case 'forEach':
+      return `繰り返し：「${step.items.label}」の各行（上限 ${step.max ?? DEFAULT_FOREACH_MAX} 件）`;
   }
 }
 
@@ -35,12 +40,16 @@ export function describeStep(step) {
  * 実行の状態の説明です。サイドパネルの「フローの実行」に表示します。
  * @param {{
  *   flowName: string, status: string, stepIndex: number, total: number, error?: string, note?: string,
+ *   items?: number[],
  * }} run 実行の状態（background/runner.js の RunState）
  * @param {Step | undefined} step 実行中、または止まった手順。一時停止中は、次に実行する手順です。
  * @returns {string}
  */
 export function runStatusText(run, step) {
-  const where = `手順 ${run.stepIndex + 1} / ${run.total}${step ? `（${describeStep(step)}）` : ''}`;
+  // 繰り返しの中では、何件目の行かを添えます（#6）。
+  const item = itemText(run.items);
+  const number = `手順 ${run.stepIndex + 1} / ${run.total}${item ? `（${item}）` : ''}`;
+  const where = `${number}${step ? `（${describeStep(step)}）` : ''}`;
   switch (run.status) {
     case 'running':
       return `「${run.flowName}」を実行中です。${where}`;
@@ -48,7 +57,7 @@ export function runStatusText(run, step) {
       return `「${run.flowName}」は、実行中の手順が終わった時点で一時停止します。${where}`;
     case 'paused': {
       const next = step ? `（次の手順：${describeStep(step)}）` : '';
-      return `「${run.flowName}」は 手順 ${run.stepIndex + 1} / ${run.total} の前で一時停止しています${next}。${run.note ?? ''}続ける場合は［再開］を押してください。`;
+      return `「${run.flowName}」は ${number} の前で一時停止しています${next}。${run.note ?? ''}続ける場合は［再開］を押してください。`;
     }
     case 'stopping':
       return `「${run.flowName}」を停止しています。${where}`;
@@ -58,7 +67,7 @@ export function runStatusText(run, step) {
       return `「${run.flowName}」の実行を停止しました。完了した手順は ${run.total} 件中 ${run.stepIndex} 件です。`;
     case 'halted':
       // 止まった理由（error）に手順の説明が含まれるため、手順の番号だけを示します。
-      return `「${run.flowName}」の実行は 手順 ${run.stepIndex + 1} / ${run.total} で止まりました。${run.error ?? ''}`;
+      return `「${run.flowName}」の実行は ${number} で止まりました。${run.error ?? ''}`;
     default:
       return `「${run.flowName}」の実行は ${where} で止まりました。${run.error ?? ''}`;
   }
@@ -87,6 +96,10 @@ export function stepKindLabel(step) {
       return '読み取り';
     case 'wait':
       return '待機';
+    case 'if':
+      return '条件';
+    case 'forEach':
+      return '繰り返し';
   }
 }
 

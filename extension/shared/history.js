@@ -3,6 +3,8 @@
 // 実行するときに入力した値（パラメータと、パスワードなど値を記録していない欄の値）は記録しません。
 // 止まった理由の説明には、値を当てはめた URL などが含まれることがあるため、記録する前に伏せます。
 
+import { itemText } from './control-flow.js';
+
 /**
  * 実行履歴の 1 件です。
  * @typedef {object} HistoryEntry
@@ -16,6 +18,7 @@
  *   done は成功、failed は失敗、stopped は中止（利用者が停止）、halted は一時停止（確定の手前など）です。
  * @property {number} total 手順の数
  * @property {number} [stepNumber] 止まった手順の番号（1 から数えます）。成功した場合はありません
+ * @property {number[]} [items] 繰り返しの中で止まった場合の、段ごとの何件目の行か（1 から数えます、#6）
  * @property {string} [reason] 止まった理由。入力した値は伏せてあります
  * @property {string[]} files 保存したファイルのパス。ファイルを保存する手順（#16）で記録します
  */
@@ -62,7 +65,7 @@ export function withoutHistoryEntries(history, runIds) {
  * 終わった実行の状態から、履歴の 1 件を作ります。止まった理由の中の入力した値は伏せます。
  * @param {{
  *   runId: string, flowId: string, flowName: string, origin: string, startedAt: string,
- *   status: string, stepIndex: number, total: number, error?: string,
+ *   status: string, stepIndex: number, total: number, error?: string, items?: number[],
  * }} run 実行の状態（background/runner.js の RunState）
  * @param {string} endedAt 終了した日時（ISO 8601）
  * @param {Iterable<string>} values 伏せる値
@@ -89,6 +92,9 @@ export function historyEntryFromRun(run, endedAt, values, files = []) {
   if (status !== 'done') {
     // 停止（stopped）の stepIndex は、停止した時点で完了していた手順の数です。次の手順で止まったことになります。
     entry.stepNumber = Math.min(run.stepIndex + 1, run.total);
+    if (run.items && run.items.length > 0) {
+      entry.items = [...run.items];
+    }
   }
   if (status !== 'done' && run.error) {
     entry.reason = redactValues(run.error, values);
@@ -133,12 +139,16 @@ const CSV_COLUMNS = /** @type {const} */ ([
 ]);
 
 /**
- * 止まった手順の表示です（例：「3 / 5」）。成功した場合は空の文字列です。
+ * 止まった手順の表示です（例：「3 / 5」、繰り返しの中では「3 / 5（2 件目）」）。成功した場合は空の文字列です。
  * @param {HistoryEntry} entry
  * @returns {string}
  */
 export function stepText(entry) {
-  return entry.stepNumber === undefined ? '' : `${entry.stepNumber} / ${entry.total}`;
+  if (entry.stepNumber === undefined) {
+    return '';
+  }
+  const item = itemText(entry.items);
+  return `${entry.stepNumber} / ${entry.total}${item ? `（${item}）` : ''}`;
 }
 
 /**

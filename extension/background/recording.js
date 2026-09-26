@@ -17,6 +17,7 @@ import {
 import { guardRecordedStep } from '../shared/purchase-guard.js';
 import { applyStopRuleToRecordedStep } from '../shared/stop-rules.js';
 import { getStopRule } from '../common/stop-rules-store.js';
+import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -264,6 +265,8 @@ export function addStep(step, sender, texts, matchedSelector) {
       !sender.url ||
       !isWebUrl(sender.url) ||
       validateStep(step).length > 0 ||
+      // 条件分岐と繰り返し（#6）は記録では作りません。ページから届いた場合も受け付けません。
+      CONTROL_STEP_TYPES.includes(String(/** @type {{ type?: unknown }} */ (step).type)) ||
       recording.steps.length >= MAX_STEPS
     ) {
       return;

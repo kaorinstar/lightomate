@@ -2,6 +2,7 @@
 // サイドパネルと管理画面の両方から使います（#43）。chrome.* は使いません。
 // フォームを組み立てる関数は、渡された要素の ownerDocument を使って部品を作ります。
 
+import { flattenSteps, stepAt } from './control-flow.js';
 import { isWebUrl } from './flow.js';
 import {
   defaultValue,
@@ -20,11 +21,14 @@ export const NO_FIRST_PAGE = '最初の手順がページを開く手順では�
 
 /**
  * 値を記録していない入力欄（パスワードなど）の手順の番号を返します。
+ * 番号は、if と forEach の内側を展開した通し番号です（#6）。入れ子のないフローでは steps の添字と同じです。
  * @param {Flow} flow
  * @returns {number[]}
  */
 export function secretStepIndexes(flow) {
-  return flow.steps.flatMap((step, index) => (step.type === 'input' && step.secret ? [index] : []));
+  return flattenSteps(flow.steps).flatMap(({ step, number }) =>
+    step.type === 'input' && step.secret ? [number] : [],
+  );
 }
 
 /**
@@ -112,13 +116,13 @@ export function buildRunFields(
   });
 
   for (const index of secretSteps) {
-    const step = flow.steps[index];
+    const step = stepAt(flow.steps, index);
     const control = document.createElement('input');
     control.className = 'form-control';
     control.type = 'password';
     control.name = `secret:${index}`;
     control.autocomplete = 'off';
-    const label = step.type === 'input' ? step.target.label : '';
+    const label = step?.type === 'input' ? step.target.label : '';
     fields.push(field(document, `${label}（手順 ${index + 1}）`, control, nextId()));
   }
   return fields;

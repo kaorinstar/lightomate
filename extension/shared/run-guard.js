@@ -42,22 +42,6 @@ export function authPauseNoteForPage(url) {
 }
 
 /**
- * 手順の前に表示しているはずのページの URL を返します。指定した手順より前の、最後のページの移動の手順の URL です。
- * @param {Step[]} steps
- * @param {number} index 実行する手順の番号
- * @returns {string | undefined}
- */
-export function expectedPageUrl(steps, index) {
-  for (let i = Math.min(index, steps.length) - 1; i >= 0; i -= 1) {
-    const step = steps[i];
-    if (step.type === 'navigate') {
-      return step.url;
-    }
-  }
-  return undefined;
-}
-
-/**
  * 認証の画面のため、手順を行わずに一時停止するかを判定します。
  * 次の 2 つを両方満たす場合に止めます。
  * - ページに認証の画面の印（パスワードの入力欄、確認コードの入力欄、画像認証の枠、ログインの ID の

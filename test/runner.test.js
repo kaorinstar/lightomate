@@ -7,6 +7,7 @@ import {
   resolveSteps,
   samePage,
 } from '../extension/background/runner.js';
+import { compileSteps } from '../extension/shared/control-flow.js';
 
 const target = { selectors: ['#q'], tag: 'input', label: '検索' };
 
@@ -85,8 +86,9 @@ test('続けて記録されたページの移動は、最後の移動の手順�
     click,
     page('/checkout'),
   ]);
-  assert.equal(lastPageNavigationIndex(steps, 1), 2);
-  assert.equal(lastPageNavigationIndex(steps, 4), 4);
+  const program = compileSteps(steps);
+  assert.equal(lastPageNavigationIndex(program, 1), 2);
+  assert.equal(lastPageNavigationIndex(program, 4), 4);
 });
 
 test('利用者の操作による移動は、まとめる対象に含めない', () => {
@@ -94,7 +96,19 @@ test('利用者の操作による移動は、まとめる対象に含めない',
     { type: 'navigate', cause: 'page', url: 'https://www.example.com/a' },
     { type: 'navigate', cause: 'user', url: 'https://www.example.com/b' },
   ]);
-  assert.equal(lastPageNavigationIndex(steps, 0), 0);
+  assert.equal(lastPageNavigationIndex(compileSteps(steps), 0), 0);
+});
+
+test('if の境目を越えては、ページの移動をまとめない（#6）', () => {
+  const steps = /** @type {import('../extension/shared/flow.js').Step[]} */ ([
+    { type: 'navigate', cause: 'page', url: 'https://www.example.com/a' },
+    {
+      type: 'if',
+      condition: { target, exists: true },
+      then: [{ type: 'navigate', cause: 'page', url: 'https://www.example.com/b' }],
+    },
+  ]);
+  assert.equal(lastPageNavigationIndex(compileSteps(steps), 0), 0);
 });
 
 test('移動の前と異なるページの読み込みが完了した時点で、移動が終わったと判定する', () => {
@@ -163,4 +177,45 @@ test('値を記録していない欄の手順も、手順を記録したサイ�
     value: 'pass',
     origin: 'https://login.example.com',
   });
+});
+
+test('if と forEach の内側の手順にも値を当てはめ、値を記録していない欄は通し番号で受け取る（#6）', () => {
+  const secret = { type: 'input', target: { ...target, label: 'パスワード' }, secret: true };
+  /** @type {import('../extension/shared/flow.js').Flow} */
+  const nested = {
+    ...flow,
+    schemaVersion: 6,
+    steps: [
+      flow.steps[0],
+      {
+        type: 'if',
+        condition: { target, exists: true },
+        then: [/** @type {import('../extension/shared/flow.js').Step} */ (secret)],
+        else: [{ type: 'input', target, value: '{{q}}' }],
+      },
+      {
+        type: 'forEach',
+        items: { selectors: ['tr'], tag: 'tr', label: '行' },
+        steps: [{ type: 'input', target: { ...target, scope: 'item' }, value: '{{q}}' }],
+      },
+    ],
+  };
+  const result = resolveSteps(nested, { q: 'ねじ' }, { 2: 'pass' }, new Date(2026, 8, 24));
+  assert.ok(result.ok);
+  assert.deepEqual(result.steps.slice(1), [
+    {
+      type: 'if',
+      condition: { target, exists: true },
+      then: [{ type: 'input', target: { ...target, label: 'パスワード' }, value: 'pass' }],
+      else: [{ type: 'input', target, value: 'ねじ' }],
+    },
+    {
+      type: 'forEach',
+      items: { selectors: ['tr'], tag: 'tr', label: '行' },
+      steps: [{ type: 'input', target: { ...target, scope: 'item' }, value: 'ねじ' }],
+    },
+  ]);
+  const missing = resolveSteps(nested, { q: 'ねじ' }, {}, new Date(2026, 8, 24));
+  assert.equal(missing.ok, false);
+  assert.match(missing.ok ? '' : missing.error, /手順 3（パスワード）/);
 });

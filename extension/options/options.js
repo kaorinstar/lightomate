@@ -25,6 +25,7 @@ import {
 } from '../common/stop-rules-store.js';
 import { listHistory, onHistoryChanged } from '../common/history-store.js';
 import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
+import { flattenSteps, outlineSteps } from '../shared/control-flow.js';
 import {
   flowOrigins,
   formatFlowJson,
@@ -1345,12 +1346,14 @@ function renderDetail({ flow, createdAt, updatedAt }) {
   elements.editor.dataset.origins = JSON.stringify(flowOrigins(flow));
 
   const params = flow.params ?? [];
-  const secrets = flow.steps.flatMap((step, index) =>
-    step.type === 'input' && step.secret ? [{ step, index }] : [],
+  // 手順の番号と件数は、if と forEach の内側を展開した通し番号で数えます（#6）。
+  const flattened = flattenSteps(flow.steps);
+  const secrets = flattened.flatMap(({ step, number }) =>
+    step.type === 'input' && step.secret ? [{ step, index: number }] : [],
   );
   const inputs = params.length + secrets.length;
   elements.editorMeta.textContent = [
-    `手順 ${flow.steps.length} 件`,
+    `手順 ${flattened.length} 件`,
     inputs > 0 ? `実行時に入力 ${inputs} 項目` : '',
     `作成 ${formatDateTime(createdAt)}`,
     `更新 ${formatDateTime(updatedAt)}`,
@@ -1369,21 +1372,33 @@ function renderDetail({ flow, createdAt, updatedAt }) {
     ),
   );
 
-  elements.stepCount.textContent = String(flow.steps.length);
+  elements.stepCount.textContent = String(flattened.length);
   elements.steps.replaceChildren(
-    ...flow.steps.map((step) => {
+    ...outlineSteps(flow.steps).map((row) => {
       const kind = document.createElement('span');
       kind.className = 'lm-kind';
-      kind.textContent = stepKindLabel(step);
       const text = document.createElement('span');
       text.className = 'lm-step-text';
-      // 種類は前に表示しているため、説明の先頭の「クリック：」などは省きます。
-      const description = describeStep(step);
-      text.textContent = description.includes('：')
-        ? description.replace(/^[^：]+：/, '')
-        : 'ここで止まります。続きは人が操作します。';
       const item = document.createElement('li');
-      item.className = step.type === 'pause' ? 'lm-step lm-step-pause' : 'lm-step';
+      item.className = 'lm-step';
+      item.style.setProperty('--lm-depth', String(row.depth));
+      if (row.kind === 'else') {
+        // if の条件を満たさない場合の手順の始まりです。番号は付けません。
+        kind.textContent = 'それ以外';
+        text.textContent = '条件を満たさない場合';
+      } else {
+        const { step } = row;
+        item.dataset.number = String(row.number + 1);
+        kind.textContent = stepKindLabel(step);
+        // 種類は前に表示しているため、説明の先頭の「クリック：」などは省きます。
+        const description = describeStep(step);
+        text.textContent = description.includes('：')
+          ? description.replace(/^[^：]+：/, '')
+          : 'ここで止まります。続きは人が操作します。';
+        if (step.type === 'pause') {
+          item.classList.add('lm-step-pause');
+        }
+      }
       item.append(kind, text);
       return item;
     }),
@@ -1429,7 +1444,7 @@ function flowListItem(stored) {
 
   const detail = document.createElement('div');
   detail.className = 'lm-sub';
-  detail.textContent = `手順 ${stored.flow.steps.length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
+  detail.textContent = `手順 ${flattenSteps(stored.flow.steps).length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
   const button = listButton(stored.flow.name, detail);
   button.className = 'list-group-item-action lm-flow-open';
   button.addEventListener('click', () => select(stored.id));

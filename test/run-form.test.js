@@ -109,3 +109,25 @@ test('入力フォームの値を、パラメータと、値を記録してい�
     { params: { q: 'ねじ' }, secrets: { 2: 'pass' } },
   );
 });
+
+test('値を記録していない入力欄の番号は、if と forEach の内側を展開した通し番号にする（#6）', () => {
+  const secret = {
+    type: 'input',
+    target: { selectors: ['#p'], tag: 'input', label: 'パスワード' },
+    secret: true,
+  };
+  const nested = /** @type {import('../extension/shared/flow.js').Flow} */ ({
+    ...flow,
+    schemaVersion: 6,
+    steps: [
+      flow.steps[0],
+      {
+        type: 'if',
+        condition: { target: secret.target, exists: true },
+        then: [secret],
+      },
+      secret,
+    ],
+  });
+  assert.deepEqual(secretStepIndexes(nested), [2, 3]);
+});

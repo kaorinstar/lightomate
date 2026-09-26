@@ -30,14 +30,23 @@ import {
   AUTH_PAUSE_NOTE,
   MAX_RETRIES,
   authPauseNoteForPage,
-  expectedPageUrl,
   isRetryableFailure,
   shouldPauseForAuth,
 } from '../shared/run-guard.js';
 import { getStopRule } from '../common/stop-rules-store.js';
+import {
+  DEFAULT_FOREACH_MAX,
+  advance,
+  compileSteps,
+  displayNumber,
+  flattenSteps,
+  itemScope,
+} from '../shared/control-flow.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
+/** @typedef {import('../shared/control-flow.js').Instruction} Instruction */
+/** @typedef {import('../shared/control-flow.js').LoopFrame} LoopFrame */
 
 /**
  * 実行の状態です。サイドパネルが表示に使います。値は含めません。
@@ -51,7 +60,9 @@ import { getStopRule } from '../common/stop-rules-store.js';
  * @property {number} tabId 実行しているタブ
  * @property {number} stepIndex 実行中の手順の番号（0 から数えます）。完了後は最後の手順の番号、
  *   失敗後は失敗した手順の番号、停止後は停止した時点で完了していた手順の数です。
- * @property {number} total 手順の数
+ *   番号は、if と forEach の内側を展開した通し番号です（#6）。
+ * @property {number} total 手順の数。if と forEach の内側の手順も数えます
+ * @property {number[]} [items] 繰り返しの中の場合の、段ごとの何件目の行か（1 から数えます、#6）
  * @property {'running' | 'stopping' | 'pausing' | 'paused' | 'done' | 'failed' | 'stopped' | 'halted'} status
  *   pausing は［一時停止］を押され、実行中の手順が終わるのを待っている状態、paused は一時停止中です（#37）。
  *   一時停止中の stepIndex は、再開したときに実行する手順の番号です。
@@ -63,6 +74,12 @@ import { getStopRule } from '../common/stop-rules-store.js';
 
 /** 要素が表示されるまで待つ上限です。 */
 const ELEMENT_TIMEOUT_MS = 10_000;
+
+/**
+ * if の条件の要素と、forEach の行を待つ上限です（#6）。要素がないことも条件になるため、
+ * 手順の要素を待つ上限（10 秒）より短くします。
+ */
+const CONDITION_TIMEOUT_MS = 3_000;
 
 /** ページの移動と読み込みを待つ上限です。 */
 const NAVIGATION_TIMEOUT_MS = 30_000;
@@ -282,7 +299,7 @@ export async function startRun(flowId, paramInput, secretInput) {
       origins,
       tabId,
       stepIndex: 0,
-      total: resolved.steps.length,
+      total: flattenSteps(resolved.steps).length,
       status: 'running',
       startedAt: new Date().toISOString(),
     });
@@ -384,60 +401,77 @@ export function resolveSteps(flow, paramInput, secretInput, now) {
     return { ok: false, error: errors.join(' ') };
   }
 
-  /** @type {Step[]} */
-  const steps = [];
-  for (const [index, step] of flow.steps.entries()) {
-    switch (step.type) {
-      case 'navigate': {
-        const url = renderTemplate(step.url, values);
-        // ページの操作による移動（転送など）は、移動が終わるのを待つだけで、ページを操作しないため、
-        // 行き先のサイトを問いません（#41）。ログイン画面などが別のサイトにあるサイトのためです。
-        // 拡張機能が自ら開く移動（利用者の操作による移動）は、フローのサイトの一覧に限ります。
-        if (!isWebUrl(url)) {
-          return {
-            ok: false,
-            error: `手順 ${index + 1} の移動先（${url}）が、https:// または http:// で始まる URL ではありません。`,
-          };
+  /** 手順の通し番号です。if と forEach の内側を、flattenSteps と同じ順に数えます（#6）。 */
+  let number = 0;
+  /**
+   * @param {Step[]} list
+   * @returns {Step[]}
+   */
+  const resolveList = (list) =>
+    list.map((step) => {
+      const index = number;
+      number += 1;
+      switch (step.type) {
+        case 'navigate': {
+          const url = renderTemplate(step.url, values);
+          // ページの操作による移動（転送など）は、移動が終わるのを待つだけで、ページを操作しないため、
+          // 行き先のサイトを問いません（#41）。ログイン画面などが別のサイトにあるサイトのためです。
+          // 拡張機能が自ら開く移動（利用者の操作による移動）は、フローのサイトの一覧に限ります。
+          if (!isWebUrl(url)) {
+            throw new ResolveError(
+              `手順 ${index + 1} の移動先（${url}）が、https:// または http:// で始まる URL ではありません。`,
+            );
+          }
+          if (step.cause === 'user' && !flowOrigins(flow).includes(new URL(url).origin)) {
+            throw new ResolveError(
+              `手順 ${index + 1} の移動先（${url}）が、フローのサイト（${flowOrigins(flow).join('、')}）ではありません。`,
+            );
+          }
+          return { ...step, url };
         }
-        if (step.cause === 'user' && !flowOrigins(flow).includes(new URL(url).origin)) {
-          return {
-            ok: false,
-            error: `手順 ${index + 1} の移動先（${url}）が、フローのサイト（${flowOrigins(flow).join('、')}）ではありません。`,
-          };
-        }
-        steps.push({ ...step, url });
-        break;
-      }
-      case 'input': {
-        if (step.secret) {
-          const value = secretInput[String(index)];
-          if (!value) {
+        case 'input': {
+          if (step.secret) {
+            const value = secretInput[String(index)];
+            if (!value) {
+              throw new ResolveError(
+                `手順 ${index + 1}（${step.target.label}）の値を入力してください。`,
+              );
+            }
+            // 手順を記録したサイト（#41）は残します。ログイン画面のパスワードを、そのサイトでだけ入力するためです。
             return {
-              ok: false,
-              error: `手順 ${index + 1}（${step.target.label}）の値を入力してください。`,
+              type: 'input',
+              target: step.target,
+              value,
+              ...(step.origin ? { origin: step.origin } : {}),
             };
           }
-          // 手順を記録したサイト（#41）は残します。ログイン画面のパスワードを、そのサイトでだけ入力するためです。
-          steps.push({
-            type: 'input',
-            target: step.target,
-            value,
-            ...(step.origin ? { origin: step.origin } : {}),
-          });
-        } else {
-          steps.push({ ...step, value: renderTemplate(step.value ?? '', values) });
+          return { ...step, value: renderTemplate(step.value ?? '', values) };
         }
-        break;
+        case 'select':
+          return { ...step, values: step.values.map((value) => renderTemplate(value, values)) };
+        case 'if': {
+          const then = resolveList(step.then);
+          return { ...step, then, ...(step.else ? { else: resolveList(step.else) } : {}) };
+        }
+        case 'forEach':
+          return { ...step, steps: resolveList(step.steps) };
+        default:
+          return step;
       }
-      case 'select':
-        steps.push({ ...step, values: step.values.map((value) => renderTemplate(value, values)) });
-        break;
-      default:
-        steps.push(step);
+    });
+
+  try {
+    return { ok: true, steps: resolveList(flow.steps) };
+  } catch (error) {
+    if (error instanceof ResolveError) {
+      return { ok: false, error: error.message };
     }
+    throw error;
   }
-  return { ok: true, steps };
 }
+
+/** resolveSteps で、手順に値を当てはめられなかったことを示す誤りです。 */
+class ResolveError extends Error {}
 
 /**
  * 実行するタブを用意します。最初の手順がページを開く手順であれば、新しいタブで開きます。
@@ -464,6 +498,10 @@ async function openTab(flow, steps) {
 
 /**
  * 手順を順に実行します。
+ *
+ * 入れ子の手順（if と forEach、#6）は、compileSteps で平らな命令の一覧に変換してから実行します。
+ * 命令の番号（pc）と繰り返しの記録（frames）はこの関数の変数に置きます。入力した値と同じく、
+ * Service Worker が停止した場合は実行を続けられず、中断として記録するためです。
  * @param {Flow} flow
  * @param {Step[]} steps パラメータを当てはめた手順
  * @param {number} tabId
@@ -471,80 +509,151 @@ async function openTab(flow, steps) {
  * @param {Record<string, string>} pathValues PDF の保存先に埋め込む値。読み取った値を加えていきます
  */
 async function runSteps(flow, steps, tabId, runId, pathValues) {
-  let index = 0;
+  const program = compileSteps(steps);
+  const total = flattenSteps(steps).length;
+  let pc = 0;
+  /** @type {(LoopFrame & { documentId?: string })[]} */
+  let frames = [];
   /**
    * 直前の手順を始める前に表示していたページの識別子です。ページの操作による移動の手順で、
    * 新しいページに切り替わったかを判定するために使います（#51）。
    * @type {string | undefined}
    */
   let documentBefore;
+  /**
+   * 最後に行ったページの移動の手順の移動先です。手順の前に表示しているはずのページとして、
+   * 認証の画面の判定に使います（#18）。条件分岐で飛ばした手順を含めないよう、実行した順に記録します。
+   * @type {string | undefined}
+   */
+  let expectedUrl;
   /** 実行を終えた後も、ページの枠とアイコンで「ここから手で操作する」ことを示すか（#13）。 */
   let handOver = false;
+  /** サイドパネルと実行履歴に表示する、現在の位置です。 */
+  const position = () => ({
+    stepIndex: displayNumber(program, pc, frames, total),
+    items: frames.length > 0 ? frames.map((frame) => frame.index + 1) : undefined,
+  });
   try {
-    while (index < steps.length) {
+    while (pc < program.length) {
+      const instruction = program[pc];
+      if (instruction.op === 'jump') {
+        ({ pc, frames } = advance(program, pc, frames));
+        continue;
+      }
+      if (instruction.op === 'next') {
+        const frame = frames.at(-1);
+        if (frame && frame.index + 1 < frame.count) {
+          await throwIfLoopPageChanged(tabId, frame.documentId);
+        }
+        ({ pc, frames } = advance(program, pc, frames));
+        continue;
+      }
+
       await throwIfStopRequested(runId);
       if (await isPauseRequested(runId)) {
-        await pauseRun(runId, flow, tabId, index);
+        await pauseRun(runId, flow, tabId, position());
       }
-      await updateRunState(runId, { stepIndex: index });
+      await updateRunState(runId, position());
       // タブのページが移動すると、Chrome はそのタブ用のアイコンの文字を消します。手順ごとに設定し直します。
       await showRunBadge(tabId);
 
-      const step = steps[index];
       try {
+        if (instruction.op === 'if') {
+          // 条件の要素を探すだけで、ページは操作しません（#6）。
+          const { condition } = instruction.step;
+          const { response } = await withRetry(runId, flow, () =>
+            readPage(runId, flow, tabId, {
+              kind: 'runner/exists',
+              target: condition.target,
+              scope: itemScope(program, frames),
+            }),
+          );
+          ({ pc, frames } = advance(program, pc, frames, response.exists === condition.exists));
+          continue;
+        }
+        if (instruction.op === 'forEach') {
+          const { items } = instruction.step;
+          const { documentId, response } = await withRetry(runId, flow, () =>
+            readPage(runId, flow, tabId, {
+              kind: 'runner/count',
+              items,
+              scope: itemScope(program, frames),
+            }),
+          );
+          const count = typeof response.count === 'number' ? response.count : 0;
+          const max = instruction.step.max ?? DEFAULT_FOREACH_MAX;
+          if (count > max) {
+            throw new Error(
+              `「${items.label}」の行が ${count} 件あり、繰り返しの上限（${max} 件）を超えています。` +
+                'フローの forEach の max を増やすか、行の指定を見直してください。',
+            );
+          }
+          ({ pc, frames } = advance(program, pc, frames, count));
+          if (count > 0) {
+            // 繰り返しの中でページが移動していないかを、この識別子と比べて確かめます。
+            frames = [...frames.slice(0, -1), { ...frames[frames.length - 1], documentId }];
+          }
+          continue;
+        }
+
+        const { step } = instruction;
         if (step.type === 'navigate' && step.cause === 'page') {
           // ページの操作による移動は、直前のクリックなどの結果です。新しいページの読み込みが
           // 終わるのを待ちます。移動先の URL は比べません。サイトが記録時と異なる画面に転送する
           // ことがあるためです（#51）。想定と異なるページに着いた場合は、次の手順の要素が
           // 見つからずに止まります。転送が続いて記録された移動は、まとめて 1 回の移動として扱います。
           await waitForNewPage(runId, tabId, documentBefore, step.url);
-          index = lastPageNavigationIndex(steps, index);
+          pc = lastPageNavigationIndex(program, pc);
+          const last = program[pc];
           documentBefore = await getDocumentId(tabId);
-          // ログインの有効期限切れなどで、認証の画面に転送されていないかを調べます（#18）。
-          await checkAuthAfterNavigation(runId, flow, tabId, steps[index], index);
+          if (last.op === 'step' && last.step.type === 'navigate') {
+            expectedUrl = last.step.url;
+            // ログインの有効期限切れなどで、認証の画面に転送されていないかを調べます（#18）。
+            await checkAuthAfterNavigation(runId, flow, tabId, last.step, pc);
+          }
         } else if (step.type === 'wait') {
           await waitWithStopCheck(runId, step.ms);
         } else if (step.type === 'pause') {
           // 最後の手順の場合は、再開しても続ける手順がないため、これまでどおり実行を終えます。
-          if (index === steps.length - 1) {
+          if (pc === program.length - 1) {
             throw new Halted(step.note ?? '一時停止の手順です。以降の操作は手で行ってください。');
           }
           // 止まる前のページの識別子（documentBefore）は変えません。止まっている間に人がページを
           // 移動していれば、次の「ページの操作による移動」の手順は待たずに進みます。
-          index += 1;
-          await pauseRun(runId, flow, tabId, index, step.note);
+          ({ pc, frames } = advance(program, pc, frames));
+          await pauseRun(runId, flow, tabId, position(), step.note);
           continue;
         } else if (step.type === 'navigate') {
           const shownBefore = await getDocumentId(tabId);
-          if (index > 0) {
+          const first = pc === 0;
+          if (!first) {
             await chrome.tabs.update(tabId, { url: step.url });
           }
+          expectedUrl = step.url;
           // 移動先ではなく認証の画面に転送された場合は、30 秒待たずに一時停止します（#18）。
           // 移動する前から表示していたページは調べません。ログインの画面から移動する場合に、
           // 移動前のログインの画面で止まらないようにするためです。
+          const navigatePc = pc;
           await waitForLoad(
             runId,
             tabId,
             (url) => samePage(url, step.url),
             step.url,
             (documentId) =>
-              documentId === shownBefore && index > 0
+              documentId === shownBefore && !first
                 ? Promise.resolve()
-                : checkAuthAfterNavigation(runId, flow, tabId, step, index),
+                : checkAuthAfterNavigation(runId, flow, tabId, step, navigatePc),
           );
           documentBefore = await getDocumentId(tabId);
         } else if (step.type === 'savePdf') {
-          await checkAuthScreen(runId, flow, tabId, step, expectedPageUrl(steps, index));
+          await checkAuthScreen(runId, flow, tabId, step, expectedUrl);
           const file = await savePdf(runId, flow, tabId, step, pathValues);
           savedFiles.get(runId)?.push(file);
           documentBefore = await getDocumentId(tabId);
         } else {
-          const done = await runInPageWithRetry(
-            runId,
-            flow,
-            tabId,
-            step,
-            expectedPageUrl(steps, index),
+          const scope = itemScope(program, frames);
+          const done = await withRetry(runId, flow, () =>
+            runInPage(runId, flow, tabId, step, expectedUrl, scope),
           );
           documentBefore = done.documentId;
           if (step.type === 'extract') {
@@ -563,34 +672,34 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
         // ログインや認証の画面が表示された場合は、手順を行わずに一時停止します（#18）。
         // ［再開］を押されたら、同じ手順からやり直します。やり直す前に、もう一度画面を調べます。
         if (error instanceof AuthRequired) {
-          index = error.resumeIndex ?? index;
-          await pauseRun(runId, flow, tabId, index, error.message);
+          pc = error.resumeIndex ?? pc;
+          await pauseRun(runId, flow, tabId, position(), error.message);
           continue;
         }
         throw error;
       }
 
-      index += 1;
+      ({ pc, frames } = advance(program, pc, frames));
       // 手順と手順の間に、フローの設定の範囲から毎回決めた時間だけ待ちます（#15）。最後の手順の後には待ちません。
-      if (index < steps.length) {
+      if (pc < program.length) {
         await waitWithStopCheck(runId, pickDelay(stepInterval(flow)));
       }
     }
-    await finishRun(runId, { status: 'done', stepIndex: steps.length - 1 });
+    await finishRun(runId, { status: 'done', stepIndex: total - 1, items: undefined });
   } catch (error) {
     if (error instanceof StopRequested) {
       // stepIndex は、停止した時点で完了していた手順の数と同じです。
-      await finishRun(runId, { status: 'stopped', stepIndex: index });
+      await finishRun(runId, { status: 'stopped', ...position() });
       return;
     }
     if (error instanceof Halted) {
       handOver = true;
-      await finishRun(runId, { status: 'halted', stepIndex: index, error: error.message });
+      await finishRun(runId, { status: 'halted', ...position(), error: error.message });
       return;
     }
     await finishRun(runId, {
       status: 'failed',
-      stepIndex: index,
+      ...position(),
       error: error instanceof Error ? error.message : String(error),
     });
   } finally {
@@ -608,6 +717,20 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
         { frameId: 0 },
       )
       .catch(() => {});
+  }
+}
+
+/**
+ * 繰り返しの中でページが移動していた場合に、停止します（#6）。繰り返しの中でのページの移動には、
+ * まだ対応していないためです。移動の後のページで、前のページの行の番号の要素を操作しないようにします。
+ * @param {number} tabId
+ * @param {string | undefined} documentId 繰り返しを始めたときのページの識別子
+ */
+async function throwIfLoopPageChanged(tabId, documentId) {
+  if (documentId !== undefined && (await getDocumentId(tabId)) !== documentId) {
+    throw new Error(
+      '繰り返しの途中でページが移動したため、停止しました。繰り返しの中でのページの移動には、まだ対応していません。',
+    );
   }
 }
 
@@ -630,11 +753,12 @@ async function isPauseRequested(runId) {
  * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
- * @param {number} nextIndex 再開したときに実行する手順の番号
+ * @param {{ stepIndex: number, items: number[] | undefined }} next 再開したときに実行する手順の番号と、
+ *   繰り返しの何件目か
  * @param {string} [note] 一時停止の手順の説明
  */
-async function pauseRun(runId, flow, tabId, nextIndex, note) {
-  await updateRunState(runId, { status: 'paused', stepIndex: nextIndex, note });
+async function pauseRun(runId, flow, tabId, next, note) {
+  await updateRunState(runId, { status: 'paused', ...next, note });
   const deadline = Date.now() + PAUSE_LIMIT_MS;
   /** 枠を表示したページの識別子です。人がページを移動したら、移動後のページに表示し直します。 */
   let shownDocument;
@@ -723,20 +847,19 @@ async function showRunBadge(tabId) {
 }
 
 /**
- * runInPage を行い、要素が見つからなかった場合は MAX_RETRIES 回までやり直します（#18）。
+ * ページでの処理を行い、要素が見つからなかった場合は MAX_RETRIES 回までやり直します（#18）。
  * やり直す前には、フローの手順の間隔（#15）と同じ時間だけ待ちます。要素が見つからない場合は、
  * ページに何も操作していないため、やり直しても操作が重なることはありません。
+ * @template T
  * @param {string} runId
  * @param {Flow} flow
- * @param {number} tabId
- * @param {Step} step
- * @param {string | undefined} expectedUrl 手順の前に表示しているはずのページの URL
- * @returns {Promise<{ documentId: string | undefined, response: Record<string, any> }>}
+ * @param {() => Promise<T>} action ページでの処理（runInPage または readPage）
+ * @returns {Promise<T>}
  */
-async function runInPageWithRetry(runId, flow, tabId, step, expectedUrl) {
+async function withRetry(runId, flow, action) {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await runInPage(runId, flow, tabId, step, expectedUrl);
+      return await action();
     } catch (error) {
       if (!(error instanceof ElementNotFound)) {
         throw error;
@@ -841,10 +964,12 @@ async function throwIfAuthScreen(runId, tabId, currentUrl, step, expectedUrl) {
  * @param {number} tabId
  * @param {Step} step
  * @param {string | undefined} expectedUrl 手順の前に表示しているはずのページの URL（#18）
+ * @param {{ items: import('../shared/flow.js').Target, index: number }[]} scope 繰り返しの中の場合の、
+ *   処理中の行の指定（#6）。要素の指定に scope: item がある場合に、その行の内側で探します
  * @returns {Promise<{ documentId: string | undefined, response: Record<string, any> }>}
  *   documentId は手順を実行する前に表示していたページの識別子、response はページからの応答です
  */
-async function runInPage(runId, flow, tabId, step, expectedUrl) {
+async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
   await waitForLoad(runId, tabId, () => true, '');
   // クリックで移動した場合に、新しいページに切り替わったかを判定できるよう、操作の前に控えます（#51）。
   const documentId = await getDocumentId(tabId);
@@ -876,6 +1001,7 @@ async function runInPage(runId, flow, tabId, step, expectedUrl) {
     const inspected = await requestPage(runId, tabId, {
       kind: 'runner/inspect',
       step,
+      scope,
       timeoutMs: ELEMENT_TIMEOUT_MS,
       stopSelectors: rule.selectors,
     });
@@ -902,7 +1028,37 @@ async function runInPage(runId, flow, tabId, step, expectedUrl) {
   const response = await requestPage(runId, tabId, {
     kind: 'runner/step',
     step,
+    scope,
     timeoutMs: ELEMENT_TIMEOUT_MS,
+  });
+  return { documentId, response };
+}
+
+/**
+ * if の条件の要素と forEach の行を、ページの content script に探してもらいます（#6）。ページは操作しません。
+ * フローのサイトのページでだけ行います。認証の画面かどうかは調べません。ログインの画面が表示されたときだけ
+ * 入力する、という条件にも使えるようにするためです。
+ * @param {string} runId
+ * @param {Flow} flow
+ * @param {number} tabId
+ * @param {object} message content/runner.js に送る依頼（runner/exists または runner/count）
+ * @returns {Promise<{ documentId: string | undefined, response: Record<string, any> }>}
+ */
+async function readPage(runId, flow, tabId, message) {
+  await waitForLoad(runId, tabId, () => true, '');
+  const tab = await chrome.tabs.get(tabId);
+  const url = tab.url ?? '';
+  const pageOrigin = isWebUrl(url) ? new URL(url).origin : undefined;
+  if (pageOrigin === undefined || !flowOrigins(flow).includes(pageOrigin)) {
+    throw new Error(
+      `フローのサイト（${flowOrigins(flow).join('、')}）とは別のサイト（${pageOrigin ?? (url || '不明')}）のページに移動したため、停止しました。`,
+    );
+  }
+  await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
+  const documentId = await getDocumentId(tabId);
+  const response = await requestPage(runId, tabId, {
+    ...message,
+    timeoutMs: CONDITION_TIMEOUT_MS,
   });
   return { documentId, response };
 }
@@ -1058,17 +1214,18 @@ async function requestPage(runId, tabId, message) {
 }
 
 /**
- * 続けて記録された「ページの操作による移動」の手順のうち、最後の手順の番号を返します。
+ * 続けて記録された「ページの操作による移動」の手順のうち、最後の手順の命令の番号を返します。
  * 転送が続く場合、実行時は途中のページを経ずに最後のページに着くことがあるため、まとめて扱います。
- * @param {Step[]} steps
- * @param {number} index 最初の移動の手順の番号
+ * if と forEach の境目（#6）を越えてはまとめません。
+ * @param {Instruction[]} program
+ * @param {number} pc 最初の移動の手順の命令の番号
  * @returns {number}
  */
-export function lastPageNavigationIndex(steps, index) {
-  let last = index;
-  while (last + 1 < steps.length) {
-    const next = steps[last + 1];
-    if (next.type !== 'navigate' || next.cause !== 'page') {
+export function lastPageNavigationIndex(program, pc) {
+  let last = pc;
+  while (last + 1 < program.length) {
+    const next = program[last + 1];
+    if (next.op !== 'step' || next.step.type !== 'navigate' || next.step.cause !== 'page') {
       break;
     }
     last += 1;

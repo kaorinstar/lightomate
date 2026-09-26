@@ -229,24 +229,25 @@ body {
   color: var(--tblr-secondary);
 }
 
-/* 手順の一覧です。番号、種類、説明の順に並べます。 */
+/*
+ * 手順の一覧です。番号、種類、説明の順に並べます。番号は、if と forEach の内側を展開した通し番号（#6）で、
+ * 行の data-number に置きます。内側の手順は、入れ子の段数（--lm-depth）だけ種類と説明を右へずらします。
+ */
 .lm-step-list {
   max-height: 32rem;
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  counter-reset: step;
   list-style: none;
 }
 
 .lm-step {
   display: grid;
-  grid-template-columns: 2rem 5.5rem 1fr;
+  grid-template-columns: 2rem calc(5.5rem + var(--lm-depth, 0) * 1rem) 1fr;
   gap: 0.5rem;
   align-items: baseline;
   padding: 0.5rem 0.5rem 0.5rem 0;
   border-bottom: 1px solid var(--tblr-border-color);
-  counter-increment: step;
 }
 
 .lm-step:last-child {
@@ -257,11 +258,12 @@ body {
   color: var(--tblr-secondary);
   font-size: 0.75rem;
   text-align: end;
-  content: counter(step);
+  content: attr(data-number);
 }
 
 .lm-kind {
   justify-self: start;
+  margin-inline-start: calc(var(--lm-depth, 0) * 1rem);
   padding: 0 0.5rem;
   border: 1px solid var(--tblr-border-color);
   border-radius: var(--tblr-border-radius);
