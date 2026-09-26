@@ -228,23 +228,36 @@
     return {
       ok: true,
       count: rows.length,
-      ...(rows.length > 0 ? { firstKey: rowKey(rows[0]) } : {}),
+      firstKey: rows.length > 0 ? rowKey(rows[0]) : undefined,
     };
   }
 
   /**
-   * 行の目印です（#95）。行の中のリンク先（href の値）を並べたものです。リンクがない行では、行の文字です。
-   * 文字ではなくリンク先を使うのは、Chrome の翻訳などが表示の後に文字を置き換えるためです。同じ一覧でも、
-   * 読み取った時点によって文字が異なります。リンク先は、翻訳では変わりません。
+   * 行の目印です（#95）。行の中のリンク先（a 要素の href の値）を並べたものです。リンクがない行では、
+   * 画像の src の値を並べます。どちらもない行では undefined を返し、行数だけで確かめてもらいます。
+   * 表示の文字は使いません。Chrome の翻訳などが表示の後に文字を置き換えるため、同じ一覧でも読み取った時点に
+   * よって文字が異なるためです。href と src の値は、翻訳では変わりません。
    * @param {Element} row
-   * @returns {string}
+   * @returns {string | undefined}
    */
   function rowKey(row) {
-    const links = [row, ...row.querySelectorAll('a[href]')]
-      .filter((element) => element.matches('a[href]'))
-      .map((element) => element.getAttribute('href') ?? '');
-    const key = links.length > 0 ? `link:${links.join(' ')}` : `text:${readText(row)}`;
-    return key.slice(0, FIRST_KEY_MAX_LENGTH);
+    /**
+     * @param {string} selector
+     * @param {string} name
+     */
+    const values = (selector, name) =>
+      [row, ...row.querySelectorAll(selector)]
+        .filter((element) => element.matches(selector))
+        .map((element) => element.getAttribute(name) ?? '');
+    const links = values('a[href]', 'href');
+    if (links.length > 0) {
+      return `link:${links.join(' ')}`.slice(0, FIRST_KEY_MAX_LENGTH);
+    }
+    const images = values('img[src]', 'src');
+    if (images.length > 0) {
+      return `image:${images.join(' ')}`.slice(0, FIRST_KEY_MAX_LENGTH);
+    }
+    return undefined;
   }
 
   /**

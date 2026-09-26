@@ -991,7 +991,8 @@ async function turnPage(runId, flow, tabId, step, frame) {
 /**
  * 「次へ」をクリックした後、次のページが表示されるまで待ちます（#95）。
  * 新しいページが読み込まれるか、ページを読み込まずに一覧だけが差し替わる（1 行目の目印が変わる）まで待ちます。
- * 目印は、行の中のリンク先です（content/runner.js の rowKey）。翻訳などで文字だけが変わっても、送ったとはみなしません。
+ * 目印は、行の中のリンク先か画像の src です（content/runner.js の rowKey）。翻訳などで文字だけが変わっても、送ったとは
+ * みなしません。
  * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
@@ -1037,7 +1038,8 @@ async function waitForPageTurn(runId, flow, tabId, step, before) {
   }
   throw new Error(
     `「${step.nextPage?.label ?? '次へ'}」をクリックしてから ${Math.round(NAVIGATION_TIMEOUT_MS / 1000)} 秒待ちましたが、` +
-      '次のページが表示されませんでした。nextPage の指定が、押せない「次へ」にも一致していないかを確かめてください。',
+      '次のページが表示されませんでした。nextPage の指定が、押せない「次へ」にも一致していないかを確かめてください。' +
+      'ページを読み込まずに一覧だけを差し替えるサイトでは、行の中にリンクか画像がないと、差し替わったことを判定できません。',
   );
 }
 
