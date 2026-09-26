@@ -17,11 +17,13 @@ import {
   FOREACH_MAX_LIMIT,
   MAX_NESTING,
   MAX_PAGES_LIMIT,
+  WHILE_MAX_LIMIT,
 } from './control-flow.js';
+import { MONTH_VALUE_PATTERN, isDateValue } from './condition.js';
 import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -34,15 +36,28 @@ export const SCHEMA_VERSION = 8;
  * 版 7 は、版 6 に forEach のページ送り（nextPage、maxPages）と、forEach の内側のページの操作による
  * 移動（navigate、cause が page）を加えたものです（#95）。
  * 版 8 は、版 7 に、手順を記録したときにページが翻訳されていたこと（手順の translated）を加えたものです（#99）。
+ * 版 9 は、版 8 に条件を満たす間の繰り返し（while）と、文字・日付による条件（condition の contains、equals、
+ * month、from、to）を加えたものです（#103）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
  * @type {Record<string, number>}
  */
-const MIN_SCHEMA_VERSION = { pause: 2, savePdf: 3, extract: 3, wait: 4, if: 6, forEach: 6 };
+const MIN_SCHEMA_VERSION = {
+  pause: 2,
+  savePdf: 3,
+  extract: 3,
+  wait: 4,
+  if: 6,
+  forEach: 6,
+  while: 9,
+};
+
+/** 文字・日付による条件（contains、equals、month、from、to）を使える最も古い版です（#103）。 */
+const VALUE_CONDITION_MIN_SCHEMA_VERSION = 9;
 
 /** interval を使える最も古い版です。 */
 const INTERVAL_MIN_SCHEMA_VERSION = 4;
@@ -67,7 +82,7 @@ export const PAGE_STEP_TYPES = ['click', 'input', 'select', 'extract'];
 
 /**
  * 1 つのフローに含められる手順の数の上限です。保存領域を使い切ることを防ぎます。
- * if と forEach の内側の手順も数えます（#6）。
+ * if、forEach、while の内側の手順も数えます（#6、#103）。
  */
 export const MAX_STEPS = 1000;
 
@@ -163,13 +178,40 @@ export const MAX_TEXT_LENGTH = 2000;
  */
 
 /**
- * 条件分岐です（#6）。要素があるか（ないか）で、行う手順を分けます。版 6 で加えました。
+ * if と while の条件です。次のどれか 1 種類を書きます。
+ * - 要素の有無（exists）：true の場合は要素があることを、false の場合は要素がないことを条件にします（#6）。
+ * - 文字（contains、equals）：要素の表示の文字が、指定した文字を含むか、一致するかです（#103）。
+ * - 日付（month、または from と to）：要素の表示の文字から読み取った日付が、指定した月（YYYY-MM）か、
+ *   期間（YYYY-MM-DD、両端を含みます）に含まれるかです（#103）。
+ * 文字と日付の値には、パラメータの参照（{{名前}}）を書けます。版 9 で加えました。
+ * @typedef {{ target: Target } & (
+ *   { exists: boolean } |
+ *   { contains: string } |
+ *   { equals: string } |
+ *   { month: string } |
+ *   { from: string, to?: string } |
+ *   { from?: string, to: string }
+ * )} Condition
+ */
+
+/**
+ * 条件分岐です（#6）。条件を満たすかで、行う手順を分けます。版 6 で加えました。
  * @typedef {object} IfStep
  * @property {'if'} type
- * @property {{ target: Target, exists: boolean }} condition 条件。exists が true の場合は要素がある
- *   ことを、false の場合は要素がないことを条件にします
+ * @property {Condition} condition 条件
  * @property {Step[]} then 条件を満たす場合に行う手順
  * @property {Step[]} [else] 条件を満たさない場合に行う手順
+ */
+
+/**
+ * 条件を満たす間の繰り返しです（#103）。繰り返しの各回の初めに条件を判定し、満たす場合に steps を行います。
+ * 版 9 で加えました。
+ * @typedef {object} WhileStep
+ * @property {'while'} type
+ * @property {Condition} condition 条件
+ * @property {number} [max] 繰り返しの上限。上限の回数を終えても条件を満たしている場合は、停止します。
+ *   省略した場合は control-flow.js の DEFAULT_WHILE_MAX です
+ * @property {Step[]} steps 繰り返す手順
  */
 
 /**
@@ -188,7 +230,7 @@ export const MAX_TEXT_LENGTH = 2000;
  */
 
 /**
- * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep | WaitStep | IfStep | ForEachStep} Step
+ * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep | WaitStep | IfStep | ForEachStep | WhileStep} Step
  */
 
 /** @typedef {import('./params.js').Param} Param */
@@ -308,7 +350,7 @@ export function orderFlow({ schemaVersion, name, origin, extraOrigins, params, s
 }
 
 /**
- * 手順の項目を、種類（type）が先頭に来る順序に並べ直します。if と forEach は、内側の手順も並べ直します。
+ * 手順の項目を、種類（type）が先頭に来る順序に並べ直します。if、forEach、while は、内側の手順も並べ直します。
  * @param {Step} step
  * @returns {Step}
  */
@@ -332,6 +374,16 @@ function orderStep(step) {
         ...(max !== undefined ? { max } : {}),
         ...(nextPage !== undefined ? { nextPage } : {}),
         ...(maxPages !== undefined ? { maxPages } : {}),
+        ...rest,
+        steps: steps.map(orderStep),
+      };
+    }
+    case 'while': {
+      const { type, condition, max, steps, ...rest } = step;
+      return {
+        type,
+        condition,
+        ...(max !== undefined ? { max } : {}),
         ...rest,
         steps: steps.map(orderStep),
       };
@@ -399,7 +451,7 @@ export function validateFlow(value) {
     errors.push('steps が配列ではありません。');
   } else if (countSteps(value.steps, 0) > MAX_STEPS) {
     errors.push(
-      `steps が、if と forEach の内側の手順を含めて上限の ${MAX_STEPS} 件を超えています。`,
+      `steps が、if、forEach、while の内側の手順を含めて上限の ${MAX_STEPS} 件を超えています。`,
     );
   } else {
     validateStepList(value.steps, 'steps', 0, false, {
@@ -430,7 +482,7 @@ export function validateFlow(value) {
  * 手順の一覧を、内側の手順を含めて検証します（#6）。
  * @param {unknown[]} list
  * @param {string} path 誤りの説明に付ける、一覧の位置（例：steps、steps[2].then）
- * @param {number} depth if と forEach の入れ子の段数。最上位は 0 です
+ * @param {number} depth if、forEach、while の入れ子の段数。最上位は 0 です
  * @param {boolean} inLoop forEach の内側か
  * @param {StepContext} context
  */
@@ -503,6 +555,17 @@ function validateStepList(list, path, depth, inLoop, context) {
       }
     }
     if (
+      (type === 'if' || type === 'while') &&
+      isRecord(step.condition) &&
+      !('exists' in step.condition) &&
+      version !== undefined &&
+      version < VALUE_CONDITION_MIN_SCHEMA_VERSION
+    ) {
+      errors.push(
+        `${at}: 文字と日付の条件（contains、equals、month、from、to）は、schemaVersion が ${VALUE_CONDITION_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+      );
+    }
+    if (
       step.translated !== undefined &&
       version !== undefined &&
       version < TRANSLATED_MIN_SCHEMA_VERSION
@@ -531,7 +594,7 @@ function validateStepList(list, path, depth, inLoop, context) {
 
     if (CONTROL_STEP_TYPES.includes(type)) {
       if (depth >= MAX_NESTING) {
-        errors.push(`${at}: if と forEach の入れ子は ${MAX_NESTING} 段までです。`);
+        errors.push(`${at}: if、forEach、while の入れ子は ${MAX_NESTING} 段までです。`);
         return;
       }
       if (type === 'if') {
@@ -542,7 +605,9 @@ function validateStepList(list, path, depth, inLoop, context) {
           validateStepList(step.else, `${at}.else`, depth + 1, inLoop, context);
         }
       } else if (Array.isArray(step.steps)) {
-        validateStepList(step.steps, `${at}.steps`, depth + 1, true, context);
+        // while の内側は、行の内側で探す指定（scope）の対象となる行を変えないため、inLoop を引き継ぎます（#103）。
+        const loop = type === 'forEach' ? true : inLoop;
+        validateStepList(step.steps, `${at}.steps`, depth + 1, loop, context);
       }
     }
   });
@@ -583,6 +648,7 @@ function validatePathReferences(path, at, context) {
 function stepTargets(step) {
   switch (step.type) {
     case 'if':
+    case 'while':
       return isRecord(step.condition) ? [['condition.target', step.condition.target]] : [];
     case 'forEach':
       return step.nextPage === undefined
@@ -597,7 +663,7 @@ function stepTargets(step) {
 }
 
 /**
- * if と forEach の内側を含めた、手順の数を数えます。形式に誤りがあっても例外を投げません。
+ * if、forEach、while の内側を含めた、手順の数を数えます。形式に誤りがあっても例外を投げません。
  * 入れ子の段数の上限を超えた内側は数えません。その誤りは validateStepList が報告します。
  * @param {unknown[]} list
  * @param {number} depth
@@ -613,7 +679,7 @@ function countSteps(list, depth) {
       continue;
     }
     for (const children of [step.then, step.else, step.steps]) {
-      if ((step.type === 'if' || step.type === 'forEach') && Array.isArray(children)) {
+      if (CONTROL_STEP_TYPES.includes(String(step.type)) && Array.isArray(children)) {
         count += countSteps(children, depth + 1);
       }
     }
@@ -731,14 +797,7 @@ export function validateStep(step) {
     case 'if': {
       /** @type {string[]} */
       const errors = [];
-      if (!isRecord(step.condition)) {
-        errors.push('condition がオブジェクトではありません。');
-      } else {
-        errors.push(...validateTarget(step.condition.target, 'condition.target'));
-        if (typeof step.condition.exists !== 'boolean') {
-          errors.push('condition.exists が true または false ではありません。');
-        }
-      }
+      errors.push(...validateCondition(step.condition));
       if (!Array.isArray(step.then)) {
         errors.push('then が配列ではありません。');
       }
@@ -775,16 +834,107 @@ export function validateStep(step) {
       return errors;
     }
 
+    case 'while': {
+      const errors = validateCondition(step.condition);
+      if (
+        step.max !== undefined &&
+        (!Number.isInteger(step.max) ||
+          /** @type {number} */ (step.max) < 1 ||
+          /** @type {number} */ (step.max) > WHILE_MAX_LIMIT)
+      ) {
+        errors.push(`max が 1 以上 ${WHILE_MAX_LIMIT} 以下の整数ではありません。`);
+      }
+      if (!Array.isArray(step.steps)) {
+        errors.push('steps が配列ではありません。');
+      }
+      return errors;
+    }
+
     default:
       return [
-        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait、if、forEach のいずれでもありません。',
+        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait、if、forEach、while のいずれでもありません。',
       ];
   }
 }
 
+/** 条件に書ける項目です。target と、条件の種類ごとの項目です。 */
+const CONDITION_FIELDS = ['target', 'exists', 'contains', 'equals', 'month', 'from', 'to'];
+
+/**
+ * if と while の条件を検証します（#6、#103）。
+ * 条件の種類（要素の有無、文字、日付）は 1 つだけ書けます。文字と日付の値にパラメータの参照（{{名前}}）が
+ * ある場合、値の形式は、パラメータを当てはめた実行時に確かめます。
+ * @param {unknown} condition
+ * @returns {string[]}
+ */
+function validateCondition(condition) {
+  if (!isRecord(condition)) {
+    return ['condition がオブジェクトではありません。'];
+  }
+  const errors = validateTarget(condition.target, 'condition.target');
+  const unknown = Object.keys(condition).filter((key) => !CONDITION_FIELDS.includes(key));
+  if (unknown.length > 0) {
+    errors.push(`condition に、使えない項目（${unknown.join('、')}）があります。`);
+  }
+  const kinds = [
+    'exists' in condition,
+    'contains' in condition,
+    'equals' in condition,
+    'month' in condition,
+    'from' in condition || 'to' in condition,
+  ].filter(Boolean).length;
+  if (kinds !== 1) {
+    errors.push(
+      'condition には、exists、contains、equals、month、from と to のどれか 1 種類だけを書いてください。',
+    );
+    return errors;
+  }
+  if ('exists' in condition && typeof condition.exists !== 'boolean') {
+    errors.push('condition.exists が true または false ではありません。');
+  }
+  for (const name of ['contains', 'equals']) {
+    if (name in condition && (!isText(condition[name]) || condition[name] === '')) {
+      errors.push(`condition.${name} が空か、文字列ではありません。`);
+    }
+  }
+  if ('month' in condition) {
+    const month = condition.month;
+    if (!isText(month) || (!hasReference(month) && !MONTH_VALUE_PATTERN.test(month))) {
+      errors.push('condition.month が、2026-09 の形式の年月か、パラメータの参照ではありません。');
+    }
+  }
+  for (const name of ['from', 'to']) {
+    const value = condition[name];
+    if (name in condition && (!isText(value) || (!hasReference(value) && !isDateValue(value)))) {
+      errors.push(
+        `condition.${name} が、2026-09-01 の形式の正しい日付か、パラメータの参照ではありません。`,
+      );
+    }
+  }
+  if (
+    typeof condition.from === 'string' &&
+    typeof condition.to === 'string' &&
+    isDateValue(condition.from) &&
+    isDateValue(condition.to) &&
+    condition.from > condition.to
+  ) {
+    errors.push('condition.from が、condition.to より後の日付です。');
+  }
+  return errors;
+}
+
+/**
+ * 値にパラメータの参照（{{名前}}）があるかを判定します。
+ * @param {string} value
+ * @returns {boolean}
+ */
+function hasReference(value) {
+  return withPlaceholders(value) !== value;
+}
+
 /**
  * 手順のうち、パラメータの参照（{{名前}}）を書ける値を返します。
- * 入力の値、選択肢の value、移動先の URL です。
+ * 入力の値、選択肢の value、移動先の URL、文字と日付の条件の値です。
  * @param {unknown} step
  * @returns {string[]}
  */
@@ -800,6 +950,15 @@ export function templateTexts(step) {
     case 'select':
       return Array.isArray(step.values)
         ? step.values.filter((value) => typeof value === 'string')
+        : [];
+    case 'if':
+    case 'while':
+      // 文字と日付の条件の値です（#103）。
+      return isRecord(step.condition)
+        ? ['contains', 'equals', 'month', 'from', 'to'].flatMap((name) => {
+            const value = /** @type {Record<string, unknown>} */ (step.condition)[name];
+            return typeof value === 'string' ? [value] : [];
+          })
         : [];
     default:
       return [];

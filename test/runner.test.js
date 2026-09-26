@@ -259,3 +259,48 @@ test('何ページ目かは、ページ送りを使う繰り返しの中でだ�
   const plain = compileSteps([{ type: 'forEach', items, steps: [] }]);
   assert.equal(pageNumber(plain, [{ startPc: 0, index: 0, count: 1 }]), undefined);
 });
+
+test('if と while の文字・日付の条件にも、パラメータの値を当てはめる（#103）', () => {
+  const date = { selectors: ['.date'], tag: 'span', label: '注文日' };
+  /** @type {import('../extension/shared/flow.js').Flow} */
+  const conditional = {
+    ...flow,
+    schemaVersion: 9,
+    steps: [
+      flow.steps[0],
+      { type: 'if', condition: { target: date, month: '{{month}}' }, then: [] },
+      {
+        type: 'while',
+        condition: { target: date, contains: '{{q}}' },
+        steps: [{ type: 'input', target, value: '{{q}}' }],
+      },
+    ],
+  };
+  const result = resolveSteps(conditional, { q: 'ねじ' }, {}, new Date(2026, 8, 24));
+  assert.ok(result.ok);
+  assert.deepEqual(result.steps.slice(1), [
+    { type: 'if', condition: { target: date, month: '2026-08' }, then: [] },
+    {
+      type: 'while',
+      condition: { target: date, contains: 'ねじ' },
+      steps: [{ type: 'input', target, value: 'ねじ' }],
+    },
+  ]);
+});
+
+test('何ページ目かは、外側に while がある場合も、最も外側の forEach で数える（#103）', () => {
+  const items = { selectors: ['tr'], tag: 'tr', label: '注文' };
+  const next = { selectors: ['a.next'], tag: 'a', label: '次へ' };
+  const program = compileSteps([
+    {
+      type: 'while',
+      condition: { target: next, exists: true },
+      steps: [{ type: 'forEach', items, nextPage: next, steps: [] }],
+    },
+  ]);
+  const frames = [
+    { startPc: 0, index: 1, count: 0 },
+    { startPc: 1, index: 0, count: 2, page: 1 },
+  ];
+  assert.equal(pageNumber(program, frames), 2);
+});

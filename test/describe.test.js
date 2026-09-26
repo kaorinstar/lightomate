@@ -104,3 +104,35 @@ test('ページ送りの繰り返しの中では、何ページ目かも添え�
     '「a」を実行中です。手順 5 / 9（2 ページ目の 3 件目）',
   );
 });
+
+test('while と、文字・日付の条件の手順の説明（#103）', () => {
+  const more = { selectors: ['.more'], tag: 'button', label: 'もっと見る' };
+  assert.equal(
+    describeStep({ type: 'while', condition: { target: more, exists: true }, steps: [] }),
+    '繰り返し：「もっと見る」がある場合の間（上限 100 回）',
+  );
+  assert.equal(
+    describeStep({ type: 'while', condition: { target: more, exists: true }, max: 5, steps: [] }),
+    '繰り返し：「もっと見る」がある場合の間（上限 5 回）',
+  );
+  assert.equal(
+    describeStep({ type: 'if', condition: { target, month: '{{month}}' }, then: [] }),
+    '条件：「注文履歴」が {{month}} の日付の場合',
+  );
+  assert.equal(
+    stepKindLabel({ type: 'while', condition: { target: more, exists: true }, steps: [] }),
+    '繰り返し',
+  );
+});
+
+test('while の中では、手順の番号に何回目かを添える（#103）', () => {
+  const run = {
+    flowName: 'a',
+    status: 'running',
+    stepIndex: 4,
+    total: 9,
+    items: [3],
+    loops: /** @type {('item' | 'round')[]} */ (['round']),
+  };
+  assert.equal(runStatusText(run, undefined), '「a」を実行中です。手順 5 / 9（3 回目）');
+});

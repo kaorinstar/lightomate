@@ -43,12 +43,15 @@ import {
   displayNumber,
   flattenSteps,
   itemScope,
+  loopKinds,
   needsReturn,
   pageLimitError,
   returnedListError,
   rowLimitError,
   stepAt,
+  whileLimitError,
 } from '../shared/control-flow.js';
+import { conditionKind, describeCondition, evaluateCondition } from '../shared/condition.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -69,7 +72,10 @@ import {
  *   失敗後は失敗した手順の番号、停止後は停止した時点で完了していた手順の数です。
  *   番号は、if と forEach の内側を展開した通し番号です（#6）。
  * @property {number} total 手順の数。if と forEach の内側の手順も数えます
- * @property {number[]} [items] 繰り返しの中の場合の、段ごとの何件目の行か（1 から数えます、#6）
+ * @property {number[]} [items] 繰り返しの中の場合の、段ごとの何件目の行か（1 から数えます、#6）。
+ *   while の段では、何回目か（1 から数えます、#103）
+ * @property {('item' | 'round')[]} [loops] items の段ごとの種類（#103）。while の段がある場合だけ記録します。
+ *   省略した場合は、すべて forEach の段（item）です
  * @property {number} [page] ページ送りを使う繰り返しの中の場合の、何ページ目か（1 から数えます、#95）
  * @property {'running' | 'stopping' | 'pausing' | 'paused' | 'done' | 'failed' | 'stopped' | 'halted'} status
  *   pausing は［一時停止］を押され、実行中の手順が終わるのを待っている状態、paused は一時停止中です（#37）。
@@ -501,11 +507,23 @@ export function resolveSteps(flow, paramInput, secretInput, now) {
         case 'select':
           return { ...step, values: step.values.map((value) => renderTemplate(value, values)) };
         case 'if': {
+          const condition = resolveCondition(step.condition, values);
           const then = resolveList(step.then);
-          return { ...step, then, ...(step.else ? { else: resolveList(step.else) } : {}) };
+          return {
+            ...step,
+            condition,
+            then,
+            ...(step.else ? { else: resolveList(step.else) } : {}),
+          };
         }
         case 'forEach':
           return { ...step, steps: resolveList(step.steps) };
+        case 'while':
+          return {
+            ...step,
+            condition: resolveCondition(step.condition, values),
+            steps: resolveList(step.steps),
+          };
         default:
           return step;
       }
@@ -523,6 +541,24 @@ export function resolveSteps(flow, paramInput, secretInput, now) {
 
 /** resolveSteps で、手順に値を当てはめられなかったことを示す誤りです。 */
 class ResolveError extends Error {}
+
+/**
+ * 文字と日付の条件の値に、パラメータの値を当てはめます（#103）。値の形式は、判定するときに確かめます。
+ * @param {import('../shared/flow.js').Condition} condition
+ * @param {Record<string, string>} values
+ * @returns {import('../shared/flow.js').Condition}
+ */
+function resolveCondition(condition, values) {
+  /** @type {Record<string, unknown>} */
+  const resolved = { ...condition };
+  for (const name of ['contains', 'equals', 'month', 'from', 'to']) {
+    const value = resolved[name];
+    if (typeof value === 'string') {
+      resolved[name] = renderTemplate(value, values);
+    }
+  }
+  return /** @type {import('../shared/flow.js').Condition} */ (resolved);
+}
 
 /**
  * 実行するタブを用意します。最初の手順がページを開く手順であれば、新しいタブで開きます。
@@ -593,17 +629,22 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
     const loop = instruction?.op === 'next' ? program[instruction.startPc] : undefined;
     return loop?.op === 'forEach' ? loop.number : displayNumber(program, pc, frames, total);
   };
-  const position = () => ({
-    stepIndex: currentNumber(),
-    items: frames.length > 0 ? frames.map((frame) => frame.index + 1) : undefined,
-    page: pageNumber(program, frames),
-  });
+  const position = () => {
+    const kinds = loopKinds(program, frames);
+    return {
+      stepIndex: currentNumber(),
+      items: frames.length > 0 ? frames.map((frame) => frame.index + 1) : undefined,
+      // while の段（#103）がある場合だけ、段ごとの種類を記録します。
+      loops: kinds.includes('round') ? kinds : undefined,
+      page: pageNumber(program, frames),
+    };
+  };
   /** 実行履歴に記録する、止まった手順です（#93）。停止した場合は、次に実行する手順です。 */
   const stoppedStep = () => stepAt(steps, currentNumber());
   try {
     while (pc < program.length) {
       const instruction = program[pc];
-      if (instruction.op === 'jump') {
+      if (instruction.op === 'jump' || instruction.op === 'loop') {
         ({ pc, frames } = advance(program, pc, frames));
         continue;
       }
@@ -677,16 +718,39 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           continue;
         }
         if (instruction.op === 'if') {
-          // 条件の要素を探すだけで、ページは操作しません（#6）。
-          const { condition } = instruction.step;
-          const { response } = await withRetry(runId, flow, () =>
-            readPage(runId, flow, tabId, {
-              kind: 'runner/exists',
-              target: condition.target,
-              scope: itemScope(program, frames),
-            }),
+          // 条件の要素を調べるだけで、ページは操作しません（#6）。
+          const met = await checkCondition(
+            runId,
+            flow,
+            tabId,
+            instruction.step.condition,
+            itemScope(program, frames),
           );
-          ({ pc, frames } = advance(program, pc, frames, response.exists === condition.exists));
+          ({ pc, frames } = advance(program, pc, frames, met));
+          continue;
+        }
+        if (instruction.op === 'while') {
+          // 繰り返しの各回の初めに、その時点のページで条件を判定します（#103）。
+          const { step } = instruction;
+          const met = await checkCondition(
+            runId,
+            flow,
+            tabId,
+            step.condition,
+            itemScope(program, frames),
+          );
+          if (met) {
+            const top = frames.at(-1);
+            const limit = whileLimitError(
+              step,
+              top?.startPc === pc ? top : undefined,
+              describeCondition(step.condition),
+            );
+            if (limit !== undefined) {
+              throw new Error(limit);
+            }
+          }
+          ({ pc, frames } = advance(program, pc, frames, met));
           continue;
         }
         if (instruction.op === 'forEach') {
@@ -816,6 +880,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       status: 'done',
       stepIndex: total - 1,
       items: undefined,
+      loops: undefined,
       page: undefined,
     });
   } catch (error) {
@@ -873,7 +938,8 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
  * @returns {number | undefined}
  */
 export function pageNumber(program, frames) {
-  const outer = frames[0];
+  // while の段（#103）は飛ばし、最も外側の forEach の段を見ます。
+  const outer = frames.find((frame) => program[frame.startPc]?.op === 'forEach');
   if (outer === undefined) {
     return undefined;
   }
@@ -1101,7 +1167,7 @@ async function isPauseRequested(runId) {
  * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
- * @param {{ stepIndex: number, items: number[] | undefined, page: number | undefined }} next 再開したときに
+ * @param {{ stepIndex: number, items: number[] | undefined, loops: ('item' | 'round')[] | undefined, page: number | undefined }} next 再開したときに
  *   実行する手順の番号と、繰り返しの何件目か（ページ送りでは何ページ目か）
  * @param {string} [note] 一時停止の手順の説明
  */
@@ -1394,13 +1460,44 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
 }
 
 /**
+ * if と while の条件を判定します（#6、#103）。条件の要素を調べるだけで、ページは操作しません。
+ * - 要素の有無（exists）：要素がない場合は、3 秒待ってから「ない」と判定します。
+ * - 文字と日付：要素の表示の文字を読み取って判定します。要素がない場合は、「条件を満たさない」とは扱わずに
+ *   停止します。表示の遅れで誤った分岐に進まないためです。判定できない場合（翻訳されたページの文字の条件、
+ *   日付を読み取れない場合など）も停止します。
+ * @param {string} runId
+ * @param {Flow} flow
+ * @param {number} tabId
+ * @param {import('../shared/flow.js').Condition} condition パラメータを当てはめた条件
+ * @param {{ items: import('../shared/flow.js').Target, index: number }[]} scope 処理中の行の指定
+ * @returns {Promise<boolean>} 条件を満たすか
+ */
+async function checkCondition(runId, flow, tabId, condition, scope) {
+  if (conditionKind(condition) === 'exists') {
+    const { response } = await withRetry(runId, flow, () =>
+      readPage(runId, flow, tabId, { kind: 'runner/exists', target: condition.target, scope }),
+    );
+    return response.exists === ('exists' in condition && condition.exists);
+  }
+  const { response } = await withRetry(runId, flow, () =>
+    readPage(runId, flow, tabId, { kind: 'runner/read', target: condition.target, scope }),
+  );
+  const text = typeof response.text === 'string' ? response.text : '';
+  const result = evaluateCondition(condition, text, response.translated === true);
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+  return result.met;
+}
+
+/**
  * if の条件の要素と forEach の行を、ページの content script に探してもらいます（#6）。ページは操作しません。
  * フローのサイトのページでだけ行います。認証の画面かどうかは調べません。ログインの画面が表示されたときだけ
  * 入力する、という条件にも使えるようにするためです。
  * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
- * @param {object} message content/runner.js に送る依頼（runner/exists または runner/count）
+ * @param {object} message content/runner.js に送る依頼（runner/exists、runner/read、runner/count）
  * @returns {Promise<{ documentId: string | undefined, url: string, response: Record<string, any> }>}
  *   url は、読み取ったページの URL です（#95）
  */

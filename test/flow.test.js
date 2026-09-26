@@ -51,9 +51,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜7 のフローは、そのまま版 8 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 8);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7]) {
+test('版 1〜8 のフローは、そのまま版 9 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 9);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -816,4 +816,183 @@ test('translated は true だけを受け付け、ページを操作しない手
       'translated は、click、input、select、extract の手順にだけ書けます。',
     ]);
   }
+});
+
+// 条件を満たす間の繰り返し（while）と、文字・日付による条件（#103）の検証です。
+
+/**
+ * 版 9 のフローです。
+ * @param {unknown[]} steps
+ * @param {object} [extra]
+ */
+const v9 = (steps, extra = {}) => ({ ...validFlow, schemaVersion: 9, steps, ...extra });
+const moreButton = { selectors: ['button.more'], tag: 'button', label: 'もっと見る' };
+const dateCell = { selectors: ['.date'], tag: 'span', label: '注文日' };
+
+test('版 9 では、while と文字・日付の条件を書ける（#103）', () => {
+  const flow = v9(
+    [
+      {
+        type: 'while',
+        condition: { target: moreButton, exists: true },
+        max: 500,
+        steps: [{ type: 'click', target: moreButton }],
+      },
+      {
+        type: 'forEach',
+        items: rowTarget,
+        steps: [
+          {
+            type: 'if',
+            condition: { target: { ...dateCell, scope: 'item' }, month: '{{month}}' },
+            then: [{ type: 'click', target: { ...inRow, tag: 'a' } }],
+          },
+          { type: 'if', condition: { target: inRow, contains: '発送済み' }, then: [] },
+          { type: 'if', condition: { target: inRow, equals: '{{status}}' }, then: [] },
+          {
+            type: 'if',
+            condition: { target: dateCell, from: '2026-09-01', to: '2026-09-30' },
+            then: [],
+          },
+          { type: 'if', condition: { target: dateCell, from: '2026-09-01' }, then: [] },
+          { type: 'if', condition: { target: dateCell, to: '2026-09-30' }, then: [] },
+          { type: 'if', condition: { target: dateCell, month: '2026-09' }, then: [] },
+        ],
+      },
+    ],
+    {
+      params: [
+        { name: 'month', label: '対象の月', type: 'month' },
+        { name: 'status', label: '状態', type: 'text' },
+      ],
+    },
+  );
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('while と文字・日付の条件は、版 8 以前のフローには書けない（#103）', () => {
+  const steps = [
+    { type: 'while', condition: { target: moreButton, exists: true }, steps: [] },
+    { type: 'if', condition: { target: dateCell, contains: 'a' }, then: [] },
+  ];
+  const errors = validateFlow({ ...validFlow, schemaVersion: 8, steps });
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /^steps\[0\]: while の手順は、schemaVersion が 9 以上/);
+  assert.match(errors[1], /^steps\[1\]: 文字と日付の条件.*schemaVersion が 9 以上/);
+});
+
+test('条件には、種類を 1 つだけ書ける（#103）', () => {
+  for (const condition of [
+    { target: inRow },
+    { target: inRow, exists: true, contains: 'a' },
+    { target: inRow, month: '2026-09', from: '2026-09-01' },
+    { target: inRow, contains: 'a', equals: 'a' },
+  ]) {
+    assert.ok(
+      validateStep({ type: 'if', condition, then: [] }).some((error) =>
+        error.includes('1 種類だけ'),
+      ),
+      JSON.stringify(condition),
+    );
+  }
+  assert.deepEqual(
+    validateStep({ type: 'if', condition: { target: inRow, contain: 'a' }, then: [] }),
+    [
+      'condition に、使えない項目（contain）があります。',
+      'condition には、exists、contains、equals、month、from と to のどれか 1 種類だけを書いてください。',
+    ],
+  );
+});
+
+test('文字と日付の条件の値の形式を検証する（#103）', () => {
+  const check = (/** @type {object} */ fields) =>
+    validateStep({ type: 'if', condition: { target: inRow, ...fields }, then: [] });
+  assert.deepEqual(check({ contains: '' }), ['condition.contains が空か、文字列ではありません。']);
+  assert.deepEqual(check({ equals: 1 }), ['condition.equals が空か、文字列ではありません。']);
+  for (const month of ['2026-9', '2026-13', '202609', 9]) {
+    assert.equal(check({ month }).length, 1, String(month));
+  }
+  for (const from of ['2026-9-1', '2026-02-30', '2026/09/01']) {
+    assert.equal(check({ from }).length, 1, from);
+  }
+  assert.deepEqual(check({ from: '2026-10-01', to: '2026-09-30' }), [
+    'condition.from が、condition.to より後の日付です。',
+  ]);
+  // パラメータの参照は、実行時に形式を確かめます。
+  assert.deepEqual(check({ month: '{{month}}' }), []);
+  assert.deepEqual(check({ from: '{{month}}-01' }), []);
+});
+
+test('条件の値のパラメータの参照は、定義されたパラメータだけを使える（#103）', () => {
+  const errors = validateFlow(
+    v9([{ type: 'if', condition: { target: dateCell, month: '{{missing}}' }, then: [] }]),
+  );
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /missing/);
+});
+
+test('while の max は 1 以上 500 以下の整数で、steps は配列（#103）', () => {
+  const loop = (/** @type {unknown} */ max) => ({
+    type: 'while',
+    condition: { target: moreButton, exists: true },
+    max,
+    steps: [],
+  });
+  assert.deepEqual(validateStep(loop(1)), []);
+  assert.deepEqual(validateStep(loop(500)), []);
+  for (const max of [0, 501, 1.5, '10']) {
+    assert.deepEqual(validateStep(loop(max)), ['max が 1 以上 500 以下の整数ではありません。']);
+  }
+  assert.deepEqual(
+    validateStep({ type: 'while', condition: { target: moreButton, exists: true } }),
+    ['steps が配列ではありません。'],
+  );
+});
+
+test('while の内側では、forEach の外なら scope は書けず、forEach の中なら書ける（#103）', () => {
+  const inner = [{ type: 'click', target: inRow }];
+  const outside = validateFlow(
+    v9([{ type: 'while', condition: { target: moreButton, exists: true }, steps: inner }]),
+  );
+  assert.equal(outside.length, 1);
+  assert.match(outside[0], /scope は、forEach の内側の手順にだけ書けます/);
+  const inside = validateFlow(
+    v9([
+      {
+        type: 'forEach',
+        items: rowTarget,
+        steps: [{ type: 'while', condition: { target: inRow, exists: true }, steps: inner }],
+      },
+    ]),
+  );
+  assert.deepEqual(inside, []);
+});
+
+test('while も入れ子の段数と手順の件数に数える（#103）', () => {
+  const deep = { type: 'while', condition: { target: moreButton, exists: true }, steps: [] };
+  const nested = [
+    { ...deep, steps: [{ ...deep, steps: [{ ...deep, steps: [{ ...deep, steps: [] }] }] }] },
+  ];
+  const errors = validateFlow(v9(nested));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /入れ子は 3 段まで/);
+  const many = Array.from({ length: MAX_STEPS }, () => ({ type: 'wait', ms: 1 }));
+  const over = validateFlow(
+    v9([{ type: 'while', condition: { target: moreButton, exists: true }, steps: many }]),
+  );
+  assert.match(over[0], /上限の 1000 件を超えています/);
+});
+
+test('orderFlow は、while の項目を type、condition、max、steps の順に並べる（#103）', () => {
+  const flow = v9([
+    {
+      steps: [{ ms: 1, type: 'wait' }],
+      max: 5,
+      condition: { target: moreButton, exists: true },
+      type: 'while',
+    },
+  ]);
+  const ordered = orderFlow(/** @type {any} */ (flow));
+  assert.deepEqual(Object.keys(ordered.steps[0]), ['type', 'condition', 'max', 'steps']);
+  assert.deepEqual(Object.keys(/** @type {any} */ (ordered.steps[0]).steps[0]), ['type', 'ms']);
 });

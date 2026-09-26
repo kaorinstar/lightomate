@@ -110,6 +110,12 @@
       );
       return true;
     }
+    if (message?.kind === 'runner/read') {
+      readCondition(message.target, message.scope, message.timeoutMs).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+    }
     if (message?.kind === 'runner/count') {
       countItems(message.items, message.scope, message.timeoutMs).then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
@@ -201,6 +207,37 @@
       return { ok: false, error: '停止を指示されました。' };
     }
     return { ok: true, exists: element !== null };
+  }
+
+  /**
+   * 文字と日付の条件の要素の、表示の文字を読み取ります（#103）。ページは変更しません。
+   * 要素がない場合は、上限の時間まで待ってから、見つからないことを返します。「条件を満たさない」とは
+   * 扱いません。translated は、ページが Chrome の翻訳で表示されているかです。翻訳された文字では文字の
+   * 条件を判定しないために使います。
+   * @param {{ selectors: string[], tag: string, label: string, text?: string, scope?: string }} target
+   * @param {unknown} scope 繰り返しで処理中の行の指定
+   * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
+   * @returns {Promise<{ ok: true, text: string, translated: boolean } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
+   */
+  async function readCondition(target, scope, timeoutMs) {
+    const base = searchRoot(target, scope);
+    if (!base.ok) {
+      return { ok: false, notFound: true, error: base.error, translated: isPageTranslated() };
+    }
+    currentStep = new AbortController();
+    const element = await waitForTarget(target, timeoutMs, currentStep.signal, base.root);
+    if (currentStep.signal.aborted) {
+      return { ok: false, error: '停止を指示されました。' };
+    }
+    if (!element) {
+      return {
+        ok: false,
+        notFound: true,
+        error: `条件の要素「${target.label}」が見つかりません（${Math.round(timeoutMs / 1000)} 秒待ちました）。`,
+        translated: isPageTranslated(),
+      };
+    }
+    return { ok: true, text: readText(element), translated: isPageTranslated() };
   }
 
   /**

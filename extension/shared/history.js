@@ -21,7 +21,9 @@ import { describeStep } from './describe.js';
  *   done は成功、failed は失敗、stopped は中止（利用者が停止）、halted は一時停止（確定の手前など）です。
  * @property {number} total 手順の数
  * @property {number} [stepNumber] 止まった手順の番号（1 から数えます）。成功した場合はありません
- * @property {number[]} [items] 繰り返しの中で止まった場合の、段ごとの何件目の行か（1 から数えます、#6）
+ * @property {number[]} [items] 繰り返しの中で止まった場合の、段ごとの何件目の行か（1 から数えます、#6）。
+ *   while の段では、何回目か（1 から数えます、#103）
+ * @property {('item' | 'round')[]} [loops] items の段ごとの種類（#103）。while の段がある場合だけ記録します
  * @property {number} [page] ページ送りを使う繰り返しの中で止まった場合の、何ページ目か（1 から数えます、#95）
  * @property {string} [reason] 止まった理由。入力した値は伏せてあります
  * @property {string[]} files 保存したファイルのパス。ファイルを保存する手順（#16）で記録します
@@ -87,7 +89,8 @@ export function withoutHistoryEntries(history, runIds) {
  * 終わった実行の状態から、履歴の 1 件を作ります。止まった理由の中の入力した値は伏せます。
  * @param {{
  *   runId: string, flowId: string, flowName: string, origin: string, startedAt: string,
- *   status: string, stepIndex: number, total: number, error?: string, items?: number[], page?: number,
+ *   status: string, stepIndex: number, total: number, error?: string, items?: number[],
+ *   loops?: ('item' | 'round')[], page?: number,
  *   schemaVersion?: number,
  * }} run 実行の状態（background/runner.js の RunState）
  * @param {string} endedAt 終了した日時（ISO 8601）
@@ -119,6 +122,9 @@ export function historyEntryFromRun(run, endedAt, values, extra = {}) {
   entry.stepNumber = Math.min(run.stepIndex + 1, run.total);
   if (run.items && run.items.length > 0) {
     entry.items = [...run.items];
+    if (run.loops !== undefined) {
+      entry.loops = [...run.loops];
+    }
     if (run.page !== undefined) {
       entry.page = run.page;
     }
@@ -219,7 +225,7 @@ export function stepText(entry) {
   if (entry.stepNumber === undefined) {
     return '';
   }
-  const item = itemText(entry.items, entry.page);
+  const item = itemText(entry.items, entry.page, entry.loops);
   return `${entry.stepNumber} / ${entry.total}${item ? `（${item}）` : ''}`;
 }
 
