@@ -160,3 +160,14 @@ body {
 .lm-combobox {
   flex-basis: 100%;
 }
+
+/* 実行中の状態の文です。手順が進むたびに文の長さが変わっても、下のカードが動かないよう、
+   3 行分の高さに固定し、はみ出す分は省略します（#98）。 */
+.lm-run-progress {
+  display: -webkit-box;
+  height: 3lh;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
