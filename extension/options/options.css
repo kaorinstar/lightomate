@@ -95,15 +95,16 @@ body {
   cursor: pointer;
 }
 
+/* 行の上下の余白は、ほかの一覧の行と同じ値（base.css の --tblr-list-group-item-padding-y）にそろえます。 */
 .lm-flow-check {
   flex: none;
-  margin: 0.8rem 0 0 1rem;
+  margin: calc(var(--tblr-list-group-item-padding-y) + 0.3rem) 0 0 1rem;
 }
 
 .lm-list .lm-flow-open {
   flex: 1;
   min-width: 0;
-  padding: 0.5rem 1rem 0.5rem 0.625rem;
+  padding: var(--tblr-list-group-item-padding-y) 1rem var(--tblr-list-group-item-padding-y) 0.625rem;
   border: 0;
   background: none;
   color: inherit;

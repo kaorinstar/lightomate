@@ -82,6 +82,18 @@
   overflow-wrap: anywhere;
 }
 
+/*
+  カードの本文と一覧の 1 行の上下の余白です（#85）。Tabler の標準は 20px で、ほかの余白より大きいため、
+  12px にします。左右の余白は標準のままです。
+*/
+.card {
+  --tblr-card-spacer-y: 0.75rem;
+}
+
+.list-group {
+  --tblr-list-group-item-padding-y: 0.75rem;
+}
+
 /* 区画の見出しの帯は、内容より一段濃い背景にし、境目を色でも示します。 */
 .card-header {
   background: color-mix(in oklab, var(--tblr-bg-surface) 95%, var(--tblr-body-color));
