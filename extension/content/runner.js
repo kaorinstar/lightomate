@@ -27,6 +27,9 @@
     handOver: ['■ 停止：ここから手で操作してください（Lightomate）', '#8e24aa', '#ffffff'],
   };
 
+  /** 1 行目の文字として返す長さの上限です（#95）。比べるだけのため、全文は要りません。 */
+  const FIRST_TEXT_MAX_LENGTH = 200;
+
   let overlay = showStatusOverlay(...indicators.running);
 
   /**
@@ -202,7 +205,8 @@
    * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} items
    * @param {unknown} scope 外側の繰り返しで処理中の行の指定
    * @param {number} timeoutMs 行を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true, count: number } | { ok: false, error: string, notFound?: true }>}
+   * @returns {Promise<{ ok: true, count: number, firstText?: string } | { ok: false, error: string, notFound?: true }>}
+   *   firstText は 1 行目の文字です。「次へ」のクリックの後に、一覧が差し替わったかを判定するために使います（#95）
    */
   async function countItems(items, scope, timeoutMs) {
     const base = searchRoot(items, scope);
@@ -219,7 +223,12 @@
     if (currentStep.signal.aborted) {
       return { ok: false, error: '停止を指示されました。' };
     }
-    return { ok: true, count: first ? findAllTargets(items, base.root).length : 0 };
+    const rows = first ? findAllTargets(items, base.root) : [];
+    return {
+      ok: true,
+      count: rows.length,
+      ...(rows.length > 0 ? { firstText: readText(rows[0]).slice(0, FIRST_TEXT_MAX_LENGTH) } : {}),
+    };
   }
 
   /**

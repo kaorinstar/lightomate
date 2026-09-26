@@ -1,4 +1,5 @@
 // 条件分岐（if）と繰り返し（forEach）の手順を扱います（#6）。chrome.* は使いません。
+// 繰り返しの中でのページの移動と、ページ送り（forEach の nextPage）は #95 で加えました。
 //
 // フロー定義では、if と forEach の内側の手順を入れ子の一覧として書きます。実行の前に、入れ子の手順を
 // 「条件に応じて飛ぶ先」を持つ平らな命令の一覧（program）に変換します。実行は命令の番号（pc）を
@@ -20,6 +21,12 @@ export const DEFAULT_FOREACH_MAX = 100;
 /** forEach の繰り返しの上限（max）に書ける最大の値です。 */
 export const FOREACH_MAX_LIMIT = 500;
 
+/** ページ送りの上限（maxPages）の既定値です（#95）。 */
+export const DEFAULT_MAX_PAGES = 10;
+
+/** ページ送りの上限（maxPages）に書ける最大の値です（#95）。 */
+export const MAX_PAGES_LIMIT = 50;
+
 /**
  * 実行する命令です。number は、サイドパネルと実行履歴に表示する手順の番号（0 から数えます）です。
  * 入れ子を展開した通し番号で、flattenSteps の number と同じです。jump と next は、対応する手順が
@@ -38,7 +45,12 @@ export const FOREACH_MAX_LIMIT = 500;
  * @typedef {object} LoopFrame
  * @property {number} startPc forEach の命令の番号
  * @property {number} index 処理中の行の番号（0 から数えます）
- * @property {number} count 繰り返しを始めた時点の行数
+ * @property {number} count 処理中のページで、繰り返しを始めた時点の行数
+ * @property {number} [page] 処理中のページの番号（0 から数えます）。ページ送り（#95）で増えます。
+ *   省略した場合は 0 です
+ * @property {number} [done] 前のページまでに処理した行の数（#95）。省略した場合は 0 です
+ * @property {string} [firstText] 行を数えたときの 1 行目の文字（#95）。一覧のページへ戻った後に、同じ一覧かを
+ *   確かめるために使います
  */
 
 /**
@@ -177,7 +189,8 @@ export function compileSteps(steps) {
  * @param {Instruction[]} program
  * @param {number} pc 終えた命令の番号
  * @param {LoopFrame[]} frames 繰り返しの記録（外側の段から順）
- * @param {boolean | number} [result] if では条件を満たしたか、forEach では処理する行数
+ * @param {boolean | number} [result] if では条件を満たしたか、forEach では処理する行数、next では
+ *   次のページへ送った後の行数（ページを送らない場合は省略します、#95）
  * @returns {{ pc: number, frames: LoopFrame[] }}
  */
 export function advance(program, pc, frames, result) {
@@ -196,6 +209,25 @@ export function advance(program, pc, frames, result) {
     }
     case 'next': {
       const frame = frames.at(-1);
+      // result が数の場合は、次のページへ送った後の行数です（#95）。0 件の場合は繰り返しを終えます。
+      if (frame && typeof result === 'number') {
+        if (result <= 0) {
+          return { pc: pc + 1, frames: frames.slice(0, -1) };
+        }
+        return {
+          pc: instruction.startPc + 1,
+          frames: [
+            ...frames.slice(0, -1),
+            {
+              ...frame,
+              index: 0,
+              count: result,
+              page: (frame.page ?? 0) + 1,
+              done: (frame.done ?? 0) + frame.count,
+            },
+          ],
+        };
+      }
       if (frame && frame.index + 1 < frame.count) {
         return {
           pc: instruction.startPc + 1,
@@ -251,9 +283,116 @@ export function itemScope(program, frames) {
 
 /**
  * 繰り返しの何件目かの表示です（例：「3 件目」、入れ子の場合は「2 件目の 3 件目」）。
+ * ページ送り（#95）を使う繰り返しでは、何ページ目かを先頭に添えます（例：「2 ページ目の 3 件目」）。
  * @param {number[] | undefined} items 繰り返しの段ごとの、処理中の行の番号（1 から数えます）
+ * @param {number} [page] 処理中のページの番号（1 から数えます）。ページ送りを使わない場合は省略します
  * @returns {string}
  */
-export function itemText(items) {
-  return items && items.length > 0 ? items.map((item) => `${item} 件目`).join('の ') : '';
+export function itemText(items, page) {
+  if (!items || items.length === 0) {
+    return '';
+  }
+  const rows = items.map((item) => `${item} 件目`).join('の ');
+  return page === undefined ? rows : `${page} ページ目の ${rows}`;
+}
+
+/**
+ * 行の処理を終えた後に、次に行うことです（#95）。
+ * - row：同じページの次の行へ進みます。
+ * - page：ページの最後の行を終えたため、次のページへ送ります（nextPage がある場合）。
+ * - end：繰り返しを終えます。
+ * @param {import('./flow.js').ForEachStep} step
+ * @param {LoopFrame} frame
+ * @returns {'row' | 'page' | 'end'}
+ */
+export function afterRow(step, frame) {
+  if (frame.index + 1 < frame.count) {
+    return 'row';
+  }
+  return step.nextPage ? 'page' : 'end';
+}
+
+/**
+ * 次のページへ送る前に、ページ送りの上限（maxPages）に達していないかを確かめます（#95）。
+ * 達している場合は、止める理由を返します。上限で黙って終えると、処理していない行があることに
+ * 気付けないためです。
+ * @param {import('./flow.js').ForEachStep} step
+ * @param {LoopFrame} frame
+ * @returns {string | undefined}
+ */
+export function pageLimitError(step, frame) {
+  const maxPages = step.maxPages ?? DEFAULT_MAX_PAGES;
+  if ((frame.page ?? 0) + 1 >= maxPages) {
+    return (
+      `「${step.items.label}」のページ送りが上限（${maxPages} ページ）に達しましたが、次のページがあります。` +
+      'フローの forEach の maxPages を増やしてください。'
+    );
+  }
+  return undefined;
+}
+
+/**
+ * 次のページの行を加えると、繰り返しの上限（max）を超えないかを確かめます（#95）。max は、ページ送りを
+ * 含めた全ページの行の合計の上限です。超える場合は、止める理由を返します。
+ * @param {import('./flow.js').ForEachStep} step
+ * @param {LoopFrame} frame 送る前のページの記録
+ * @param {number} count 次のページの行数
+ * @returns {string | undefined}
+ */
+export function rowLimitError(step, frame, count) {
+  const max = step.max ?? DEFAULT_FOREACH_MAX;
+  const total = (frame.done ?? 0) + frame.count + count;
+  if (total > max) {
+    return (
+      `「${step.items.label}」の行が、${(frame.page ?? 0) + 2} ページ目までで ${total} 件あり、` +
+      `繰り返しの上限（${max} 件）を超えています。フローの forEach の max を増やしてください。`
+    );
+  }
+  return undefined;
+}
+
+/**
+ * 行の処理の後に、一覧のページへ戻る必要があるかを返します（#95）。行の処理の途中でページが移動した
+ * 場合（表示中のページの識別子が、行を数えたときと異なる場合）に true です。識別子が分からない場合は、
+ * 戻りません。
+ * @param {string | undefined} listDocumentId 行を数えたときのページの識別子
+ * @param {string | undefined} currentDocumentId 表示中のページの識別子
+ * @returns {boolean}
+ */
+export function needsReturn(listDocumentId, currentDocumentId) {
+  return (
+    listDocumentId !== undefined &&
+    currentDocumentId !== undefined &&
+    listDocumentId !== currentDocumentId
+  );
+}
+
+/**
+ * 一覧のページへ戻った後の一覧が、最初に数えたときと同じかを確かめます（#95）。行数か 1 行目の文字が
+ * 異なる場合は、止める理由を返します。前のページの行の番号で、別の行を操作しないためです。
+ * 1 行目の文字も比べるのは、ページを読み込まずに一覧だけを差し替えるページ送りでは、URL を開き直すと
+ * 1 ページ目に戻り、行数だけでは違いが分からないためです。
+ * @param {string} label 行の指定の説明（items.label）
+ * @param {{ count: number, firstText?: string }} expected 最初に数えた行数と 1 行目の文字
+ * @param {{ count: number, firstText?: string }} actual 戻った後の行数と 1 行目の文字
+ * @returns {string | undefined}
+ */
+export function returnedListError(label, expected, actual) {
+  if (expected.count !== actual.count) {
+    return (
+      `一覧のページに戻った後、「${label}」の行が ${actual.count} 件になり、最初に数えた ${expected.count} 件と異なるため、停止しました。` +
+      '一覧の内容が変わったか、URL を開き直しても同じ一覧が表示されないページです。'
+    );
+  }
+  if (
+    expected.firstText !== undefined &&
+    actual.firstText !== undefined &&
+    expected.firstText !== actual.firstText
+  ) {
+    return (
+      `一覧のページに戻った後、「${label}」の 1 行目が最初と異なるため、停止しました。` +
+      '一覧の内容が変わったか、URL を開き直しても同じ一覧が表示されないページです。'
+    );
+  }
+  return undefined;
 }

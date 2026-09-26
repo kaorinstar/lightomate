@@ -212,6 +212,15 @@ test('繰り返しの中で止まった実行は、何件目の行かを持ち�
   assert.equal(done?.items, undefined);
 });
 
+test('ページ送りの繰り返しの中で止まった実行は、何ページ目かも持ち、表示する（#95）', () => {
+  const result = historyEntryFromRun({ ...run, status: 'failed', items: [3], page: 2 }, '', []);
+  assert.ok(result);
+  assert.equal(result.page, 2);
+  assert.equal(stepText(result), `2 / ${run.total}（2 ページ目の 3 件目）`);
+  const done = historyEntryFromRun({ ...run, status: 'done', items: [3], page: 2 }, '', []);
+  assert.equal(done?.page, undefined);
+});
+
 // ---- 失敗の詳細とコピー（#93） ----
 
 /** @type {import('../extension/shared/flow.js').Step} */

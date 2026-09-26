@@ -76,6 +76,15 @@ test('条件分岐と繰り返しの手順の説明（#6）', () => {
     describeStep({ type: 'forEach', items: target, steps: [] }),
     '繰り返し：「注文履歴」の各行（上限 100 件）',
   );
+  assert.equal(
+    describeStep({
+      type: 'forEach',
+      items: target,
+      nextPage: { ...target, label: '次へ' },
+      steps: [],
+    }),
+    '繰り返し：「注文履歴」の各行（上限 100 件、「次へ」で次のページへ、上限 10 ページ）',
+  );
   assert.equal(stepKindLabel({ type: 'forEach', items: target, max: 5, steps: [] }), '繰り返し');
   assert.equal(
     stepKindLabel({ type: 'if', condition: { target, exists: true }, then: [] }),
@@ -86,4 +95,12 @@ test('条件分岐と繰り返しの手順の説明（#6）', () => {
 test('繰り返しの中では、手順の番号に何件目かを添える（#6）', () => {
   const run = { flowName: 'a', status: 'running', stepIndex: 4, total: 9, items: [3] };
   assert.equal(runStatusText(run, undefined), '「a」を実行中です。手順 5 / 9（3 件目）');
+});
+
+test('ページ送りの繰り返しの中では、何ページ目かも添える（#95）', () => {
+  const run = { flowName: 'a', status: 'running', stepIndex: 4, total: 9, items: [3], page: 2 };
+  assert.equal(
+    runStatusText(run, undefined),
+    '「a」を実行中です。手順 5 / 9（2 ページ目の 3 件目）',
+  );
 });

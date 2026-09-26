@@ -12,10 +12,15 @@ import {
 } from './params.js';
 import { RESERVED_NAMES, nonBuiltinReferences, validateSaveTemplate } from './save-path.js';
 import { validateInterval, validateWaitMs } from './speed.js';
-import { CONTROL_STEP_TYPES, FOREACH_MAX_LIMIT, MAX_NESTING } from './control-flow.js';
+import {
+  CONTROL_STEP_TYPES,
+  FOREACH_MAX_LIMIT,
+  MAX_NESTING,
+  MAX_PAGES_LIMIT,
+} from './control-flow.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -25,9 +30,11 @@ export const SCHEMA_VERSION = 6;
  * 加えたものです（#41）。
  * 版 6 は、版 5 に条件分岐（if）と繰り返し（forEach）、行の内側で要素を探す指定（target の scope）を
  * 加えたものです（#6）。
+ * 版 7 は、版 6 に forEach のページ送り（nextPage、maxPages）と、forEach の内側のページの操作による
+ * 移動（navigate、cause が page）を加えたものです（#95）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -43,6 +50,9 @@ const ORIGINS_MIN_SCHEMA_VERSION = 5;
 
 /** target の scope を使える最も古い版です（#6）。 */
 const SCOPE_MIN_SCHEMA_VERSION = 6;
+
+/** forEach の nextPage と maxPages、forEach の内側の navigate を使える最も古い版です（#95）。 */
+const LOOP_NAVIGATION_MIN_SCHEMA_VERSION = 7;
 
 /**
  * 追加のサイト（extraOrigins）の件数の上限です（#41）。記録中は確認を出さずに加えるため、
@@ -157,12 +167,17 @@ export const MAX_TEXT_LENGTH = 2000;
  */
 
 /**
- * 繰り返しです（#6）。同じページの一覧の各行で、同じ手順を行います。版 6 で加えました。
+ * 繰り返しです（#6）。一覧の各行で、同じ手順を行います。版 6 で加えました。
+ * 版 7 で、内側でのページの操作による移動と、ページ送り（nextPage、maxPages）を加えました（#95）。
  * @typedef {object} ForEachStep
  * @property {'forEach'} type
  * @property {Target} items 一覧の各行を指す指定。selectors は、すべての行に一致するセレクターです
  * @property {number} [max] 繰り返しの上限。行がこれより多い場合は、繰り返しを始めずに止めます。
+ *   ページ送りを使う場合は、全ページの行の合計の上限です。
  *   省略した場合は control-flow.js の DEFAULT_FOREACH_MAX です
+ * @property {Target} [nextPage] 次のページへ送る要素（「次へ」のボタンなど）の指定。ページの行をすべて処理した後にクリックし、
+ *   次のページの行を続けて処理します。見つからない場合は繰り返しを終えます
+ * @property {number} [maxPages] ページ送りの上限。省略した場合は control-flow.js の DEFAULT_MAX_PAGES です
  * @property {Step[]} steps 各行で行う手順
  */
 
@@ -304,11 +319,13 @@ function orderStep(step) {
       };
     }
     case 'forEach': {
-      const { type, items, max, steps, ...rest } = step;
+      const { type, items, max, nextPage, maxPages, steps, ...rest } = step;
       return {
         type,
         items,
         ...(max !== undefined ? { max } : {}),
+        ...(nextPage !== undefined ? { nextPage } : {}),
+        ...(maxPages !== undefined ? { maxPages } : {}),
         ...rest,
         steps: steps.map(orderStep),
       };
@@ -432,7 +449,10 @@ function validateStepList(list, path, depth, inLoop, context) {
       if (!isRecord(target) || target.scope === undefined) {
         continue;
       }
-      if (version !== undefined && version < SCOPE_MIN_SCHEMA_VERSION) {
+      if (name === 'nextPage') {
+        // 「次へ」のボタンは行の外にあるため、ページ全体で探します（#95）。
+        errors.push(`${at}: nextPage.scope は書けません。「次へ」はページ全体で探します。`);
+      } else if (version !== undefined && version < SCOPE_MIN_SCHEMA_VERSION) {
         errors.push(
           `${at}: ${name}.scope は、schemaVersion が ${SCOPE_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
         );
@@ -441,9 +461,29 @@ function validateStepList(list, path, depth, inLoop, context) {
       }
     }
     if (inLoop && type === 'navigate') {
-      errors.push(
-        `${at}: forEach の内側には navigate の手順を書けません。繰り返しの中でのページの移動には、まだ対応していません。`,
-      );
+      if (version !== undefined && version < LOOP_NAVIGATION_MIN_SCHEMA_VERSION) {
+        errors.push(
+          `${at}: forEach の内側の navigate の手順は、schemaVersion が ${LOOP_NAVIGATION_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+        );
+      } else if (step.cause === 'user') {
+        // 一覧のページへは自動で戻るため、利用者の操作による移動は書く必要がありません（#95）。
+        errors.push(
+          `${at}: forEach の内側には、cause が user の navigate の手順を書けません。一覧のページへは、行の処理の後に自動で戻ります。`,
+        );
+      }
+    }
+    if (type === 'forEach' && (step.nextPage !== undefined || step.maxPages !== undefined)) {
+      if (version !== undefined && version < LOOP_NAVIGATION_MIN_SCHEMA_VERSION) {
+        errors.push(
+          `${at}: nextPage と maxPages は、schemaVersion が ${LOOP_NAVIGATION_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+        );
+      }
+      if (inLoop) {
+        // 内側の繰り返しでページを送ると、外側の行の番号が意味を失うためです（#95）。
+        errors.push(
+          `${at}: nextPage と maxPages は、外側に forEach がない forEach にだけ書けます。`,
+        );
+      }
     }
     if (typeof step.origin === 'string' && PAGE_STEP_TYPES.includes(type)) {
       if (version !== undefined && version < ORIGINS_MIN_SCHEMA_VERSION) {
@@ -530,7 +570,12 @@ function stepTargets(step) {
     case 'if':
       return isRecord(step.condition) ? [['condition.target', step.condition.target]] : [];
     case 'forEach':
-      return [['items', step.items]];
+      return step.nextPage === undefined
+        ? [['items', step.items]]
+        : [
+            ['items', step.items],
+            ['nextPage', step.nextPage],
+          ];
     default:
       return 'target' in step ? [['target', step.target]] : [];
   }
@@ -688,6 +733,17 @@ export function validateStep(step) {
           /** @type {number} */ (step.max) > FOREACH_MAX_LIMIT)
       ) {
         errors.push(`max が 1 以上 ${FOREACH_MAX_LIMIT} 以下の整数ではありません。`);
+      }
+      if (step.nextPage !== undefined) {
+        errors.push(...validateTarget(step.nextPage, 'nextPage'));
+      }
+      if (
+        step.maxPages !== undefined &&
+        (!Number.isInteger(step.maxPages) ||
+          /** @type {number} */ (step.maxPages) < 1 ||
+          /** @type {number} */ (step.maxPages) > MAX_PAGES_LIMIT)
+      ) {
+        errors.push(`maxPages が 1 以上 ${MAX_PAGES_LIMIT} 以下の整数ではありません。`);
       }
       if (!Array.isArray(step.steps)) {
         errors.push('steps が配列ではありません。');

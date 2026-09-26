@@ -1,6 +1,6 @@
 // 手順を、人が読むための 1 行の説明にします。サイドパネルと設定画面で使います。
 
-import { DEFAULT_FOREACH_MAX, itemText } from './control-flow.js';
+import { DEFAULT_FOREACH_MAX, DEFAULT_MAX_PAGES, itemText } from './control-flow.js';
 import { DEFAULT_SAVE_PATH } from './save-path.js';
 
 /** @typedef {import('./flow.js').Step} Step */
@@ -32,7 +32,10 @@ export function describeStep(step) {
     case 'if':
       return `条件：「${step.condition.target.label}」が${step.condition.exists ? 'ある' : 'ない'}場合`;
     case 'forEach':
-      return `繰り返し：「${step.items.label}」の各行（上限 ${step.max ?? DEFAULT_FOREACH_MAX} 件）`;
+      // ページ送り（#95）を使う場合は、「次へ」の要素とページの上限を添えます。
+      return step.nextPage
+        ? `繰り返し：「${step.items.label}」の各行（上限 ${step.max ?? DEFAULT_FOREACH_MAX} 件、「${step.nextPage.label}」で次のページへ、上限 ${step.maxPages ?? DEFAULT_MAX_PAGES} ページ）`
+        : `繰り返し：「${step.items.label}」の各行（上限 ${step.max ?? DEFAULT_FOREACH_MAX} 件）`;
   }
 }
 
@@ -40,14 +43,14 @@ export function describeStep(step) {
  * 実行の状態の説明です。サイドパネルの「フローの実行」に表示します。
  * @param {{
  *   flowName: string, status: string, stepIndex: number, total: number, error?: string, note?: string,
- *   items?: number[],
+ *   items?: number[], page?: number,
  * }} run 実行の状態（background/runner.js の RunState）
  * @param {Step | undefined} step 実行中、または止まった手順。一時停止中は、次に実行する手順です。
  * @returns {string}
  */
 export function runStatusText(run, step) {
-  // 繰り返しの中では、何件目の行かを添えます（#6）。
-  const item = itemText(run.items);
+  // 繰り返しの中では、何件目の行かを添えます（#6）。ページ送りでは、何ページ目かも添えます（#95）。
+  const item = itemText(run.items, run.page);
   const number = `手順 ${run.stepIndex + 1} / ${run.total}${item ? `（${item}）` : ''}`;
   const where = `${number}${step ? `（${describeStep(step)}）` : ''}`;
   switch (run.status) {
