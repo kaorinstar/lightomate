@@ -51,9 +51,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜8 のフローは、そのまま版 9 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 9);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8]) {
+test('版 1〜9 のフローは、そのまま版 10 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 10);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -995,4 +995,52 @@ test('orderFlow は、while の項目を type、condition、max、steps の順�
   const ordered = orderFlow(/** @type {any} */ (flow));
   assert.deepEqual(Object.keys(ordered.steps[0]), ['type', 'condition', 'max', 'steps']);
   assert.deepEqual(Object.keys(/** @type {any} */ (ordered.steps[0]).steps[0]), ['type', 'ms']);
+});
+
+// 手順の後に開いたダイアログへの応答（#88）の検証です。
+
+test('版 10 では、click・input・select・navigate の手順に dialog を書ける（#88）', () => {
+  const steps = [
+    { type: 'navigate', url: 'https://www.example.com/', cause: 'user', dialog: ['accept'] },
+    { type: 'click', target, dialog: ['accept', 'dismiss'] },
+    { type: 'input', target: { ...target, tag: 'input' }, value: 'a', dialog: ['dismiss'] },
+    {
+      type: 'select',
+      target,
+      values: ['1'],
+      labels: ['1 個'],
+      dialog: ['accept', 'accept', 'accept', 'accept', 'accept'],
+    },
+  ];
+  assert.deepEqual(validateFlow({ ...validFlow, schemaVersion: 10, steps }), []);
+  // 版 9 以前のフローでは誤りです。
+  const errors = validateFlow({ ...validFlow, schemaVersion: 9, steps });
+  assert.equal(errors.length, 4);
+  assert.match(errors[0], /^steps\[0\]: dialog は、schemaVersion が 10 以上/);
+});
+
+test('dialog は accept と dismiss を 1〜5 個並べた配列だけを受け付け、対象の手順にだけ書ける（#88）', () => {
+  for (const dialog of [
+    [],
+    ['ok'],
+    ['accept', 'yes'],
+    ['accept', 'accept', 'accept', 'accept', 'accept', 'accept'],
+    'accept',
+    true,
+    null,
+  ]) {
+    assert.deepEqual(validateStep({ type: 'click', target, dialog }), [
+      'dialog が、"accept" または "dismiss" を 1〜5 個並べた配列ではありません。',
+    ]);
+  }
+  for (const step of [
+    { type: 'extract', target, name: 'title' },
+    { type: 'pause' },
+    { type: 'savePdf' },
+    { type: 'wait', ms: 1000 },
+  ]) {
+    assert.deepEqual(validateStep({ ...step, dialog: ['accept'] }), [
+      'dialog は、click、input、select、navigate の手順にだけ書けます。',
+    ]);
+  }
 });

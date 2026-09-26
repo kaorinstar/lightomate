@@ -52,6 +52,7 @@ import {
   whileLimitError,
 } from '../shared/control-flow.js';
 import { conditionKind, describeCondition, evaluateCondition } from '../shared/condition.js';
+import { decideDialog } from '../shared/dialog.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -115,6 +116,12 @@ const DOWNLOAD_TIMEOUT_MS = 60_000;
 
 /** ページから読み取る文字の長さの上限です。保存先のファイル名に使うため、長すぎる値を切ります。 */
 const EXTRACT_MAX_LENGTH = 200;
+
+/**
+ * 実行中の枠の表示など、届かなくても実行に影響しない命令の応答を待つ上限です。ダイアログが開いていると
+ * 応答がないため、待ち続けないようにします（#88）。
+ */
+const PAGE_MESSAGE_TIMEOUT_MS = 2_000;
 
 /** 停止の指示を確かめる間隔です。要素やページの読み込みを待っている間も、この間隔で確かめます。 */
 const STOP_CHECK_INTERVAL_MS = 250;
@@ -193,6 +200,261 @@ const savedFiles = new Map();
  * @type {Map<string, number>}
  */
 const retryCounts = new Map();
+
+/**
+ * 実行中のタブで開いたダイアログの状態です（#88）。実行ごとに 1 つ作ります。
+ * @typedef {object} DialogWatch
+ * @property {number} tabId 実行しているタブ
+ * @property {boolean} active ダイアログに応答するか。一時停止中は false で、利用者の操作で開いたダイアログには
+ *   応答しません
+ * @property {boolean} open ダイアログが開いているか。開いている間は、ページに命令を送っても応答がありません
+ * @property {import('../shared/dialog.js').DialogResponse[] | undefined} responses 直前にページを操作した
+ *   手順の dialog
+ * @property {number} answered その手順の後に応答したダイアログの数
+ * @property {import('../shared/dialog.js').DialogDecision | undefined} pending まだ処理していない、
+ *   一時停止または実行を終える対応
+ * @property {string | undefined} detached 接続が切れた理由（chrome.debugger.onDetach の reason）
+ * @property {((note: string) => Promise<void>) | undefined} pause ダイアログのために一時停止する処理。
+ *   手順を実行している間だけ設定します
+ */
+
+/**
+ * 実行ごとの、ダイアログの状態です（#88）。
+ * @type {Map<string, DialogWatch>}
+ */
+const dialogWatches = new Map();
+
+/**
+ * タブのダイアログの状態を返します。そのタブで実行していない場合は undefined です。
+ * @param {number | undefined} tabId
+ * @returns {DialogWatch | undefined}
+ */
+function watchForTab(tabId) {
+  return [...dialogWatches.values()].find((watch) => watch.tabId === tabId);
+}
+
+/**
+ * 実行中のタブのダイアログと、chrome.debugger の接続が切れたことを受け取ります（#88）。
+ * Service Worker の起動時に 1 回だけ呼びます。
+ */
+export function registerDialogEvents() {
+  chrome.debugger.onEvent.addListener((source, method, params) => {
+    const watch = watchForTab(source.tabId);
+    if (!watch) {
+      return;
+    }
+    if (method === 'Page.javascriptDialogClosed') {
+      watch.open = false;
+      return;
+    }
+    if (method !== 'Page.javascriptDialogOpening') {
+      return;
+    }
+    watch.open = true;
+    if (!watch.active) {
+      return;
+    }
+    const { type, message } = /** @type {{ type?: unknown, message?: unknown }} */ (params ?? {});
+    const decision = decideDialog(
+      { type: String(type), message: typeof message === 'string' ? message : '' },
+      watch.responses,
+      watch.answered,
+    );
+    if (decision.action !== 'respond') {
+      watch.pending = decision;
+      return;
+    }
+    watch.answered += 1;
+    chrome.debugger
+      .sendCommand({ tabId: watch.tabId }, 'Page.handleJavaScriptDialog', {
+        accept: decision.response === 'accept',
+      })
+      .catch((error) => {
+        // 応答できなかった場合は、一時停止して利用者に任せます。
+        watch.pending = {
+          action: 'pause',
+          note: `サイトが表示したダイアログに応答できませんでした（${String(error)}）。ダイアログに手で応答してください。`,
+        };
+      });
+  });
+
+  chrome.debugger.onDetach.addListener((source, reason) => {
+    const watch = watchForTab(source.tabId);
+    if (watch) {
+      watch.detached = reason;
+    }
+  });
+}
+
+/**
+ * 実行中のタブに chrome.debugger で接続し、ダイアログを受け取れるようにします（#88）。
+ * ダイアログが開いた後に接続しても応答できないため、実行の初めに接続します。
+ * @param {string} runId
+ * @param {number} tabId
+ */
+async function watchDialogs(runId, tabId) {
+  const target = { tabId };
+  try {
+    await chrome.debugger.attach(target, '1.3');
+  } catch (error) {
+    throw new Error(
+      `サイトが表示するダイアログに応答するための接続（chrome.debugger）ができませんでした。このタブで開発者ツールを開いている場合は、閉じてから実行してください（${String(error)}）。`,
+      { cause: error },
+    );
+  }
+  dialogWatches.set(runId, {
+    tabId,
+    active: true,
+    open: false,
+    responses: undefined,
+    answered: 0,
+    pending: undefined,
+    detached: undefined,
+    pause: undefined,
+  });
+  try {
+    await chrome.debugger.sendCommand(target, 'Page.enable');
+  } catch (error) {
+    await unwatchDialogs(runId);
+    throw new Error(
+      `サイトが表示するダイアログを受け取る準備ができませんでした（${String(error)}）。`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * chrome.debugger の接続を切ります（#88）。開いているダイアログは閉じずに残り、利用者が応答できます。
+ * @param {string} runId
+ */
+async function unwatchDialogs(runId) {
+  const watch = dialogWatches.get(runId);
+  if (!watch) {
+    return;
+  }
+  dialogWatches.delete(runId);
+  if (watch.detached === undefined) {
+    await chrome.debugger.detach({ tabId: watch.tabId }).catch(() => {});
+  }
+}
+
+/**
+ * 手順がページの操作を始めることを記録します（#88）。この後に開いたダイアログには、この手順の dialog で応答します。
+ * @param {string} runId
+ * @param {Step} step
+ */
+function beginDialogWindow(runId, step) {
+  const watch = dialogWatches.get(runId);
+  if (watch) {
+    watch.responses = 'dialog' in step ? step.dialog : undefined;
+    watch.answered = 0;
+  }
+}
+
+/**
+ * ダイアログが開いている場合に、［キャンセル］で閉じます（#88）。停止するときに使います。
+ * ［キャンセル］は、ページを離れず、確認した操作も行わない、進まない側の応答です。
+ * @param {string} runId
+ */
+async function dismissOpenDialog(runId) {
+  const watch = dialogWatches.get(runId);
+  if (watch?.open && watch.detached === undefined) {
+    await chrome.debugger
+      .sendCommand({ tabId: watch.tabId }, 'Page.handleJavaScriptDialog', { accept: false })
+      .catch(() => {});
+    watch.open = false;
+  }
+}
+
+/**
+ * ダイアログのために一時停止するか、実行を終えるかを処理します（#88）。停止の指示を確かめるたびに呼びます。
+ * @param {string} runId
+ */
+async function handleDialogs(runId) {
+  const watch = dialogWatches.get(runId);
+  if (!watch) {
+    return;
+  }
+  if (watch.detached !== undefined) {
+    if (watch.detached === 'target_closed') {
+      throw new Error('実行中のタブが閉じられたため、停止しました。');
+    }
+    throw new Error(
+      watch.detached === 'canceled_by_user'
+        ? 'Chrome の画面上部の表示で［キャンセル］が押され、サイトが表示するダイアログに応答できなくなったため、停止しました。'
+        : `サイトが表示するダイアログを受け取る接続が切れたため、停止しました（${watch.detached}）。`,
+    );
+  }
+  const decision = watch.pending;
+  if (decision === undefined || decision.action === 'respond') {
+    return;
+  }
+  watch.pending = undefined;
+  if (decision.action === 'halt') {
+    throw new Halted(decision.note);
+  }
+  if (watch.pause) {
+    await watch.pause(decision.note);
+  }
+}
+
+/**
+ * ページの枠や文字の表示など、届かなくても実行に影響しない命令をページに送ります。
+ * ダイアログが開いていると応答がないため、応答を待つのは短い時間だけにします（#88）。
+ * @param {number} tabId
+ * @param {object} message
+ */
+async function sendToPageBriefly(tabId, message) {
+  await Promise.race([
+    chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).catch(() => {}),
+    sleep(PAGE_MESSAGE_TIMEOUT_MS),
+  ]);
+}
+
+/**
+ * ページでの処理（スクリプトの読み込みなど）が終わるのを待ちます。待っている間も停止の指示と
+ * ダイアログを確かめます。ダイアログが開いている間は、ページでの処理が終わらないためです（#88）。
+ * @template T
+ * @param {string} runId
+ * @param {number} tabId
+ * @param {Promise<T>} promise
+ * @returns {Promise<T>}
+ */
+async function waitForPage(runId, tabId, promise) {
+  const settled = promise.then(
+    (value) => ({ value, error: undefined, failed: false }),
+    (error) => ({ value: undefined, error, failed: true }),
+  );
+  let result;
+  while (
+    !(result = await Promise.race([settled, sleep(STOP_CHECK_INTERVAL_MS).then(() => null)]))
+  ) {
+    try {
+      await throwIfStopRequested(runId);
+    } catch (error) {
+      // ページで要素を待つ処理も止めます。
+      await sendToPageBriefly(tabId, { kind: 'runner/abort' });
+      throw error;
+    }
+  }
+  if (result.failed) {
+    throw result.error;
+  }
+  return /** @type {T} */ (result.value);
+}
+
+/**
+ * 実行中のページに content script を読み込みます。
+ * @param {string} runId
+ * @param {number} tabId
+ */
+async function injectContent(runId, tabId) {
+  await waitForPage(
+    runId,
+    tabId,
+    chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES }),
+  );
+}
 
 /**
  * @param {string} runId
@@ -279,6 +541,8 @@ async function finishRun(runId, update, step) {
 export async function markInterruptedRuns() {
   for (const state of await listRunStates()) {
     if (!activeRuns.has(state.runId) && isActiveRun(state)) {
+      // ダイアログを受け取るための接続（#88）が残っている場合は切ります。接続していない場合は誤りになるため、無視します。
+      await chrome.debugger.detach({ tabId: state.tabId }).catch(() => {});
       await finishRun(state.runId, {
         status: 'failed',
         error: '拡張機能の処理が途中で停止したため、実行を中断しました。',
@@ -346,6 +610,8 @@ export async function startRun(flowId, paramInput, secretInput) {
 
   try {
     const tabId = await openTab(flow, resolved.steps);
+    // サイトが表示するダイアログに応答できるよう、実行の初めに接続します（#88）。
+    await watchDialogs(runId, tabId);
     await setRunState({
       runId,
       flowId,
@@ -364,11 +630,12 @@ export async function startRun(flowId, paramInput, secretInput) {
     });
     return { ok: true };
   } catch (error) {
+    await unwatchDialogs(runId);
     activeRuns.delete(runId);
     redactions.delete(runId);
     savedFiles.delete(runId);
     retryCounts.delete(runId);
-    return { ok: false, error: String(error) };
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -641,6 +908,12 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
   };
   /** 実行履歴に記録する、止まった手順です（#93）。停止した場合は、次に実行する手順です。 */
   const stoppedStep = () => stepAt(steps, currentNumber());
+  const watch = dialogWatches.get(runId);
+  if (watch) {
+    // 応答の指定がないダイアログでは、手順の途中で一時停止します（#88）。ダイアログが閉じると手順の続きを行い、
+    // ［再開］を押されるまで次の手順に進みません。
+    watch.pause = (note) => pauseRun(runId, flow, tabId, position(), note);
+  }
   try {
     while (pc < program.length) {
       const instruction = program[pc];
@@ -817,6 +1090,8 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
         } else if (step.type === 'navigate') {
           const shownBefore = await getDocumentId(tabId);
           const first = pc === 0;
+          // 移動の前に、今のページが「ページを離れるかの確認」を表示することがあります（#88）。
+          beginDialogWindow(runId, step);
           if (!first) {
             await chrome.tabs.update(tabId, { url: step.url });
           }
@@ -885,6 +1160,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
     });
   } catch (error) {
     if (error instanceof StopRequested) {
+      await dismissOpenDialog(runId);
       // stepIndex は、停止した時点で完了していた手順の数と同じです。
       await finishRun(runId, { status: 'stopped', ...position() }, stoppedStep());
       return;
@@ -908,6 +1184,8 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       stoppedStep(),
     );
   } finally {
+    // 開いているダイアログは閉じずに残り、利用者が応答できます（#88）。
+    await unwatchDialogs(runId);
     if (handOver) {
       // 確定ボタンの手前などで実行を終えた場合は、以降を人が操作することを示します（#13）。
       // タブのページが移動すると、Chrome がアイコンの文字を消し、枠も content script とともに消えます。
@@ -915,13 +1193,10 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
     } else {
       await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
     }
-    await chrome.tabs
-      .sendMessage(
-        tabId,
-        { kind: 'runner/finish', indicator: handOver ? 'handOver' : undefined },
-        { frameId: 0 },
-      )
-      .catch(() => {});
+    await sendToPageBriefly(tabId, {
+      kind: 'runner/finish',
+      indicator: handOver ? 'handOver' : undefined,
+    });
   }
 }
 
@@ -1173,6 +1448,27 @@ async function isPauseRequested(runId) {
  */
 async function pauseRun(runId, flow, tabId, next, note) {
   await updateRunState(runId, { status: 'paused', ...next, note });
+  // 一時停止中に利用者の操作で開いたダイアログには、応答しません（#88）。
+  const watch = dialogWatches.get(runId);
+  if (watch) {
+    watch.active = false;
+  }
+  try {
+    await waitForResume(runId, flow, tabId);
+  } finally {
+    if (watch) {
+      watch.active = true;
+    }
+  }
+}
+
+/**
+ * 一時停止中に、［再開］を押されるまで待ちます（#37）。
+ * @param {string} runId
+ * @param {Flow} flow
+ * @param {number} tabId
+ */
+async function waitForResume(runId, flow, tabId) {
   const deadline = Date.now() + PAUSE_LIMIT_MS;
   /** 枠を表示したページの識別子です。人がページを移動したら、移動後のページに表示し直します。 */
   let shownDocument;
@@ -1197,7 +1493,12 @@ async function pauseRun(runId, flow, tabId, next, note) {
       throw new Error('実行中のタブが閉じられたため、停止しました。');
     }
     const documentId = await getDocumentId(tabId);
-    if (tab.status === 'complete' && documentId !== shownDocument) {
+    // ダイアログが開いている間は、ページに枠を表示できません。閉じた後に表示します（#88）。
+    if (
+      tab.status === 'complete' &&
+      documentId !== shownDocument &&
+      !dialogWatches.get(runId)?.open
+    ) {
       shownDocument = documentId;
       // ページが移動すると、Chrome がアイコンの文字を消すため、設定し直します。
       await showWaitBadge(tabId).catch(() => {});
@@ -1219,11 +1520,16 @@ async function showPausedFrame(flow, tabId, url) {
     return;
   }
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId, frameIds: [0] },
-      files: CONTENT_FILES,
-    });
-    await setIndicator(tabId, 'paused');
+    // ダイアログが開いていると読み込みが終わらないため、待つのは短い時間だけにします（#88）。
+    const injected = await Promise.race([
+      chrome.scripting
+        .executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES })
+        .then(() => true),
+      sleep(PAGE_MESSAGE_TIMEOUT_MS).then(() => false),
+    ]);
+    if (injected) {
+      await setIndicator(tabId, 'paused');
+    }
   } catch {
     // 読み込めないページ（エラーの画面など）では、アイコンの文字だけで示します。
   }
@@ -1235,9 +1541,7 @@ async function showPausedFrame(flow, tabId, url) {
  * @param {'running' | 'paused'} indicator
  */
 async function setIndicator(tabId, indicator) {
-  await chrome.tabs
-    .sendMessage(tabId, { kind: 'runner/indicator', indicator }, { frameId: 0 })
-    .catch(() => {});
+  await sendToPageBriefly(tabId, { kind: 'runner/indicator', indicator });
 }
 
 /**
@@ -1317,7 +1621,7 @@ async function checkAuthScreen(runId, flow, tabId, step, expectedUrl) {
   ) {
     return;
   }
-  await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
+  await injectContent(runId, tabId);
   await throwIfAuthScreen(runId, tabId, tab.url, step, expectedUrl);
 }
 
@@ -1408,7 +1712,7 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
     throw new Halted(stopRuleNote('path', stopPath));
   }
 
-  await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
+  await injectContent(runId, tabId);
   // ログインの有効期限切れなどで認証の画面が表示されている場合は、操作せずに一時停止します（#18）。
   await throwIfAuthScreen(runId, tabId, url, step, expectedUrl);
 
@@ -1450,6 +1754,8 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
       throw new Halted(confirmPauseNote(confirmText));
     }
   }
+  // この後に開いたダイアログには、この手順の dialog で応答します（#88）。
+  beginDialogWindow(runId, step);
   const response = await requestPage(
     runId,
     tabId,
@@ -1511,7 +1817,7 @@ async function readPage(runId, flow, tabId, message) {
       `フローのサイト（${flowOrigins(flow).join('、')}）とは別のサイト（${pageOrigin ?? (url || '不明')}）のページに移動したため、停止しました。`,
     );
   }
-  await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES });
+  await injectContent(runId, tabId);
   const documentId = await getDocumentId(tabId);
   const response = await requestPage(runId, tabId, {
     ...message,
@@ -1546,7 +1852,7 @@ async function savePdf(runId, flow, tabId, step, pathValues) {
     throw new Error(built.error);
   }
 
-  const data = await printPage(tabId, step.mode === 'screen');
+  const data = await printPage(runId, tabId, step.mode === 'screen');
 
   // Service Worker では URL.createObjectURL が使えないため、data: URL で渡します（#16 で作業環境で確認済み）。
   const downloadId = await chrome.downloads.download({
@@ -1560,39 +1866,40 @@ async function savePdf(runId, flow, tabId, step, pathValues) {
 
 /**
  * タブのページを PDF にし、その内容（Base64）を返します。
+ * 実行の初めに接続した chrome.debugger を使います（#88）。
+ * @param {string} runId
  * @param {number} tabId
  * @param {boolean} screen 画面の表示で作るか（#73）。false の場合は印刷用の表示で作ります
  * @returns {Promise<string>}
  */
-async function printPage(tabId, screen) {
+async function printPage(runId, tabId, screen) {
   const target = { tabId };
-  try {
-    await chrome.debugger.attach(target, '1.3');
-  } catch (error) {
-    throw new Error(
-      `PDF を作れませんでした。このタブで開発者ツールを開いている場合は、閉じてから実行してください（${String(error)}）。`,
-      { cause: error },
-    );
-  }
   try {
     if (screen) {
       // 実行中の枠と文字は @media print でだけ隠れるため、画面の表示では PDF に写らないよう隠します。
       await setOverlayHidden(tabId, true);
-      await chrome.debugger.sendCommand(target, 'Emulation.setEmulatedMedia', { media: 'screen' });
+      await waitForPage(
+        runId,
+        tabId,
+        chrome.debugger.sendCommand(target, 'Emulation.setEmulatedMedia', { media: 'screen' }),
+      );
     }
     const result = /** @type {{ data: string }} */ (
-      await chrome.debugger.sendCommand(target, 'Page.printToPDF', { printBackground: true })
+      await waitForPage(
+        runId,
+        tabId,
+        chrome.debugger.sendCommand(target, 'Page.printToPDF', { printBackground: true }),
+      )
     );
     return result.data;
   } finally {
     if (screen) {
-      // 切り離すと上書きも解除されると考えられますが、確かめていないため、明示的に戻します。
+      // 接続は実行の終わりまで続くため、上書きを戻します。
       await chrome.debugger
         .sendCommand(target, 'Emulation.setEmulatedMedia', { media: '' })
         .catch(() => {});
       await setOverlayHidden(tabId, false);
     }
-    await chrome.debugger.detach(target).catch(() => {});
   }
 }
 
@@ -1603,9 +1910,7 @@ async function printPage(tabId, screen) {
  * @param {boolean} hidden
  */
 async function setOverlayHidden(tabId, hidden) {
-  await chrome.tabs
-    .sendMessage(tabId, { kind: 'runner/overlay', hidden }, { frameId: 0 })
-    .catch(() => {});
+  await sendToPageBriefly(tabId, { kind: 'runner/overlay', hidden });
 }
 
 /**
@@ -1643,28 +1948,11 @@ async function waitForDownload(runId, downloadId) {
  */
 async function requestPage(runId, tabId, message, recorded) {
   // 要素を待っている間（最大 10 秒）も停止の指示に応じられるよう、応答を待ちながら指示を確かめます。
-  const reply = chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).then(
-    (response) => ({ response, error: undefined }),
-    (error) => ({ response: undefined, error }),
-  );
-  let result;
-  while (!(result = await Promise.race([reply, sleep(STOP_CHECK_INTERVAL_MS).then(() => null)]))) {
-    try {
-      await throwIfStopRequested(runId);
-    } catch (error) {
-      // ページで要素を待つ処理も止めます。
-      await chrome.tabs
-        .sendMessage(tabId, { kind: 'runner/abort' }, { frameId: 0 })
-        .catch(() => {});
-      throw error;
-    }
-  }
-  if (result.error !== undefined) {
-    throw new Error(`ページと通信できませんでした（${String(result.error)}）。`, {
-      cause: result.error,
-    });
-  }
-  const { response } = result;
+  // ダイアログが開いている間は応答がないため、ダイアログへの対応もこの間に行います（#88）。
+  const reply = chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).catch((error) => {
+    throw new Error(`ページと通信できませんでした（${String(error)}）。`, { cause: error });
+  });
+  const response = await waitForPage(runId, tabId, reply);
   if (!response?.ok) {
     const text = response?.error ?? 'ページから応答がありませんでした。';
     const note = translationNote(recorded, response?.translated);
@@ -1829,8 +2117,11 @@ export function samePage(a, b) {
 async function throwIfStopRequested(runId) {
   const state = await getRunState(runId);
   if (!state || state.status === 'stopping') {
+    // ダイアログが開いていると、ページへの命令が応答しないため、先に閉じます（#88）。
+    await dismissOpenDialog(runId);
     throw new StopRequested('停止を指示されました。');
   }
+  await handleDialogs(runId);
 }
 
 /**
