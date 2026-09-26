@@ -5,6 +5,7 @@ import {
   RUN_KEY_PREFIX,
   conflictMessage,
   findConflictingRun,
+  flowSites,
   flowsForOrigin,
   flowsToShow,
   isActiveRun,
@@ -170,4 +171,36 @@ test('Web ページだけにオリジンを返し、それ以外のページで�
   ]) {
     assert.equal(pageOrigin(url), null, String(url));
   }
+});
+
+test('追加のサイトと、移動の手順の URL のサイトのページでも、フローを返す（#41）', () => {
+  const item = 'https://item.rakuten.co.jp';
+  const cart = 'https://cart.step.rakuten.co.jp';
+  const login = 'https://login.account.rakuten.com';
+  const flows = [
+    {
+      id: '1',
+      flow: {
+        name: '楽天',
+        origin: item,
+        extraOrigins: [cart],
+        steps: [
+          { type: 'navigate', url: `${item}/shop/1/` },
+          { type: 'click' },
+          { type: 'navigate', url: `${login}/sso/authorize?x=1` },
+          { type: 'navigate', url: 'https://{{host}}/a' },
+        ],
+      },
+    },
+    entry('2', '別のサイト', 'https://other.example.com'),
+  ];
+  for (const origin of [item, cart, login]) {
+    assert.deepEqual(
+      flowsForOrigin(flows, origin).map((stored) => stored.id),
+      ['1'],
+      origin,
+    );
+  }
+  assert.deepEqual(flowsForOrigin(flows, 'https://www.rakuten.co.jp'), []);
+  assert.deepEqual([...flowSites(flows[0].flow)], [item, cart, login]);
 });

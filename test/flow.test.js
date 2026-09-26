@@ -4,10 +4,12 @@ import assert from 'node:assert/strict';
 import {
   MAX_STEPS,
   SCHEMA_VERSION,
+  flowOrigins,
   formatFlowJson,
   orderFlow,
   replaceJsonFields,
   replaceJsonName,
+  stepOrigin,
   validateFlow,
   validateStep,
   withInterval,
@@ -49,9 +51,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜3 のフローは、そのまま版 4 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 4);
-  for (const schemaVersion of [1, 2, 3]) {
+test('版 1〜4 のフローは、そのまま版 5 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 5);
+  for (const schemaVersion of [1, 2, 3, 4]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -384,4 +386,72 @@ test('版 2 以前のフローに savePdf と extract がある場合は誤り�
   });
   assert.equal(errors.length, 2);
   assert.match(errors[0], /schemaVersion が 3 以上/);
+});
+
+test('追加のサイト（extraOrigins）を検証する（#41）', () => {
+  const origin = validFlow.origin;
+  const extra = 'https://login.example.net';
+  assert.deepEqual(validateFlow({ ...validFlow, extraOrigins: [extra] }), []);
+  assert.deepEqual(validateFlow({ ...validFlow, extraOrigins: [] }), []);
+  /** @type {Array<[unknown, RegExp]>} */
+  const cases = [
+    ['https://a.example', /配列ではありません/],
+    [['https://a.example/path'], /オリジンではありません/],
+    [['ftp://a.example'], /オリジンではありません/],
+    [[origin], /フローの origin と同じ/],
+    [[extra, extra], /重複/],
+    [Array.from({ length: 11 }, (_, i) => `https://s${i}.example`), /上限の 10 件/],
+  ];
+  for (const [extraOrigins, message] of cases) {
+    const errors = validateFlow({ ...validFlow, extraOrigins });
+    assert.equal(errors.length, 1, JSON.stringify(extraOrigins));
+    assert.match(errors[0], message);
+  }
+  const old = validateFlow({ ...validFlow, schemaVersion: 4, extraOrigins: [extra] });
+  assert.equal(old.length, 1);
+  assert.match(old[0], /schemaVersion が 5 以上/);
+});
+
+test('手順の origin は、フローの origin か extraOrigins のサイトだけを受け付ける（#41）', () => {
+  const extra = 'https://login.example.net';
+  const target = { selectors: ['#id'], tag: 'input', label: 'ID' };
+  const step = { type: 'input', target, value: 'a', origin: extra };
+  const flow = { ...validFlow, extraOrigins: [extra], steps: [...validFlow.steps, step] };
+  assert.deepEqual(validateFlow(flow), []);
+  assert.deepEqual(
+    validateFlow({ ...flow, steps: [...validFlow.steps, { ...step, origin: validFlow.origin }] }),
+    [],
+  );
+
+  const outside = validateFlow({ ...validFlow, steps: [...validFlow.steps, step] });
+  assert.equal(outside.length, 1);
+  assert.match(outside[0], /extraOrigins にもありません/);
+
+  const old = validateFlow({ ...flow, schemaVersion: 4, extraOrigins: undefined });
+  assert.equal(old.length, 1);
+  assert.match(old[0], /origin は、schemaVersion が 5 以上/);
+
+  assert.match(
+    validateFlow({
+      ...flow,
+      steps: [...validFlow.steps, { type: 'wait', ms: 1, origin: extra }],
+    })[0],
+    /click、input、select、extract の手順にだけ/,
+  );
+  assert.match(
+    validateFlow({ ...flow, steps: [...validFlow.steps, { ...step, origin: 'login' }] })[0],
+    /オリジンではありません/,
+  );
+});
+
+test('フローが操作するサイトと、手順を実行してよいサイトを返す（#41）', () => {
+  const flow = { origin: 'https://a.example', extraOrigins: ['https://b.example'] };
+  assert.deepEqual(flowOrigins(flow), ['https://a.example', 'https://b.example']);
+  assert.deepEqual(flowOrigins({ origin: 'https://a.example' }), ['https://a.example']);
+  const target = { selectors: ['#a'], tag: 'button', label: 'a' };
+  assert.equal(stepOrigin(flow, { type: 'click', target }), 'https://a.example');
+  assert.equal(
+    stepOrigin(flow, { type: 'click', target, origin: 'https://b.example' }),
+    'https://b.example',
+  );
 });

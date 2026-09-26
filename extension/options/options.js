@@ -16,7 +16,7 @@ import {
   saveFlow,
   setFlowInterval,
 } from '../common/flow-store.js';
-import { requestPermission } from '../common/permissions.js';
+import { ALL_SITES, hasAllSites, requestPermission } from '../common/permissions.js';
 import {
   getStopRule,
   listStopRules,
@@ -26,6 +26,7 @@ import {
 import { listHistory, onHistoryChanged } from '../common/history-store.js';
 import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
 import {
+  flowOrigins,
   formatFlowJson,
   isWebOrigin,
   orderFlow,
@@ -151,6 +152,8 @@ const elements = {
   historyClear: byId('history-clear'),
   historyConfirm: byId('history-confirm'),
   historyNotice: byId('history-notice'),
+  allSites: /** @type {HTMLInputElement} */ (byId('all-sites')),
+  allSitesNotice: byId('all-sites-notice'),
 };
 
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
@@ -164,6 +167,7 @@ const notices = [
   elements.stopNotice,
   elements.historyNotice,
   elements.speedNotice,
+  elements.allSitesNotice,
 ];
 
 /**
@@ -350,11 +354,12 @@ async function onRunClick() {
   hideRunForm();
   // 許可を求める処理は、ボタンを押した直後に呼び出す必要があります。その前に待ち時間を入れないよう、
   // 選んだフローのサイトは、表示中の内容から取ります。
-  const origin = elements.editorOrigin.textContent ?? '';
-  if (!selectedId || !origin) {
+  // フローが操作するすべてのサイト（#41）の許可を、1 回の確認でまとめて求めます。
+  const origins = JSON.parse(elements.editor.dataset.origins ?? '[]');
+  if (!selectedId || origins.length === 0) {
     return;
   }
-  const denied = await requestPermission(origin);
+  const denied = await requestPermission(origins);
   if (denied) {
     showNotice(elements.editorNotice, denied, 'error');
     return;
@@ -780,11 +785,12 @@ elements.importFlow.addEventListener('click', async () => {
   const confirmed = await confirmInline(elements.importConfirm, {
     message:
       (flows.length === 1
-        ? `「${flows[0].name}」は ${flows[0].origin} を操作するフローです。` +
+        ? `「${flows[0].name}」は ${flowOrigins(flows[0]).join('、')} を操作するフローです。` +
           '内容を確認し、信頼できるフローだけを追加してください。'
         : `次の ${flows.length} 件のフローを追加します。各フローは、括弧内のサイトを操作します。` +
           '内容を確認し、信頼できるフローだけを追加してください。\n' +
-          flows.map((flow) => `・${flow.name}（${flow.origin}）`).join('\n')) + duplicateText,
+          flows.map((flow) => `・${flow.name}（${flowOrigins(flow).join('、')}）`).join('\n')) +
+      duplicateText,
     confirmLabel: '追加する',
   });
   if (!confirmed) {
@@ -1334,7 +1340,9 @@ async function render() {
  */
 function renderDetail({ flow, createdAt, updatedAt }) {
   elements.editorHeading.textContent = flow.name;
-  elements.editorOrigin.textContent = flow.origin;
+  // 追加のサイト（#41）があれば、続けて表示します。
+  elements.editorOrigin.textContent = flowOrigins(flow).join('、');
+  elements.editor.dataset.origins = JSON.stringify(flowOrigins(flow));
 
   const params = flow.params ?? [];
   const secrets = flow.steps.flatMap((step, index) =>
@@ -1483,3 +1491,44 @@ function byId(id) {
   }
   return element;
 }
+
+// ---- 設定（#41） ----
+// 「すべてのサイトを許可」は、Chrome のサイトの許可そのものを表示し、切り替えます。拡張機能には保存しません。
+// Chrome の拡張機能の画面など、ほかの場所で許可を変えた場合も、表示を合わせます。
+
+/** 「すべてのサイトを許可」の表示を、Chrome の許可に合わせます。 */
+async function renderAllSites() {
+  elements.allSites.checked = await hasAllSites();
+}
+
+elements.allSites.addEventListener('change', async () => {
+  clearNotices();
+  // 許可を求める処理は、操作の直後に呼び出す必要があります。この前に待ち時間を入れないでください。
+  if (elements.allSites.checked) {
+    const granted = await chrome.permissions.request({ origins: ALL_SITES }).catch(() => false);
+    if (!granted) {
+      showNotice(
+        elements.allSitesNotice,
+        '許可が得られなかったため、オンにできませんでした。もう一度押し、表示される画面で「許可」を選んでください。',
+        'error',
+      );
+    } else {
+      showToast(elements.toast, 'すべてのサイトを許可しました。');
+    }
+  } else {
+    await chrome.permissions.remove({ origins: ALL_SITES }).catch(console.error);
+    showToast(
+      elements.toast,
+      'すべてのサイトの許可を外しました。個別に許可したサイトは、そのまま残ります。',
+    );
+  }
+  await renderAllSites();
+});
+
+chrome.permissions.onAdded.addListener(() => {
+  renderAllSites().catch(console.error);
+});
+chrome.permissions.onRemoved.addListener(() => {
+  renderAllSites().catch(console.error);
+});
+renderAllSites().catch(console.error);

@@ -108,3 +108,59 @@ test('同じページのままの場合と、読み込み中の場合は、移�
   assert.ok(!isNewPageLoaded('doc-a', { documentId: 'doc-b', status: 'loading' }));
   assert.ok(!isNewPageLoaded('doc-a', { documentId: undefined, status: 'complete' }));
 });
+
+test('ページの操作による移動は、行き先のサイトを問わない（#41）', () => {
+  // 楽天市場の例です。商品ページから、買い物かご、ログインの画面、注文確認へ転送されます。
+  /** @type {import('../extension/shared/flow.js').Flow} */
+  const rakuten = {
+    schemaVersion: 5,
+    name: '楽天',
+    origin: 'https://item.rakuten.co.jp',
+    steps: [
+      { type: 'navigate', cause: 'user', url: 'https://item.rakuten.co.jp/shop/1/' },
+      { type: 'click', target },
+      { type: 'navigate', cause: 'page', url: 'https://cart.step.rakuten.co.jp/cart' },
+      { type: 'navigate', cause: 'page', url: 'https://login.account.rakuten.com/sso/authorize' },
+      { type: 'navigate', cause: 'page', url: 'https://cart.step.rakuten.co.jp/order' },
+    ],
+  };
+  const result = resolveSteps(rakuten, {}, {}, new Date());
+  assert.ok(result.ok);
+  assert.equal(result.steps.length, 5);
+});
+
+test('利用者の操作による移動は、フローのサイトと追加のサイトだけを受け付ける（#41）', () => {
+  /** @type {import('../extension/shared/flow.js').Flow} */
+  const base = {
+    schemaVersion: 5,
+    name: 'ログイン',
+    origin: 'https://www.example.com',
+    steps: [{ type: 'navigate', cause: 'user', url: 'https://login.example.com/' }],
+  };
+  assert.equal(resolveSteps(base, {}, {}, new Date()).ok, false);
+  assert.ok(
+    resolveSteps({ ...base, extraOrigins: ['https://login.example.com'] }, {}, {}, new Date()).ok,
+  );
+});
+
+test('値を記録していない欄の手順も、手順を記録したサイトを残す（#41）', () => {
+  /** @type {import('../extension/shared/flow.js').Flow} */
+  const login = {
+    schemaVersion: 5,
+    name: 'ログイン',
+    origin: 'https://www.example.com',
+    extraOrigins: ['https://login.example.com'],
+    steps: [
+      { type: 'navigate', cause: 'user', url: 'https://www.example.com/' },
+      { type: 'input', target, secret: true, origin: 'https://login.example.com' },
+    ],
+  };
+  const result = resolveSteps(login, {}, { 1: 'pass' }, new Date());
+  assert.ok(result.ok);
+  assert.deepEqual(result.steps[1], {
+    type: 'input',
+    target,
+    value: 'pass',
+    origin: 'https://login.example.com',
+  });
+});

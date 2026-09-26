@@ -7,6 +7,7 @@
 
 import {
   addStep,
+  allowRecordingOrigin,
   onCommitted,
   onDOMContentLoaded,
   onTabRemoved,
@@ -71,6 +72,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       }
       stopRecording().then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/allowOrigin':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      allowRecordingOrigin(message.origin).then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
       );
       return true;

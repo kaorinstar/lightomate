@@ -6,7 +6,12 @@ import { isWebUrl } from './flow.js';
  * 一覧の判定に使う、保存したフローの項目です。
  * @typedef {object} FlowEntry
  * @property {string} id
- * @property {{ name: string, origin: string }} flow
+ * @property {{
+ *   name: string,
+ *   origin: string,
+ *   extraOrigins?: string[],
+ *   steps?: { type: string, url?: string }[],
+ * }} flow
  */
 
 /**
@@ -25,7 +30,28 @@ export const RUN_KEY_PREFIX = 'run/';
 const NUMBER_SUFFIX = /\s\((\d+)\)$/;
 
 /**
- * オリジンが一致するフローだけを返します。順序は変えません。
+ * フローに関係するサイト（オリジン）の一覧です（#41）。フローの origin、extraOrigins、移動の手順の URL の
+ * サイトです。移動の手順には、転送で通過しただけのサイト（ログインの画面など）も含みます。
+ * URL にパラメータ（{{名前}}）を含み、サイトが決まらない移動の手順は含めません。
+ * @param {FlowEntry['flow']} flow
+ * @returns {Set<string>}
+ */
+export function flowSites(flow) {
+  const sites = new Set([flow.origin, ...(flow.extraOrigins ?? [])]);
+  for (const step of flow.steps ?? []) {
+    if (step.type === 'navigate' && typeof step.url === 'string' && isWebUrl(step.url)) {
+      const url = new URL(step.url);
+      if (!url.host.includes('{{') && !url.host.includes('%7B')) {
+        sites.add(url.origin);
+      }
+    }
+  }
+  return sites;
+}
+
+/**
+ * 表示中のページのサイトに関係するフローだけを返します。順序は変えません。
+ * フローの origin のほか、extraOrigins と移動の手順の URL のサイトとも比べます（#41）。
  * @template {FlowEntry} T
  * @param {T[]} flows
  * @param {string | null | undefined} origin
@@ -35,7 +61,7 @@ export function flowsForOrigin(flows, origin) {
   if (!origin) {
     return [];
   }
-  return flows.filter((stored) => stored.flow.origin === origin);
+  return flows.filter((stored) => flowSites(stored.flow).has(origin));
 }
 
 /**

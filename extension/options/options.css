@@ -395,3 +395,20 @@ body {
 .lm-list > .lm-card-header .card-title {
   white-space: nowrap;
 }
+
+/* ［設定］のタブです（#41）。説明文が長くならないよう、幅を抑えます。 */
+.lm-settings {
+  max-width: 48rem;
+}
+
+.lm-setting {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#all-sites-notice {
+  margin: 0.5rem 0 0;
+}
