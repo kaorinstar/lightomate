@@ -49,7 +49,7 @@ export const MAX_PAGES_LIMIT = 50;
  * @property {number} [page] 処理中のページの番号（0 から数えます）。ページ送り（#95）で増えます。
  *   省略した場合は 0 です
  * @property {number} [done] 前のページまでに処理した行の数（#95）。省略した場合は 0 です
- * @property {string} [firstText] 行を数えたときの 1 行目の文字（#95）。一覧のページへ戻った後に、同じ一覧かを
+ * @property {string} [firstKey] 行を数えたときの 1 行目の目印（リンク先、#95）。一覧のページへ戻った後に、同じ一覧かを
  *   確かめるために使います
  */
 
@@ -368,13 +368,13 @@ export function needsReturn(listDocumentId, currentDocumentId) {
 }
 
 /**
- * 一覧のページへ戻った後の一覧が、最初に数えたときと同じかを確かめます（#95）。行数か 1 行目の文字が
+ * 一覧のページへ戻った後の一覧が、最初に数えたときと同じかを確かめます（#95）。行数か 1 行目の目印が
  * 異なる場合は、止める理由を返します。前のページの行の番号で、別の行を操作しないためです。
- * 1 行目の文字も比べるのは、ページを読み込まずに一覧だけを差し替えるページ送りでは、URL を開き直すと
+ * 1 行目の目印（行の中のリンク先。リンクがない行では文字）も比べるのは、ページを読み込まずに一覧だけを差し替えるページ送りでは、URL を開き直すと
  * 1 ページ目に戻り、行数だけでは違いが分からないためです。
  * @param {string} label 行の指定の説明（items.label）
- * @param {{ count: number, firstText?: string }} expected 最初に数えた行数と 1 行目の文字
- * @param {{ count: number, firstText?: string }} actual 戻った後の行数と 1 行目の文字
+ * @param {{ count: number, firstKey?: string }} expected 最初に数えた行数と 1 行目の目印
+ * @param {{ count: number, firstKey?: string }} actual 戻った後の行数と 1 行目の目印
  * @returns {string | undefined}
  */
 export function returnedListError(label, expected, actual) {
@@ -385,9 +385,9 @@ export function returnedListError(label, expected, actual) {
     );
   }
   if (
-    expected.firstText !== undefined &&
-    actual.firstText !== undefined &&
-    expected.firstText !== actual.firstText
+    expected.firstKey !== undefined &&
+    actual.firstKey !== undefined &&
+    expected.firstKey !== actual.firstKey
   ) {
     return (
       `一覧のページに戻った後、「${label}」の 1 行目が最初と異なるため、停止しました。` +

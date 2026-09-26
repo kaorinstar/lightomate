@@ -367,20 +367,20 @@ test('行の処理の途中でページが移動した場合だけ、一覧の�
 });
 
 test('一覧のページへ戻った後の行数か 1 行目が、最初と異なる場合は止める（#95）', () => {
-  const list = { count: 3, firstText: '注文 1' };
-  assert.equal(returnedListError('注文', list, { count: 3, firstText: '注文 1' }), undefined);
+  const list = { count: 3, firstKey: '注文 1' };
+  assert.equal(returnedListError('注文', list, { count: 3, firstKey: '注文 1' }), undefined);
   assert.match(
-    /** @type {string} */ (returnedListError('注文', list, { count: 2, firstText: '注文 1' })),
+    /** @type {string} */ (returnedListError('注文', list, { count: 2, firstKey: '注文 1' })),
     /「注文」の行が 2 件になり、最初に数えた 3 件と異なる/,
   );
   // URL を開き直すと 1 ページ目に戻るページ送りでは、行数が同じでも 1 行目が異なります。
   assert.match(
-    /** @type {string} */ (returnedListError('注文', list, { count: 3, firstText: '注文 11' })),
+    /** @type {string} */ (returnedListError('注文', list, { count: 3, firstKey: '注文 11' })),
     /「注文」の 1 行目が最初と異なる/,
   );
-  // 1 行目の文字が分からない場合は、行数だけで確かめます。
+  // 1 行目の目印が分からない場合は、行数だけで確かめます。
   assert.equal(
-    returnedListError('注文', { count: 3 }, { count: 3, firstText: '注文 11' }),
+    returnedListError('注文', { count: 3 }, { count: 3, firstKey: '注文 11' }),
     undefined,
   );
 });

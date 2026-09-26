@@ -222,29 +222,29 @@ test('if と forEach の内側の手順にも値を当てはめ、値を記録�
   assert.match(missing.ok ? '' : missing.error, /手順 3（パスワード）/);
 });
 
-test('「次へ」の後は、新しいページが読み込まれたか、1 行目の文字が変わった場合に次のページとする（#95）', () => {
-  const before = { documentId: 'a', firstText: '注文 1' };
+test('「次へ」の後は、新しいページが読み込まれたか、1 行目の目印が変わった場合に次のページとする（#95）', () => {
+  const before = { documentId: 'a', firstKey: '注文 1' };
   // 新しいページの読み込みが完了した場合です。
   assert.equal(
-    isPageTurned(before, { documentId: 'b', status: 'complete', firstText: undefined }),
+    isPageTurned(before, { documentId: 'b', status: 'complete', firstKey: undefined }),
     true,
   );
   assert.equal(
-    isPageTurned(before, { documentId: 'b', status: 'loading', firstText: undefined }),
+    isPageTurned(before, { documentId: 'b', status: 'loading', firstKey: undefined }),
     false,
   );
   // ページを読み込まずに、一覧だけが差し替わった場合です。
   assert.equal(
-    isPageTurned(before, { documentId: 'a', status: 'complete', firstText: '注文 11' }),
+    isPageTurned(before, { documentId: 'a', status: 'complete', firstKey: '注文 11' }),
     true,
   );
   assert.equal(
-    isPageTurned(before, { documentId: 'a', status: 'complete', firstText: '注文 1' }),
+    isPageTurned(before, { documentId: 'a', status: 'complete', firstKey: '注文 1' }),
     false,
   );
-  // 1 行目の文字を読み取れなかった場合は、まだ変わっていないとします。
+  // 1 行目の目印を読み取れなかった場合は、まだ変わっていないとします。
   assert.equal(
-    isPageTurned(before, { documentId: 'a', status: 'complete', firstText: undefined }),
+    isPageTurned(before, { documentId: 'a', status: 'complete', firstKey: undefined }),
     false,
   );
 });

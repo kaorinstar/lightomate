@@ -27,8 +27,8 @@
     handOver: ['■ 停止：ここから手で操作してください（Lightomate）', '#8e24aa', '#ffffff'],
   };
 
-  /** 1 行目の文字として返す長さの上限です（#95）。比べるだけのため、全文は要りません。 */
-  const FIRST_TEXT_MAX_LENGTH = 200;
+  /** 1 行目の目印として返す長さの上限です（#95）。比べるだけのため、全文は要りません。 */
+  const FIRST_KEY_MAX_LENGTH = 500;
 
   let overlay = showStatusOverlay(...indicators.running);
 
@@ -205,8 +205,9 @@
    * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} items
    * @param {unknown} scope 外側の繰り返しで処理中の行の指定
    * @param {number} timeoutMs 行を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true, count: number, firstText?: string } | { ok: false, error: string, notFound?: true }>}
-   *   firstText は 1 行目の文字です。「次へ」のクリックの後に、一覧が差し替わったかを判定するために使います（#95）
+   * @returns {Promise<{ ok: true, count: number, firstKey?: string } | { ok: false, error: string, notFound?: true }>}
+   *   firstKey は 1 行目の目印です（rowKey）。「次へ」のクリックの後に一覧が差し替わったか、一覧のページへ
+   *   戻った後に同じ一覧かを判定するために使います（#95）
    */
   async function countItems(items, scope, timeoutMs) {
     const base = searchRoot(items, scope);
@@ -227,8 +228,23 @@
     return {
       ok: true,
       count: rows.length,
-      ...(rows.length > 0 ? { firstText: readText(rows[0]).slice(0, FIRST_TEXT_MAX_LENGTH) } : {}),
+      ...(rows.length > 0 ? { firstKey: rowKey(rows[0]) } : {}),
     };
+  }
+
+  /**
+   * 行の目印です（#95）。行の中のリンク先（href の値）を並べたものです。リンクがない行では、行の文字です。
+   * 文字ではなくリンク先を使うのは、Chrome の翻訳などが表示の後に文字を置き換えるためです。同じ一覧でも、
+   * 読み取った時点によって文字が異なります。リンク先は、翻訳では変わりません。
+   * @param {Element} row
+   * @returns {string}
+   */
+  function rowKey(row) {
+    const links = [row, ...row.querySelectorAll('a[href]')]
+      .filter((element) => element.matches('a[href]'))
+      .map((element) => element.getAttribute('href') ?? '');
+    const key = links.length > 0 ? `link:${links.join(' ')}` : `text:${readText(row)}`;
+    return key.slice(0, FIRST_KEY_MAX_LENGTH);
   }
 
   /**

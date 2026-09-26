@@ -654,7 +654,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
                   ...frames[frames.length - 1],
                   documentId: turned.documentId,
                   listUrl: turned.url,
-                  firstText: turned.firstText,
+                  firstKey: turned.firstKey,
                 },
               ];
               documentBefore = turned.documentId;
@@ -705,7 +705,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
                 ...frames[frames.length - 1],
                 documentId,
                 listUrl: url,
-                firstText: textOf(response.firstText),
+                firstKey: textOf(response.firstKey),
               },
             ];
           }
@@ -916,8 +916,8 @@ async function returnToList(runId, flow, tabId, step, frame, scope, pc) {
   const count = typeof response.count === 'number' ? response.count : 0;
   const error = returnedListError(
     step.items.label,
-    { count: frame.count, firstText: frame.firstText },
-    { count, firstText: textOf(response.firstText) },
+    { count: frame.count, firstKey: frame.firstKey },
+    { count, firstKey: textOf(response.firstKey) },
   );
   if (error !== undefined) {
     throw new Error(error);
@@ -933,8 +933,8 @@ async function returnToList(runId, flow, tabId, step, frame, scope, pc) {
  * @param {number} tabId
  * @param {import('../shared/flow.js').ForEachStep} step
  * @param {LoopState} frame 送る前のページの記録
- * @returns {Promise<{ count: number, documentId?: string, url?: string, firstText?: string }>}
- *   次のページの行数と、そのページの識別子、URL、1 行目の文字
+ * @returns {Promise<{ count: number, documentId?: string, url?: string, firstKey?: string }>}
+ *   次のページの行数と、そのページの識別子、URL、1 行目の目印
  */
 async function turnPage(runId, flow, tabId, step, frame) {
   const { nextPage } = step;
@@ -967,7 +967,7 @@ async function turnPage(runId, flow, tabId, step, frame) {
   await withRetry(runId, flow, () => runInPage(runId, flow, tabId, click, before.url, []));
   await waitForPageTurn(runId, flow, tabId, step, {
     documentId: before.documentId,
-    firstText: textOf(before.response.firstText),
+    firstKey: textOf(before.response.firstKey),
   });
   // ログインの有効期限切れなどで認証の画面に転送された場合は、行が 0 件として繰り返しを終えずに、
   // 一時停止します（#18）。［再開］を押されたら、一覧のページへ戻ってから、もう一度ページを送ります。
@@ -984,18 +984,19 @@ async function turnPage(runId, flow, tabId, step, frame) {
     count,
     documentId: counted.documentId,
     url: counted.url,
-    firstText: textOf(counted.response.firstText),
+    firstKey: textOf(counted.response.firstKey),
   };
 }
 
 /**
  * 「次へ」をクリックした後、次のページが表示されるまで待ちます（#95）。
- * 新しいページが読み込まれるか、ページを読み込まずに一覧だけが差し替わる（1 行目の文字が変わる）まで待ちます。
+ * 新しいページが読み込まれるか、ページを読み込まずに一覧だけが差し替わる（1 行目の目印が変わる）まで待ちます。
+ * 目印は、行の中のリンク先です（content/runner.js の rowKey）。翻訳などで文字だけが変わっても、送ったとはみなしません。
  * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
  * @param {import('../shared/flow.js').ForEachStep} step
- * @param {{ documentId: string | undefined, firstText: string | undefined }} before クリックの前のページ
+ * @param {{ documentId: string | undefined, firstKey: string | undefined }} before クリックの前のページ
  */
 async function waitForPageTurn(runId, flow, tabId, step, before) {
   const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
@@ -1009,7 +1010,7 @@ async function waitForPageTurn(runId, flow, tabId, step, before) {
     }
     const documentId = await getDocumentId(tabId);
     /** @type {string | undefined} */
-    let firstText;
+    let firstKey;
     if (documentId === before.documentId && tab.status === 'complete') {
       try {
         const { response } = await readPage(runId, flow, tabId, {
@@ -1017,7 +1018,7 @@ async function waitForPageTurn(runId, flow, tabId, step, before) {
           items: step.items,
           scope: [],
         });
-        firstText = textOf(response.firstText);
+        firstKey = textOf(response.firstKey);
       } catch (error) {
         if (error instanceof StopRequested) {
           throw error;
@@ -1025,7 +1026,7 @@ async function waitForPageTurn(runId, flow, tabId, step, before) {
         // 移動の途中などでページと通信できない場合は、次の確認で調べ直します。
       }
     }
-    if (isPageTurned(before, { documentId, status: tab.status, firstText })) {
+    if (isPageTurned(before, { documentId, status: tab.status, firstKey })) {
       if (documentId !== before.documentId) {
         // 読み込みの直後に続けて転送される場合に備え、ページが落ち着くまで待ちます。
         await waitForNewPage(runId, tabId, before.documentId, tab.url ?? '');
@@ -1042,10 +1043,10 @@ async function waitForPageTurn(runId, flow, tabId, step, before) {
 
 /**
  * 「次へ」のクリックの後に、次のページが表示されたかを判定します（#95）。
- * 新しいページの読み込みが完了したか、同じページのまま 1 行目の文字が変わった場合に true です。
- * @param {{ documentId: string | undefined, firstText: string | undefined }} before クリックの前のページ
- * @param {{ documentId: string | undefined, status?: string, firstText: string | undefined }} current
- *   表示中のページ。firstText は、1 行目の文字を読み取れなかった場合は undefined です
+ * 新しいページの読み込みが完了したか、同じページのまま 1 行目の目印が変わった場合に true です。
+ * @param {{ documentId: string | undefined, firstKey: string | undefined }} before クリックの前のページ
+ * @param {{ documentId: string | undefined, status?: string, firstKey: string | undefined }} current
+ *   表示中のページ。firstKey は、1 行目の目印を読み取れなかった場合は undefined です
  * @returns {boolean}
  */
 export function isPageTurned(before, current) {
@@ -1054,8 +1055,8 @@ export function isPageTurned(before, current) {
   }
   return (
     current.documentId === before.documentId &&
-    current.firstText !== undefined &&
-    current.firstText !== before.firstText
+    current.firstKey !== undefined &&
+    current.firstKey !== before.firstKey
   );
 }
 
