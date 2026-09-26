@@ -6,7 +6,10 @@ import {
   REDACTED,
   appendHistory,
   historyEntryFromRun,
+  historyEntryText,
   historyToCsv,
+  pageUrlForHistory,
+  reportDateTime,
   redactValues,
   stepText,
   withoutHistoryEntries,
@@ -163,7 +166,11 @@ test('実行中の状態からは、履歴を作らない', () => {
 
 test('CSV は見出しと各行を CRLF で区切り、先頭に BOM を付ける', () => {
   const csv = historyToCsv([entry('a')]);
-  assert.ok(csv.startsWith('﻿開始,終了,フロー,サイト,結果,止まった手順,理由,保存したファイル\r\n'));
+  assert.ok(
+    csv.startsWith(
+      '﻿開始,終了,フロー,サイト,結果,止まった手順,止まった手順の内容,ページ,やり直し,理由,保存したファイル\r\n',
+    ),
+  );
   assert.ok(csv.endsWith('\r\n'));
   assert.equal(csv.split('\r\n').length, 3);
 });
@@ -179,7 +186,7 @@ test('CSV の値に区切りの文字、引用符、改行を含む場合は引�
     },
   ]);
   assert.ok(csv.includes('"領収書, ""8 月"""'));
-  assert.ok(csv.includes(',失敗,2 / 3,"1 行目\n2 行目",'));
+  assert.ok(csv.includes(',失敗,2 / 3,,,,"1 行目\n2 行目",'));
 });
 
 test("CSV の値が数式として実行されないよう、= などで始まる値の先頭に ' を付ける", () => {
@@ -189,7 +196,7 @@ test("CSV の値が数式として実行されないよう、= などで始ま�
 
 test('保存したファイルのパスを記録する（#16）', () => {
   const files = ['/home/me/Downloads/Lightomate/領収書/a.pdf'];
-  const result = historyEntryFromRun({ ...run, status: 'done', stepIndex: 2 }, '', [], files);
+  const result = historyEntryFromRun({ ...run, status: 'done', stepIndex: 2 }, '', [], { files });
   assert.deepEqual(result?.files, files);
   // 元の配列を後から変更しても、履歴は変わりません。
   files.push('b.pdf');
@@ -203,4 +210,135 @@ test('繰り返しの中で止まった実行は、何件目の行かを持ち�
   assert.equal(stepText(result), `2 / ${run.total}（2 件目の 3 件目）`);
   const done = historyEntryFromRun({ ...run, status: 'done', items: [2] }, '', []);
   assert.equal(done?.items, undefined);
+});
+
+// ---- 失敗の詳細とコピー（#93） ----
+
+/** @type {import('../extension/shared/flow.js').Step} */
+const clickStep = {
+  type: 'click',
+  target: { label: '注文履歴', tag: 'a', selectors: ['#orders'] },
+};
+
+const failed = {
+  ...run,
+  status: 'failed',
+  error: '「注文履歴」が見つかりませんでした。',
+  schemaVersion: 6,
+};
+
+const extra = {
+  step: clickStep,
+  pageUrl: 'https://www.example.com/gp/orders?ref=nav#top',
+  retries: 3,
+  extensionVersion: '0.2.0',
+};
+
+test('失敗した実行は、止まった手順の内容、ページ、やり直した回数、版を持つ', () => {
+  const result = historyEntryFromRun(failed, '', [], extra);
+  assert.ok(result);
+  assert.equal(result.step, 'クリック：注文履歴');
+  assert.equal(result.pageUrl, 'https://www.example.com/gp/orders');
+  assert.equal(result.retries, 3);
+  assert.equal(result.extensionVersion, '0.2.0');
+  assert.equal(result.schemaVersion, 6);
+});
+
+test('中止と一時停止の実行も、止まった手順の内容とページを持つ', () => {
+  for (const status of ['stopped', 'halted']) {
+    const result = historyEntryFromRun({ ...failed, status }, '', [], extra);
+    assert.equal(result?.step, 'クリック：注文履歴');
+    assert.equal(result?.pageUrl, 'https://www.example.com/gp/orders');
+  }
+});
+
+test('成功した実行は、止まった手順の内容、ページ、やり直した回数、版を持たない', () => {
+  const result = historyEntryFromRun({ ...failed, status: 'done', stepIndex: 2 }, '', [], extra);
+  assert.ok(result);
+  assert.equal(result.step, undefined);
+  assert.equal(result.pageUrl, undefined);
+  assert.equal(result.retries, undefined);
+  assert.equal(result.extensionVersion, undefined);
+  assert.equal(result.schemaVersion, undefined);
+});
+
+test('やり直していない場合は、やり直した回数を持たない', () => {
+  const result = historyEntryFromRun(failed, '', [], { ...extra, retries: 0 });
+  assert.equal(result?.retries, undefined);
+});
+
+test('止まった手順の内容とページの URL の中の、入力した値を伏せる', () => {
+  /** @type {import('../extension/shared/flow.js').Step} */
+  const input = {
+    type: 'input',
+    target: { label: '検索', tag: 'input', selectors: ['#q'] },
+    value: 'ねじ 8mm',
+  };
+  const result = historyEntryFromRun(failed, '', ['ねじ 8mm', 'yamada'], {
+    step: input,
+    pageUrl: 'https://www.example.com/users/yamada/search/%E3%81%AD%E3%81%98%208mm?q=secret',
+  });
+  assert.equal(result?.step, `入力：検索 ← ${REDACTED}`);
+  assert.equal(result?.pageUrl, `https://www.example.com/users/${REDACTED}/search/${REDACTED}`);
+});
+
+test('ページの URL は、クエリとフラグメントを除き、Web 以外の URL は記録しない', () => {
+  assert.equal(
+    pageUrlForHistory('https://www.example.com/a/b?x=1#y', []),
+    'https://www.example.com/a/b',
+  );
+  assert.equal(pageUrlForHistory('http://localhost:8080/', []), 'http://localhost:8080/');
+  assert.equal(pageUrlForHistory('chrome://extensions/', []), undefined);
+  assert.equal(pageUrlForHistory('読めない', []), undefined);
+});
+
+test('履歴 1 件を、貼り付けて報告できるテキストにする', () => {
+  const result = historyEntryFromRun(
+    { ...failed, startedAt: '2026-09-26T01:00:00.000Z' },
+    '2026-09-26T01:00:42.000Z',
+    [],
+    { ...extra, files: ['/home/me/a.pdf'] },
+  );
+  assert.ok(result);
+  assert.equal(
+    historyEntryText(result),
+    [
+      'Lightomate 0.2.0 の実行履歴',
+      'フロー：領収書（形式の版 6）',
+      'サイト：https://www.example.com',
+      `開始：${reportDateTime('2026-09-26T01:00:00.000Z')}`,
+      `終了：${reportDateTime('2026-09-26T01:00:42.000Z')}`,
+      '結果：失敗',
+      '止まった手順：2 / 3（クリック：注文履歴）',
+      'ページ：https://www.example.com/gp/orders',
+      'やり直し：3 回',
+      '理由：「注文履歴」が見つかりませんでした。',
+      '保存したファイル：/home/me/a.pdf',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('#93 より前に記録した履歴も、ない項目の行を省いてテキストにする', () => {
+  const text = historyEntryText({ ...entry('a'), status: 'failed', stepNumber: 2 });
+  assert.ok(text.startsWith('Lightomate の実行履歴\nフロー：領収書\n'));
+  assert.ok(text.includes('止まった手順：2 / 3\n'));
+  assert.ok(!text.includes('ページ：'));
+  assert.ok(!text.includes('やり直し：'));
+  assert.ok(!text.includes('理由：'));
+  assert.ok(!text.includes('保存したファイル：'));
+});
+
+test('CSV に、止まった手順の内容、ページ、やり直した回数の列を出力する', () => {
+  const result = historyEntryFromRun(failed, '', [], extra);
+  assert.ok(result);
+  assert.ok(
+    historyToCsv([result]).includes(
+      ',失敗,2 / 3,クリック：注文履歴,https://www.example.com/gp/orders,3 回,',
+    ),
+  );
+});
+
+test('報告用の日時は秒まで示す', () => {
+  assert.match(reportDateTime('2026-09-26T01:00:42.000Z'), /:42$/);
 });

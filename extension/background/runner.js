@@ -41,6 +41,7 @@ import {
   displayNumber,
   flattenSteps,
   itemScope,
+  stepAt,
 } from '../shared/control-flow.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
@@ -69,6 +70,7 @@ import {
  *   halted は、確定ボタンの手前、または最後の一時停止の手順で実行を終えたことを示します（#29）。
  * @property {string} [error] 失敗した理由。halted の場合は、止まった理由の説明です。
  * @property {string} [note] 一時停止の手順で止まった場合の、その手順の説明（note）です。
+ * @property {number} [schemaVersion] 実行しているフローの形式の版。実行履歴に記録します（#93）
  * @property {string} startedAt
  */
 
@@ -160,6 +162,13 @@ const redactions = new Map();
 const savedFiles = new Map();
 
 /**
+ * 実行ごとの、実行中の手順で要素が見つからずにやり直した回数です（#18）。手順を始めるたびに 0 に戻し、
+ * 止まったときの回数を実行履歴に記録します（#93）。
+ * @type {Map<string, number>}
+ */
+const retryCounts = new Map();
+
+/**
  * @param {string} runId
  * @returns {Promise<RunState | undefined>}
  */
@@ -199,17 +208,37 @@ async function updateRunState(runId, update) {
  * 実行を終えた状態を保存し、実行履歴に記録します（#19）。
  * 止まった理由に含まれる入力した値は、履歴では伏せます。実行の状態（chrome.storage.session）には
  * 伏せずに残します。サイドパネルで、利用者が原因を確かめられるようにするためです。
+ * 失敗などの場合は、原因を調べるために、止まった手順とページの URL なども記録します（#93）。
  * @param {string} runId
  * @param {Partial<RunState>} update
+ * @param {Step} [step] 止まった手順。Service Worker が停止して中断した場合は、わからないため渡しません
  */
-async function finishRun(runId, update) {
+async function finishRun(runId, update, step) {
   await updateRunState(runId, update);
   const state = await getRunState(runId);
   const values = redactions.get(runId) ?? [];
   const files = savedFiles.get(runId) ?? [];
+  const retries = retryCounts.get(runId);
   redactions.delete(runId);
   savedFiles.delete(runId);
-  const entry = state && historyEntryFromRun(state, new Date().toISOString(), values, files);
+  retryCounts.delete(runId);
+  // 操作の許可がないサイトのページでは、tabs の権限がないため URL を読めません（undefined）。
+  const pageUrl =
+    state && state.status !== 'done'
+      ? await chrome.tabs.get(state.tabId).then(
+          (tab) => tab.url,
+          () => undefined,
+        )
+      : undefined;
+  const entry =
+    state &&
+    historyEntryFromRun(state, new Date().toISOString(), values, {
+      files,
+      step,
+      pageUrl,
+      retries,
+      extensionVersion: chrome.runtime.getManifest().version,
+    });
   if (entry) {
     await addHistory(entry).catch((error) =>
       console.error('実行履歴を記録できませんでした。', error),
@@ -301,6 +330,7 @@ export async function startRun(flowId, paramInput, secretInput) {
       stepIndex: 0,
       total: flattenSteps(resolved.steps).length,
       status: 'running',
+      schemaVersion: flow.schemaVersion,
       startedAt: new Date().toISOString(),
     });
     runSteps(flow, resolved.steps, tabId, runId, pathValues).finally(() => {
@@ -311,6 +341,7 @@ export async function startRun(flowId, paramInput, secretInput) {
     activeRuns.delete(runId);
     redactions.delete(runId);
     savedFiles.delete(runId);
+    retryCounts.delete(runId);
     return { ok: false, error: String(error) };
   }
 }
@@ -533,6 +564,8 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
     stepIndex: displayNumber(program, pc, frames, total),
     items: frames.length > 0 ? frames.map((frame) => frame.index + 1) : undefined,
   });
+  /** 実行履歴に記録する、止まった手順です（#93）。停止した場合は、次に実行する手順です。 */
+  const stoppedStep = () => stepAt(steps, displayNumber(program, pc, frames, total));
   try {
     while (pc < program.length) {
       const instruction = program[pc];
@@ -554,6 +587,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
         await pauseRun(runId, flow, tabId, position());
       }
       await updateRunState(runId, position());
+      retryCounts.set(runId, 0);
       // タブのページが移動すると、Chrome はそのタブ用のアイコンの文字を消します。手順ごとに設定し直します。
       await showRunBadge(tabId);
 
@@ -689,19 +723,27 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
   } catch (error) {
     if (error instanceof StopRequested) {
       // stepIndex は、停止した時点で完了していた手順の数と同じです。
-      await finishRun(runId, { status: 'stopped', ...position() });
+      await finishRun(runId, { status: 'stopped', ...position() }, stoppedStep());
       return;
     }
     if (error instanceof Halted) {
       handOver = true;
-      await finishRun(runId, { status: 'halted', ...position(), error: error.message });
+      await finishRun(
+        runId,
+        { status: 'halted', ...position(), error: error.message },
+        stoppedStep(),
+      );
       return;
     }
-    await finishRun(runId, {
-      status: 'failed',
-      ...position(),
-      error: error instanceof Error ? error.message : String(error),
-    });
+    await finishRun(
+      runId,
+      {
+        status: 'failed',
+        ...position(),
+        error: error instanceof Error ? error.message : String(error),
+      },
+      stoppedStep(),
+    );
   } finally {
     if (handOver) {
       // 確定ボタンの手前などで実行を終えた場合は、以降を人が操作することを示します（#13）。
@@ -872,6 +914,7 @@ async function withRetry(runId, flow, action) {
           },
         );
       }
+      retryCounts.set(runId, attempt + 1);
       await waitWithStopCheck(runId, pickDelay(stepInterval(flow)));
     }
   }
