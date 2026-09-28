@@ -24,7 +24,7 @@
       >
     </header>
 
-    <main class="lm-stack">
+    <main class="lm-stack" id="main">
       <section id="run-section" class="lm-stack" aria-labelledby="run-heading" hidden>
         <h2 id="run-heading" class="visually-hidden">実行の状態</h2>
         <!--
@@ -72,7 +72,7 @@
             <p id="recording-allow-notice" hidden></p>
           </div>
           <ol id="steps" class="lm-steps"></ol>
-          <div class="lm-buttons mt-2">
+          <div class="lm-buttons mt-2" id="recording-buttons">
             <button type="button" class="btn btn-sm btn-ghost-danger" id="recording-discard">
               破棄
             </button>
@@ -91,9 +91,9 @@
             <input type="text" class="form-control" id="flow-name" maxlength="200" />
             <div class="invalid-feedback" id="flow-name-feedback"></div>
           </div>
-          <div class="lm-buttons">
+          <div class="lm-buttons" id="result-buttons">
             <button type="button" class="btn btn-primary" id="save-flow">フローとして保存</button>
-            <button type="button" class="btn" id="discard">破棄</button>
+            <button type="button" class="btn btn-ghost-danger" id="discard">破棄</button>
           </div>
           <div id="result-confirm" hidden></div>
           <p id="save-notice" hidden></p>

@@ -55,12 +55,13 @@ const cases = [
   },
   // まとめフローの登録の欄（#7）です。
   { page: '管理画面', html: options, button: 'batch-cancel', notices: ['batch-notice'] },
-  { page: '管理画面', html: options, button: 'save', notices: ['json-notice'] },
+  // ボタンの並びの末尾のボタンの直後に置きます（#112 で［JSON を保存］［整形］の順にしました）。
+  { page: '管理画面', html: options, button: 'format', notices: ['json-notice'] },
   { page: '管理画面', html: options, button: 'speed-save', notices: ['speed-notice'] },
   {
     page: '管理画面',
     html: options,
-    button: 'import',
+    button: 'import-format',
     notices: ['import-confirm', 'import-notice'],
   },
   {

@@ -108,7 +108,7 @@
             </label>
             <div class="lm-bulk-bar" id="bulk-bar" hidden>
               <span id="bulk-count" role="status"></span>
-              <div class="lm-buttons">
+              <div class="lm-buttons" id="bulk-buttons">
                 <button type="button" class="btn btn-sm" id="bulk-batch">
                   まとめフローとして保存
                 </button>
@@ -172,8 +172,8 @@
                 </div>
               </form>
               <div class="lm-buttons" id="editor-actions">
+                <button type="button" class="btn btn-sm btn-primary" id="run">実行</button>
                 <button type="button" class="btn btn-sm" id="open-first">最初のページを開く</button>
-                <button type="button" class="btn btn-sm" id="run">実行</button>
                 <button type="button" class="btn btn-sm" id="rename">名前の変更</button>
                 <button type="button" class="btn btn-sm" id="export">ファイルに書き出し</button>
                 <button type="button" class="btn btn-sm btn-ghost-danger" id="delete">削除</button>
@@ -254,8 +254,8 @@
                 ></textarea>
                 <div class="invalid-feedback" id="json-feedback"></div>
                 <div class="lm-buttons mt-3">
-                  <button type="button" class="btn" id="format">整形</button>
                   <button type="button" class="btn btn-primary" id="save">JSON を保存</button>
+                  <button type="button" class="btn" id="format">整形</button>
                 </div>
                 <p id="json-notice" hidden></p>
               </details>
@@ -289,9 +289,9 @@
                 ></textarea>
                 <div class="invalid-feedback" id="import-json-feedback"></div>
               </div>
-              <div class="lm-buttons">
-                <button type="button" class="btn" id="import-format">整形</button>
+              <div class="lm-buttons" id="import-buttons">
                 <button type="button" class="btn btn-primary" id="import">追加</button>
+                <button type="button" class="btn" id="import-format">整形</button>
               </div>
               <div id="import-confirm" hidden></div>
               <p id="import-notice" hidden></p>
@@ -401,7 +401,7 @@
                 ></textarea>
                 <div class="invalid-feedback" id="stop-paths-feedback"></div>
               </div>
-              <div class="lm-buttons">
+              <div class="lm-buttons" id="stop-buttons">
                 <button type="submit" class="btn btn-primary">このサイトの指定を保存</button>
                 <button type="button" class="btn btn-ghost-danger" id="stop-delete">
                   このサイトの指定を削除
@@ -422,7 +422,7 @@
         <div class="card">
           <div class="card-header lm-card-header">
             <h2 class="card-title">実行履歴<span class="lm-count" id="history-count"></span></h2>
-            <div class="lm-buttons">
+            <div class="lm-buttons" id="history-buttons">
               <button type="button" class="btn btn-sm" id="history-csv">CSV に書き出し</button>
               <button type="button" class="btn btn-sm btn-ghost-danger" id="history-clear">
                 すべて削除

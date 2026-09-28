@@ -130,6 +130,10 @@ const elements = {
   bulkCount: byId('bulk-count'),
   bulkExport: byId('bulk-export'),
   bulkBatch: byId('bulk-batch'),
+  bulkButtons: byId('bulk-buttons'),
+  importButtons: byId('import-buttons'),
+  stopButtons: byId('stop-buttons'),
+  historyButtons: byId('history-buttons'),
   batchForm: /** @type {HTMLFormElement} */ (byId('batch-form')),
   batchName: /** @type {HTMLInputElement} */ (byId('batch-name')),
   batchNameFeedback: byId('batch-name-feedback'),
@@ -497,6 +501,8 @@ function showRunForm(stored, mode) {
   );
   showNotice(elements.runNotice, '');
   elements.runForm.hidden = false;
+  // 入力フォームを開いている間は、詳細の操作のボタンを隠します。押すボタンをフォームの中に絞るためです（#112）。
+  elements.editorActions.hidden = true;
   elements.runForm.scrollIntoView({ block: 'nearest' });
   const first = elements.runFields.querySelector('input, select');
   if (first instanceof HTMLElement) {
@@ -507,6 +513,7 @@ function showRunForm(stored, mode) {
 function hideRunForm() {
   runFormState = null;
   elements.runForm.hidden = true;
+  elements.editorActions.hidden = false;
   // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
   elements.runFields.replaceChildren();
   showNotice(elements.runNotice, '');
@@ -654,7 +661,7 @@ function renderBulk() {
   if (count === 0) {
     elements.bulkConfirm.replaceChildren();
     elements.bulkConfirm.hidden = true;
-    elements.batchForm.hidden = true;
+    showBatchNameForm(false);
   }
   if (!elements.batchForm.hidden) {
     renderBatchOrder();
@@ -719,6 +726,7 @@ elements.bulkDelete.addEventListener('click', async () => {
       message: `次の ${remove.length} 件のフローを削除します。元に戻せません。\n${names(remove)}${runningText}`,
       confirmLabel: '削除する',
       danger: true,
+      hide: [elements.bulkButtons],
     }))
   ) {
     return;
@@ -756,17 +764,29 @@ function renderBatchOrder() {
   );
 }
 
+/**
+ * まとめフローの登録の欄を開く、または閉じます。開いている間は、一括操作の帯のボタンを隠します。
+ * 押すボタンを欄の中の［保存］に絞るためです（#112）。閉じるときは、入力した名前を消します。
+ * @param {boolean} open
+ */
+function showBatchNameForm(open) {
+  elements.batchForm.hidden = !open;
+  elements.bulkButtons.hidden = open;
+  if (!open) {
+    elements.batchName.value = '';
+  }
+}
+
 elements.bulkBatch.addEventListener('click', () => {
   clearNotices();
-  elements.batchForm.hidden = false;
+  showBatchNameForm(true);
   renderBatchOrder();
   elements.batchName.focus();
 });
 
 elements.batchCancel.addEventListener('click', () => {
   clearNotices();
-  elements.batchForm.hidden = true;
-  elements.batchName.value = '';
+  showBatchNameForm(false);
 });
 
 elements.batchForm.addEventListener('submit', async (event) => {
@@ -793,8 +813,7 @@ elements.batchForm.addEventListener('submit', async (event) => {
     showNotice(elements.batchNotice, result.error, 'error');
     return;
   }
-  elements.batchForm.hidden = true;
-  elements.batchName.value = '';
+  showBatchNameForm(false);
   showToast(
     elements.toast,
     `まとめフロー「${name}」を保存しました。［まとめフロー］のタブか、サイドパネルから実行できます。`,
@@ -938,6 +957,7 @@ function batchRow(batch, flows) {
         message: `まとめフロー「${batch.name}」を削除します。含めているフローは削除しません。`,
         confirmLabel: '削除する',
         danger: true,
+        hide: [buttons],
       }))
     ) {
       return;
@@ -1230,6 +1250,7 @@ elements.deleteFlow.addEventListener('click', async () => {
       message: `「${stored.flow.name}」を削除します。元に戻せません。`,
       confirmLabel: '削除する',
       danger: true,
+      hide: [elements.editorActions],
     }))
   ) {
     return;
@@ -1291,6 +1312,7 @@ elements.importFlow.addEventListener('click', async () => {
           flows.map((flow) => `・${flow.name}（${flowOrigins(flow).join('、')}）`).join('\n')) +
       duplicateText,
     confirmLabel: '追加する',
+    hide: [elements.importButtons],
   });
   if (!confirmed) {
     return;
@@ -1467,6 +1489,7 @@ elements.historyClear.addEventListener('click', async () => {
       message: `実行履歴 ${runIds.length} 件をすべて削除します。元に戻せません。保存したファイルは削除しません。`,
       confirmLabel: '削除する',
       danger: true,
+      hide: [elements.historyButtons],
     }))
   ) {
     return;
@@ -1663,6 +1686,7 @@ async function onSaveStopRule() {
       message: `要素と画面の指定が空のため、${origin} の指定を削除します。元に戻せません。`,
       confirmLabel: '削除する',
       danger: true,
+      hide: [elements.stopButtons],
     }))
   ) {
     return;
@@ -1699,6 +1723,7 @@ async function onDeleteStopRule() {
       message: `${origin} の指定を削除します。元に戻せません。`,
       confirmLabel: '削除する',
       danger: true,
+      hide: [elements.stopButtons],
     }))
   ) {
     return;

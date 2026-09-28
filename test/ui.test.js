@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  confirmInline,
   followColorScheme,
   noticeStyle,
   showFieldError,
@@ -269,3 +270,76 @@ test('続けて表示すると前のトーストを置き換え、前の時間�
   timers.tick(1);
   assert.equal(region.children.length, 0);
 });
+
+/**
+ * confirmInline が使う部品だけを持つ、要素と文書の代わりです。
+ * @returns {any}
+ */
+function fakeDocument() {
+  const document = {
+    /** @param {string} tag */
+    createElement(tag) {
+      /** @type {Map<string, () => void>} */
+      const listeners = new Map();
+      /** @type {any[]} */
+      const children = [];
+      return {
+        tag,
+        hidden: false,
+        className: '',
+        textContent: '',
+        children,
+        ownerDocument: document,
+        setAttribute() {},
+        focus() {},
+        /** @param {any[]} items */
+        append(...items) {
+          children.push(...items);
+        },
+        /** @param {any[]} items */
+        replaceChildren(...items) {
+          children.splice(0, children.length, ...items);
+        },
+        /** @param {string} type @param {() => void} listener */
+        addEventListener(type, listener) {
+          listeners.set(type, listener);
+        },
+        click() {
+          listeners.get('click')?.();
+        },
+      };
+    },
+  };
+  return document;
+}
+
+for (const [label, index, expected] of /** @type {const} */ ([
+  ['確定', 0, true],
+  ['キャンセル', 1, false],
+])) {
+  test(`確認を開いている間は元のボタンの並びを隠し、［${label}］で閉じると表示に戻す（#112）`, async () => {
+    const document = fakeDocument();
+    const container = document.createElement('div');
+    const buttons = document.createElement('div');
+    const alreadyHidden = document.createElement('div');
+    alreadyHidden.hidden = true;
+    const answer = confirmInline(container, {
+      message: '削除します。',
+      confirmLabel: '削除する',
+      danger: true,
+      hide: [buttons, alreadyHidden],
+    });
+    assert.equal(container.hidden, false);
+    assert.equal(buttons.hidden, true);
+    // 確認の中のボタンは「確定 → キャンセル」の順です（#112 の規則 3）。
+    const [ok, cancel] = container.children[1].children;
+    assert.equal(ok.textContent, '削除する');
+    assert.equal(cancel.textContent, 'キャンセル');
+    [ok, cancel][index].click();
+    assert.equal(await answer, expected);
+    assert.equal(container.hidden, true);
+    assert.equal(buttons.hidden, false);
+    // 確認の前から隠れていた要素は、隠れたままにします。
+    assert.equal(alreadyHidden.hidden, true);
+  });
+}
