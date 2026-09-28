@@ -351,6 +351,64 @@ export function batchItemLabel(item, run) {
 }
 
 /**
+ * 状態の印の色の種類です。サイドパネルの印の色（lm-status-<種類>）に使います。
+ * 操作が必要な状態（一時停止中・確定の手前・失敗）は、色で目立たせます。
+ * @param {BatchItem} item
+ * @param {{ status: string } | undefined} run そのフローの実行の状態
+ * @returns {'success' | 'primary' | 'warning' | 'danger' | 'muted'}
+ */
+export function batchItemTone(item, run) {
+  switch (item.status) {
+    case 'done':
+      return 'success';
+    case 'running':
+      return run?.status === 'paused' || run?.status === 'pausing' ? 'warning' : 'primary';
+    case 'held':
+      return 'warning';
+    case 'failed':
+      return 'danger';
+    default:
+      return 'muted';
+  }
+}
+
+/**
+ * 行に操作のボタンと進み具合の文を出すかです。実行中（一時停止中を含む）、確定の手前、失敗の行だけに出し、
+ * ほかの行は 1 行に収めます。カードが縦に長くならないようにするためです。
+ * @param {BatchItem} item
+ * @returns {boolean}
+ */
+export function needsAttention(item) {
+  return item.status === 'running' || item.status === 'held' || item.status === 'failed';
+}
+
+/**
+ * 一括実行全体の進み具合です。終わったフロー（待機中と実行中以外）の数と、状態ごとの件数の文を返します。
+ * 例：「3 件中 2 件が終了：完了 1・未実行 1・実行中 1」
+ * @param {BatchItem[]} items
+ * @param {{ runId: string, status: string }[]} runs 実行の状態の一覧
+ * @returns {{ ended: number, total: number, text: string }}
+ */
+export function batchSummary(items, runs) {
+  const ended = items.filter((item) => !UNFINISHED.includes(item.status)).length;
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const item of items) {
+    const label = batchItemLabel(
+      item,
+      runs.find((run) => run.runId === item.runId),
+    );
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const parts = [...counts].map(([label, count]) => `${label} ${count}`);
+  return {
+    ended,
+    total: items.length,
+    text: `${items.length} 件中 ${ended} 件が終了：${parts.join('・')}`,
+  };
+}
+
+/**
  * chrome.storage.session の内容から、一括実行の状態だけを、始めた日時の古い順に取り出します。
  * @param {Record<string, unknown>} stored
  * @returns {BatchRun[]}

@@ -189,3 +189,64 @@ body {
 .lm-batch-item-name {
   font-weight: 600;
 }
+
+/* 1 行に並べる文です。長い場合は、右の印やボタンを押し出さずに折り返します。 */
+.lm-row-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 一括実行全体の進み具合（件数の文と進行のバー）です。 */
+.lm-batch-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.lm-batch-details > summary {
+  cursor: pointer;
+}
+
+.lm-batch-details > .lm-batch-items {
+  margin-top: 0.5rem;
+}
+
+/*
+ * 状態の印です。背景は役割の色を薄く、文字は背景に対して読める濃さ（4.5:1 以上）にします。
+ * 文字の色の作り方は、base.css の知らせ（.alert）と同じです。
+ */
+.lm-status {
+  --lm-status-color: var(--tblr-secondary);
+
+  flex: none;
+  padding: 0 0.5rem;
+  border-radius: var(--tblr-border-radius);
+  background: color-mix(in oklab, var(--lm-status-color) 14%, transparent);
+  color: color-mix(in oklab, var(--lm-status-color) 55%, black);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+[data-bs-theme='dark'] .lm-status {
+  background: color-mix(in oklab, var(--lm-status-color) 24%, transparent);
+  color: color-mix(in oklab, var(--lm-status-color) 45%, white);
+}
+
+.lm-status-success {
+  --lm-status-color: var(--tblr-success);
+}
+
+.lm-status-primary {
+  --lm-status-color: var(--tblr-primary);
+}
+
+.lm-status-warning {
+  --lm-status-color: var(--tblr-warning);
+}
+
+.lm-status-danger {
+  --lm-status-color: var(--tblr-danger);
+}

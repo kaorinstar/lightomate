@@ -10,11 +10,14 @@ import {
   batchConflictMessage,
   batchConflicts,
   batchItemLabel,
+  batchItemTone,
   batchProblems,
+  batchSummary,
   expireHeld,
   finishItem,
   hasWaitingFollower,
   isBatchFinished,
+  needsAttention,
   nextToStart,
   skipWaiting,
 } from '../extension/shared/batch.js';
@@ -208,4 +211,35 @@ test('フロー 1 件の状態の表示', () => {
   assert.equal(batchItemLabel(item('a', A, 'running'), { status: 'paused' }), '一時停止中');
   assert.equal(batchItemLabel(item('a', A, 'held'), undefined), '確定の手前で停止');
   assert.equal(batchItemLabel(item('a', A, 'skipped'), undefined), '未実行');
+});
+
+test('一括実行全体の進み具合の文', () => {
+  const items = [
+    { ...item('a1', A, 'done') },
+    { ...item('b1', B, 'running'), runId: 'r1' },
+    item('a2', A),
+    item('c1', C, 'skipped'),
+  ];
+  const summary = batchSummary(items, [{ runId: 'r1', status: 'paused' }]);
+  assert.equal(summary.ended, 2);
+  assert.equal(summary.total, 4);
+  assert.equal(summary.text, '4 件中 2 件が終了：完了 1・一時停止中 1・待機中 1・未実行 1');
+});
+
+test('操作が必要な行（実行中・確定の手前・失敗）だけに、ボタンと進み具合の文を出す', () => {
+  assert.equal(needsAttention(item('a', A, 'running')), true);
+  assert.equal(needsAttention(item('a', A, 'held')), true);
+  assert.equal(needsAttention(item('a', A, 'failed')), true);
+  for (const status of /** @type {const} */ (['waiting', 'done', 'stopped', 'skipped'])) {
+    assert.equal(needsAttention(item('a', A, status)), false);
+  }
+});
+
+test('状態の印の色は、操作が必要な状態を目立たせる', () => {
+  assert.equal(batchItemTone(item('a', A, 'done'), undefined), 'success');
+  assert.equal(batchItemTone(item('a', A, 'running'), { status: 'running' }), 'primary');
+  assert.equal(batchItemTone(item('a', A, 'running'), { status: 'paused' }), 'warning');
+  assert.equal(batchItemTone(item('a', A, 'held'), undefined), 'warning');
+  assert.equal(batchItemTone(item('a', A, 'failed'), undefined), 'danger');
+  assert.equal(batchItemTone(item('a', A, 'skipped'), undefined), 'muted');
 });
