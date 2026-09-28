@@ -1,8 +1,28 @@
 /* サイドパネルだけの指定です。共通の指定は shared/base.css にあります。 */
 
+/*
+ * 文字の大きさです（#115）。サイドパネルは幅が狭いため、管理画面より 1 段ずつ小さくします。
+ * 段階は docs/design-guidelines.md の「4. 色・余白・文字」にあります。
+ * 本文は Tabler の変数で指定し、本文の大きさを使うタブなどの部品もそろえます。
+ */
 body {
+  --tblr-body-font-size: 0.8125rem;
+
   padding: 0.75rem;
   background: var(--tblr-bg-surface-secondary);
+}
+
+.btn:not(.btn-sm) {
+  --tblr-btn-font-size: 0.8125rem;
+}
+
+.form-control,
+.form-select {
+  font-size: 0.8125rem;
+}
+
+.card-title,
+.lm-tabs .nav-link {
   font-size: 0.875rem;
 }
 
@@ -30,7 +50,7 @@ body {
 
 .lm-title {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1rem;
   font-weight: 700;
 }
 
@@ -81,7 +101,6 @@ body {
   padding-inline-start: 1.5em;
   overflow-y: auto;
   color: var(--tblr-secondary);
-  font-size: 0.8125rem;
 }
 
 .lm-steps li {
@@ -132,7 +151,7 @@ body {
 }
 
 .lm-flow-name {
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -199,7 +218,6 @@ body {
   margin: 0.25rem 0 0;
   overflow: hidden;
   color: var(--tblr-secondary);
-  font-size: 0.8125rem;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
