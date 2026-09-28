@@ -21,9 +21,14 @@ export function describeStep(step) {
       return `${step.cause === 'user' ? 'ページを開く' : 'ページが移動'}：${step.url}`;
     case 'click':
       // 新しいタブが開くクリック（#20）は、以降の手順をそのタブで行うことを添えます。
-      return step.newTab
-        ? `クリック：${step.target.label}（新しいタブで開き、以降はそのタブで実行）`
-        : `クリック：${step.target.label}`;
+      if (step.newTab) {
+        return `クリック：${step.target.label}（新しいタブで開き、以降はそのタブで実行）`;
+      }
+      // サイトが提供するファイルのダウンロード（#20）は、保存先を添えます。
+      if (step.download) {
+        return `クリック：${step.target.label}（ダウンロードを ${step.download.path} に保存${step.download.onConflict === 'overwrite' ? '、同じ名前は上書き' : ''}）`;
+      }
+      return `クリック：${step.target.label}`;
     case 'input':
       return step.secret
         ? `入力：${step.target.label}（値は記録していません）`

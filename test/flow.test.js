@@ -52,9 +52,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜10 のフローは、そのまま版 11 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 11);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+test('版 1〜11 のフローは、そのまま版 12 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 12);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -1094,4 +1094,57 @@ test('newTab は click の手順にだけ、true の値でだけ書ける（#20�
     ]);
   }
   assert.deepEqual(validateStep({ type: 'closeTab' }), []);
+});
+
+test('click の download は、版 12 のフローで検証を通り、版 11 以前では誤りになる（#20）', () => {
+  const click = {
+    type: 'click',
+    target: { selectors: ['a.invoice'], tag: 'a', label: 'PDF をダウンロード' },
+    download: { path: 'Lightomate/領収書/{{flow.name}}', onConflict: 'overwrite' },
+  };
+  assert.deepEqual(validateFlow({ ...validFlow, steps: [...validFlow.steps, click] }), []);
+  const old = validateFlow({ ...validFlow, schemaVersion: 11, steps: [...validFlow.steps, click] });
+  assert.deepEqual(old, [
+    `steps[${validFlow.steps.length}]: download は、schemaVersion が 12 以上のフローでだけ使えます。`,
+  ]);
+});
+
+test('download は click の手順にだけ、正しい形でだけ書ける（#20）', () => {
+  const target = { selectors: ['#a'], tag: 'a', label: 'a' };
+  const download = { path: 'Lightomate/a' };
+  assert.deepEqual(validateStep({ type: 'click', target, download }), []);
+  assert.deepEqual(validateStep({ type: 'input', target, value: 'x', download }), [
+    'download は、click の手順にだけ書けます。',
+  ]);
+  assert.deepEqual(validateStep({ type: 'click', target, download, newTab: true }), [
+    'newTab と download は、同じクリックの手順に書けません。',
+  ]);
+  assert.deepEqual(validateStep({ type: 'click', target, download: 'a' }), [
+    'download がオブジェクトではありません。',
+  ]);
+  assert.deepEqual(validateStep({ type: 'click', target, download: {} }), [
+    'download.path が文字列ではありません。',
+  ]);
+  assert.equal(validateStep({ type: 'click', target, download: { path: 'C:/a' } }).length, 1);
+  assert.deepEqual(
+    validateStep({ type: 'click', target, download: { path: 'a', onConflict: 'skip' } }),
+    ['download.onConflict が rename または overwrite ではありません。'],
+  );
+});
+
+test('download.path の参照は、パラメータか前の手順の extract の名前でなければ誤りになる（#20）', () => {
+  const click = {
+    type: 'click',
+    target: { selectors: ['a.invoice'], tag: 'a', label: 'PDF' },
+    download: { path: 'Lightomate/{{orderNumber}}' },
+  };
+  const errors = validateFlow({ ...validFlow, steps: [...validFlow.steps, click] });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /download: path の「orderNumber」は/);
+  const extract = {
+    type: 'extract',
+    target: { selectors: ['.no'], tag: 'span', label: '注文番号' },
+    name: 'orderNumber',
+  };
+  assert.deepEqual(validateFlow({ ...validFlow, steps: [...validFlow.steps, extract, click] }), []);
 });

@@ -177,3 +177,15 @@ test('新しいタブで開くクリックと、タブを閉じる手順の説�
   assert.equal(describeStep({ type: 'closeTab' }), 'タブを閉じて、元のタブに戻る');
   assert.equal(stepKindLabel({ type: 'closeTab' }), 'タブを閉じる');
 });
+
+test('ダウンロードの保存先を指定したクリックの説明（#20）', () => {
+  const target = { selectors: ['a.invoice'], tag: 'a', label: 'PDF' };
+  assert.equal(
+    describeStep({ type: 'click', target, download: { path: 'L/{{n}}', onConflict: 'overwrite' } }),
+    'クリック：PDF（ダウンロードを L/{{n}} に保存、同じ名前は上書き）',
+  );
+  assert.equal(
+    describeStep({ type: 'click', target, download: { path: 'L/{{n}}' } }),
+    'クリック：PDF（ダウンロードを L/{{n}} に保存）',
+  );
+});

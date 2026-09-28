@@ -1,4 +1,5 @@
-// PDF の保存（savePdf、#16）の保存先を、ひな形に値を埋め込んで作ります。chrome.* は使いません。
+// PDF の保存（savePdf、#16）と、サイトが提供するファイルのダウンロード（click の download、#20）の保存先を、
+// ひな形に値を埋め込んで作ります。chrome.* は使いません。
 //
 // 保存先は Chrome のダウンロード先フォルダーからの相対パスです（chrome.downloads の filename）。
 // 値によってダウンロード先フォルダーの外に保存されることを防ぐため、次のようにします。
@@ -111,9 +112,11 @@ export function validateSaveTemplate(template) {
  * ひな形に値を埋め込み、保存先のパスを作ります。
  * @param {string} template 保存先のひな形。/ でフォルダーを区切ります
  * @param {Record<string, string>} values 参照の名前（例：flow.name、month、month.mm）と値
+ * @param {string} [extension] 末尾に付ける拡張子（例：.pdf）。ファイル名がこの拡張子で終わっていない場合に
+ *   付けます。空の文字列の場合は付けません。省略した場合は .pdf です
  * @returns {{ ok: true, path: string } | { ok: false, error: string }}
  */
-export function buildSavePath(template, values) {
+export function buildSavePath(template, values, extension = '.pdf') {
   const errors = validateSaveTemplate(template);
   if (errors.length > 0) {
     return { ok: false, error: errors.join(' ') };
@@ -140,11 +143,33 @@ export function buildSavePath(template, values) {
       error: `保存先に埋め込む値がありません（${[...new Set(missing)].join('、')}）。`,
     };
   }
-  const last = segments.length - 1;
-  if (!/\.pdf$/i.test(segments[last])) {
-    segments[last] = `${segments[last]}.pdf`;
+  return { ok: true, path: withExtension(segments.join('/'), extension) };
+}
+
+/**
+ * パスの末尾が拡張子で終わっていない場合に、拡張子を付けます（#20）。大文字と小文字は区別しません。
+ * @param {string} path
+ * @param {string} extension 例：.pdf。空の文字列の場合は何もしません
+ * @returns {string}
+ */
+export function withExtension(path, extension) {
+  if (extension === '' || path.toLowerCase().endsWith(extension.toLowerCase())) {
+    return path;
   }
-  return { ok: true, path: segments.join('/') };
+  return `${path}${extension}`;
+}
+
+/**
+ * ファイル名の拡張子を返します（例：C:\Users\a\invoice.PDF → .PDF）。ない場合は空の文字列です（#20）。
+ * 拡張子は、英字を 1 文字以上含む英数字 1〜10 文字に限ります。名前の途中のドット（例：INV.2026）を拡張子と
+ * 誤らないためです。
+ * @param {string} filename
+ * @returns {string}
+ */
+export function fileExtension(filename) {
+  const name = filename.split(/[\\/]/).at(-1) ?? '';
+  const match = /(\.[A-Za-z0-9]{1,10})$/.exec(name);
+  return match && match.index > 0 && /[A-Za-z]/.test(match[1]) ? match[1] : '';
 }
 
 /**

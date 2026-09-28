@@ -6,6 +6,8 @@ import {
   buildSavePath,
   builtinValues,
   validateSaveTemplate,
+  fileExtension,
+  withExtension,
 } from '../extension/shared/save-path.js';
 
 const now = new Date(2026, 8, 5, 7, 8, 9);
@@ -95,4 +97,26 @@ test('埋め込む値がない参照は誤りとする', () => {
   const result = buildSavePath('Lightomate/{{orderNumber}}.pdf', builtins);
   assert.equal(result.ok, false);
   assert.match(result.ok ? '' : result.error, /orderNumber/);
+});
+
+test('サイトのファイルの拡張子を取り出す。英字を含まない末尾のドットは拡張子としない（#20）', () => {
+  assert.equal(fileExtension('C:\\Users\\a\\Downloads\\invoice.PDF'), '.PDF');
+  assert.equal(fileExtension('/home/a/Downloads/data.csv'), '.csv');
+  assert.equal(fileExtension('archive.7z'), '.7z');
+  assert.equal(fileExtension('INV.2026'), '');
+  assert.equal(fileExtension('.bashrc'), '');
+  assert.equal(fileExtension('README'), '');
+});
+
+test('ファイル名がその拡張子で終わっていない場合だけ、拡張子を付ける（#20）', () => {
+  assert.equal(withExtension('L/A-001', '.pdf'), 'L/A-001.pdf');
+  assert.equal(withExtension('L/A-001.PDF', '.pdf'), 'L/A-001.PDF');
+  assert.equal(withExtension('L/A-001', ''), 'L/A-001');
+  assert.deepEqual(buildSavePath('L/{{n}}', { n: 'A-001' }, '.csv'), {
+    ok: true,
+    path: 'L/A-001.csv',
+  });
+  assert.deepEqual(buildSavePath('L/{{n}}', { n: 'A-001' }, ''), { ok: true, path: 'L/A-001' });
+  // 拡張子を省略した場合は、これまでどおり .pdf を付けます（savePdf）。
+  assert.deepEqual(buildSavePath('L/{{n}}', { n: 'A-001' }), { ok: true, path: 'L/A-001.pdf' });
 });
