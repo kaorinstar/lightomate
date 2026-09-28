@@ -73,6 +73,29 @@ export function firstPageUrl(flow, paramInput, now) {
 }
 
 /**
+ * まとめフロー（#7）の各フローの最初のページの URL を、登録した順に返します。
+ * 1 件でも開くページが決まらないフローがあれば、どれも返さず、フロー名を添えた理由を返します。
+ * 途中までだけ開いた状態にしないためです。
+ * @param {{ id: string, flow: Flow }[]} flows まとめフローに含めたフロー（登録した順）
+ * @param {Record<string, { params: Record<string, string> }>} inputs フローごとの入力した値。キーはフローの id です
+ * @param {Date} now
+ * @returns {{ ok: true, urls: string[] } | { ok: false, error: string }}
+ */
+export function batchFirstPageUrls(flows, inputs, now) {
+  const results = flows.map((stored) => ({
+    name: stored.flow.name,
+    result: firstPageUrl(stored.flow, inputs[stored.id]?.params ?? {}, now),
+  }));
+  const errors = results.flatMap(({ name, result }) =>
+    result.ok ? [] : [`「${name}」：${result.error}`],
+  );
+  if (errors.length > 0) {
+    return { ok: false, error: errors.join('\n') };
+  }
+  return { ok: true, urls: results.flatMap(({ result }) => (result.ok ? [result.url] : [])) };
+}
+
+/**
  * 入力フォームの欄を作ります。パラメータごとの欄と、値を記録していない入力欄の手順ごとの欄です。
  * 各欄は、項目名、入力欄、誤りの表示欄（invalid-feedback）の順に並べます。
  * Chrome 標準の吹き出し（required による検証）は使わず、showRunFieldErrors で各欄の直下に誤りを出します。
