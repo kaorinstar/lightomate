@@ -18,7 +18,8 @@ import { namesForImport } from '../shared/flow-file.js';
  * @property {Flow} flow フロー定義
  */
 
-const FLOWS_KEY = 'flows';
+/** chrome.storage.local にフローを保存するキーです。一括の復元（backup-store.js）でも使います。 */
+export const FLOWS_KEY = 'flows';
 
 /** @returns {Promise<Record<string, StoredFlow>>} */
 async function readAll() {
