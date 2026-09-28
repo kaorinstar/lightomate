@@ -56,6 +56,7 @@ import {
 } from '../shared/flow-search.js';
 import {
   NO_FIRST_PAGE,
+  batchFirstPageUrls,
   buildRunFields,
   fieldEntries,
   firstPageParams,
@@ -168,7 +169,9 @@ let formMode = 'run';
 
 /**
  * まとめフローの入力フォームの内容です（#7）。値の入力が必要なフローごとに、欄をまとめた要素を持ちます。
- * @type {{ batchId: string, groups: { flowId: string, params: import('../shared/params.js').Param[], element: HTMLElement }[] } | null}
+ * mode は、まとめて実行する（run）か、各フローの最初のページを開く（open）かです。
+ * flows は、まとめフローに含めたすべてのフロー（登録した順）です。開くときに使います。
+ * @type {{ batch: StoredBatch, mode: 'run' | 'open', flows: StoredFlow[], groups: { flowId: string, params: import('../shared/params.js').Param[], element: HTMLElement }[] } | null}
  */
 let formBatch = null;
 
@@ -1359,9 +1362,21 @@ function batchItem(batch, flows) {
   });
   run.dataset.batchRun = batch.id;
   run.setAttribute('aria-label', `まとめフロー「${batch.name}」を実行`);
+  // 含めた各フローの最初のページを開きます。手順は実行しません。管理画面の［すべて開く］と同じです。
+  const open = button('すべて開く', 'btn btn-sm', () => {
+    onBatchOpenClick(batch, flows).catch((error) =>
+      setBatchRowNotice(batch.id, String(error), 'error'),
+    );
+  });
+  open.setAttribute(
+    'aria-label',
+    `まとめフロー「${batch.name}」の各フローの最初のページをすべて開く`,
+  );
+  open.disabled = batchProblems(batch.flowIds, flows).length > 0;
+  // 並びは、主な操作（［実行］）、そのほかの操作（［すべて開く］）の順です。
   const actions = document.createElement('div');
   actions.className = 'lm-flow-actions';
-  actions.append(run);
+  actions.append(run, open);
 
   const main = document.createElement('div');
   main.className = 'lm-flow-main';
@@ -1422,24 +1437,77 @@ async function onBatchRunClick(batch, flows) {
     }
     return;
   }
-  showBatchForm(batch, needInput);
+  showBatchForm(batch, 'run', contained, needInput);
+}
+
+/**
+ * まとめフローの［すべて開く］を押したときの処理です。含めた各フローの最初のページを新しいタブで開きます。
+ * 最初のページの URL が値を使うフローがあれば、先に値を尋ねます。誤りは、そのまとめフローの行の中に表示します。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ */
+async function onBatchOpenClick(batch, flows) {
+  clearNotices();
+  const problems = batchProblems(batch.flowIds, flows);
+  if (problems.length > 0) {
+    setBatchRowNotice(batch.id, problems.join('\n'), 'error');
+    return;
+  }
+  const contained = batchFlows(batch, flows);
+  const needInput = contained.filter((stored) => firstPageParams(stored.flow).length > 0);
+  if (needInput.length === 0) {
+    const error = await openBatchPages(batch, contained, {});
+    if (error) {
+      setBatchRowNotice(batch.id, error, 'error');
+    }
+    return;
+  }
+  showBatchForm(batch, 'open', contained, needInput);
+}
+
+/**
+ * 含めた各フローの最初のページを、新しいタブで開きます。1 件目を前面に、残りを背景のタブで開きます。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} contained まとめフローに含めたフロー（登録した順）
+ * @param {Record<string, { params: Record<string, string> }>} inputs フローごとの入力した値
+ * @returns {Promise<string>} 開けなかった理由。開いた場合は空の文字列
+ */
+async function openBatchPages(batch, contained, inputs) {
+  const pages = batchFirstPageUrls(contained, inputs, new Date());
+  if (!pages.ok) {
+    return pages.error;
+  }
+  for (const [index, url] of pages.urls.entries()) {
+    await chrome.tabs.create({ url, active: index === 0 });
+  }
+  showToast(
+    elements.toast,
+    `まとめフロー「${batch.name}」の ${pages.urls.length} 件の最初のページを開きました。`,
+  );
+  return '';
 }
 
 /**
  * まとめフローの値の入力フォームを表示します。値の入力が必要なフローだけを、フロー名の見出しの下に並べます。
+ * 開く場合は、最初の手順の URL が参照するパラメータだけを尋ねます。
  * @param {StoredBatch} batch
+ * @param {'run' | 'open'} mode
+ * @param {StoredFlow[]} contained まとめフローに含めたフロー（登録した順）
  * @param {StoredFlow[]} flows 値の入力が必要なフロー
  */
-function showBatchForm(batch, flows) {
+function showBatchForm(batch, mode, contained, flows) {
+  const open = mode === 'open';
   formMode = 'batch';
   formFlowId = '';
   formParams = [];
-  elements.formHeading.textContent = '実行する値の入力';
-  elements.formDescription.textContent = `まとめフロー「${batch.name}」を実行します。値の入力が必要なフローだけを表示しています。入力した値は保存しません。`;
-  elements.formSubmit.textContent = 'この値でまとめて実行';
+  elements.formHeading.textContent = open ? '開くページの値の入力' : '実行する値の入力';
+  elements.formDescription.textContent = open
+    ? `まとめフロー「${batch.name}」の各フローの最初のページを開きます。値の入力が必要なフローだけを表示しています。入力した値は保存しません。`
+    : `まとめフロー「${batch.name}」を実行します。値の入力が必要なフローだけを表示しています。入力した値は保存しません。`;
+  elements.formSubmit.textContent = open ? 'この値で開く' : 'この値でまとめて実行';
   const now = new Date();
   const groups = flows.map((stored, index) => {
-    const params = stored.flow.params ?? [];
+    const params = open ? firstPageParams(stored.flow) : (stored.flow.params ?? []);
     const element = document.createElement('div');
     element.className = 'lm-stack';
     const heading = document.createElement('h3');
@@ -1449,14 +1517,14 @@ function showBatchForm(batch, flows) {
       heading,
       ...buildRunFields(document, stored.flow, {
         params,
-        secretSteps: secretStepIndexes(stored.flow),
+        secretSteps: open ? [] : secretStepIndexes(stored.flow),
         now,
         idPrefix: `batch-field-${index}`,
       }),
     );
     return { flowId: stored.id, params, element };
   });
-  formBatch = { batchId: batch.id, groups };
+  formBatch = { batch, mode, flows: contained, groups };
   elements.formFields.replaceChildren(...groups.map(({ element }) => element));
   showNotice(elements.formNotice, '');
   elements.formSection.hidden = false;
@@ -1487,7 +1555,10 @@ async function submitBatchForm() {
   const inputs = Object.fromEntries(
     formBatch.groups.map(({ flowId, element }) => [flowId, readRunFields(fieldEntries(element))]),
   );
-  const error = await startBatch(formBatch.batchId, inputs);
+  const error =
+    formBatch.mode === 'open'
+      ? await openBatchPages(formBatch.batch, formBatch.flows, inputs)
+      : await startBatch(formBatch.batch.id, inputs);
   if (error) {
     showNotice(elements.formNotice, error, 'error');
     return;

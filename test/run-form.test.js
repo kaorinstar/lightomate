@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   NO_FIRST_PAGE,
+  batchFirstPageUrls,
   firstPageParams,
   firstPageUrl,
   readRunFields,
@@ -130,4 +131,34 @@ test('値を記録していない入力欄の番号は、if と forEach の内�
     ],
   });
   assert.deepEqual(secretStepIndexes(nested), [2, 3]);
+});
+
+test('まとめフローの各フローの最初のページの URL を、登録した順に返す（#7）', () => {
+  const plain = {
+    ...flow,
+    name: '一覧',
+    steps: [
+      {
+        type: /** @type {const} */ ('navigate'),
+        cause: /** @type {const} */ ('user'),
+        url: 'https://www.example.com/list',
+      },
+    ],
+  };
+  const flows = [
+    { id: 'a', flow },
+    { id: 'b', flow: plain },
+  ];
+  assert.deepEqual(batchFirstPageUrls(flows, { a: { params: { month: '2026-07' } } }, new Date()), {
+    ok: true,
+    urls: ['https://www.example.com/orders?m=2026-07', 'https://www.example.com/list'],
+  });
+  // 1 件でも開くページが決まらなければ、どれも開きません。
+  const result = batchFirstPageUrls(
+    [...flows, { id: 'c', flow: { ...flow, name: 'クリックから', steps: flow.steps.slice(1) } }],
+    { a: { params: { month: '2026-07' } } },
+    new Date(),
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? '' : result.error, /「クリックから」：/);
 });

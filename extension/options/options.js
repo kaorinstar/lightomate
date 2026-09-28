@@ -51,6 +51,7 @@ import {
 } from '../shared/flow-search.js';
 import {
   NO_FIRST_PAGE,
+  batchFirstPageUrls,
   buildRunFields,
   fieldEntries,
   firstPageParams,
@@ -1054,27 +1055,18 @@ async function onBatchOpenClick(batch, flows, { row, buttons, notice }) {
  * @returns {Promise<boolean>} 開いた場合は true
  */
 async function openBatchPages(batch, contained, inputs, notice) {
-  const now = new Date();
-  const results = contained.map((stored) => ({
-    stored,
-    result: firstPageUrl(stored.flow, inputs[stored.id]?.params ?? {}, now),
-  }));
-  const errors = results.flatMap(({ stored, result }) =>
-    result.ok ? [] : [`「${stored.flow.name}」：${result.error}`],
-  );
-  if (errors.length > 0) {
-    showNotice(notice, errors.join('\n'), 'error');
+  const pages = batchFirstPageUrls(contained, inputs, new Date());
+  if (!pages.ok) {
+    showNotice(notice, pages.error, 'error');
     return false;
   }
   // 1 件目のページを前面に、残りを背景のタブで開きます。
-  for (const [index, { result }] of results.entries()) {
-    if (result.ok) {
-      await chrome.tabs.create({ url: result.url, active: index === 0 });
-    }
+  for (const [index, url] of pages.urls.entries()) {
+    await chrome.tabs.create({ url, active: index === 0 });
   }
   showToast(
     elements.toast,
-    `まとめフロー「${batch.name}」の ${results.length} 件の最初のページを開きました。`,
+    `まとめフロー「${batch.name}」の ${pages.urls.length} 件の最初のページを開きました。`,
   );
   return true;
 }
