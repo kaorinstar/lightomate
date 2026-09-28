@@ -804,7 +804,7 @@ async function renderBatches() {
 }
 
 /**
- * まとめフローの一覧の 1 行です。名前、実行する順のフロー、［実行］［削除］を並べます。
+ * まとめフローの一覧の 1 行です。名前、実行する順のフロー、［実行］［開く］［削除］を並べます。
  * 削除されたフローを含む場合など、実行できない理由があれば、警告として表示し、［実行］を押せなくします。
  * @param {StoredBatch} batch
  * @param {StoredFlow[]} flows 保存したすべてのフロー
@@ -843,6 +843,13 @@ function batchRow(batch, flows) {
   run.textContent = '実行';
   run.setAttribute('aria-label', `まとめフロー「${batch.name}」を実行`);
   run.disabled = problems.length > 0;
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'btn btn-sm';
+  open.textContent = '開く';
+  open.title = '含めた各フローの最初のページを開く';
+  open.setAttribute('aria-label', `まとめフロー「${batch.name}」の各フローの最初のページを開く`);
+  open.disabled = problems.length > 0;
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'btn btn-sm btn-ghost-danger';
@@ -850,7 +857,7 @@ function batchRow(batch, flows) {
   remove.setAttribute('aria-label', `まとめフロー「${batch.name}」を削除`);
   const buttons = document.createElement('div');
   buttons.className = 'lm-buttons';
-  buttons.append(run, remove);
+  buttons.append(run, open, remove);
   const confirm = document.createElement('div');
   confirm.hidden = true;
   const notice = document.createElement('p');
@@ -883,6 +890,11 @@ function batchRow(batch, flows) {
   });
   run.addEventListener('click', () => {
     onBatchRunClick(batch, flows, { row, buttons, notice }).catch((error) =>
+      showNotice(notice, String(error), 'error'),
+    );
+  });
+  open.addEventListener('click', () => {
+    onBatchOpenClick(batch, flows, { row, buttons, notice }).catch((error) =>
       showNotice(notice, String(error), 'error'),
     );
   });
@@ -919,9 +931,117 @@ async function onBatchRunClick(batch, flows, { row, buttons, notice }) {
     return;
   }
 
+  showBatchForm(
+    batch,
+    { row, buttons },
+    {
+      title: '実行する値の入力',
+      description:
+        '値の入力が必要なフローだけを表示しています。入力した値は保存しません。実行の状態はサイドパネルに表示します。',
+      submitLabel: 'この値でまとめて実行',
+      fields: needInput.map((stored) => ({
+        stored,
+        params: stored.flow.params ?? [],
+        secretSteps: secretStepIndexes(stored.flow),
+      })),
+      onSubmit: (inputs, formNotice) => startBatch(batch, inputs, formNotice),
+    },
+  );
+}
+
+/**
+ * まとめフローの［開く］です。含めた各フローの最初のページを新しいタブで開きます。手順は実行しません。
+ * 最初のページの URL が実行時の値を使うフローがあれば、行の中にその値の入力欄を開きます。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ * @param {{ row: HTMLElement, buttons: HTMLElement, notice: HTMLElement }} parts 行の要素
+ */
+async function onBatchOpenClick(batch, flows, { row, buttons, notice }) {
+  clearNotices();
+  batchRowNotices.clear();
+  showNotice(notice, '');
+  const contained = batch.flowIds.flatMap((id) => flows.filter((stored) => stored.id === id));
+  const needInput = contained.filter((stored) => firstPageParams(stored.flow).length > 0);
+  if (needInput.length === 0) {
+    await openBatchPages(batch, contained, {}, notice);
+    return;
+  }
+  showBatchForm(
+    batch,
+    { row, buttons },
+    {
+      title: '開くページの値の入力',
+      description:
+        '最初のページの URL が値を使うフローだけを表示しています。入力した値は保存しません。手順は実行しません。',
+      submitLabel: 'この値で開く',
+      fields: needInput.map((stored) => ({
+        stored,
+        params: firstPageParams(stored.flow),
+        secretSteps: [],
+      })),
+      onSubmit: (inputs, formNotice) => openBatchPages(batch, contained, inputs, formNotice),
+    },
+  );
+}
+
+/**
+ * 含めた各フローの最初のページを、新しいタブで開きます。1 件でも開くページが決まらない場合は、どれも開きません。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} contained まとめフローに含めたフロー（登録した順）
+ * @param {Record<string, { params: Record<string, string> }>} inputs フローごとの入力した値
+ * @param {HTMLElement} notice 開けなかったときに知らせを出す場所
+ * @returns {Promise<boolean>} 開いた場合は true
+ */
+async function openBatchPages(batch, contained, inputs, notice) {
   const now = new Date();
-  const groups = needInput.map((stored, index) => {
-    const params = stored.flow.params ?? [];
+  const results = contained.map((stored) => ({
+    stored,
+    result: firstPageUrl(stored.flow, inputs[stored.id]?.params ?? {}, now),
+  }));
+  const errors = results.flatMap(({ stored, result }) =>
+    result.ok ? [] : [`「${stored.flow.name}」：${result.error}`],
+  );
+  if (errors.length > 0) {
+    showNotice(notice, errors.join('\n'), 'error');
+    return false;
+  }
+  // 1 件目のページを前面に、残りを背景のタブで開きます。
+  for (const [index, { result }] of results.entries()) {
+    if (result.ok) {
+      await chrome.tabs.create({ url: result.url, active: index === 0 });
+    }
+  }
+  showToast(
+    elements.toast,
+    `まとめフロー「${batch.name}」の ${results.length} 件の最初のページを開きました。`,
+  );
+  return true;
+}
+
+/**
+ * まとめフローの行の中に、フローごとの値の入力欄を開きます（［実行］と［開く］で使います）。
+ * 入力欄を開いている間は、行の［実行］［開く］［削除］を隠します。押すボタンを入力欄の送信のボタンに絞るためです。
+ * @param {StoredBatch} batch
+ * @param {{ row: HTMLElement, buttons: HTMLElement }} parts 行の要素
+ * @param {{
+ *   title: string,
+ *   description: string,
+ *   submitLabel: string,
+ *   fields: { stored: StoredFlow, params: import('../shared/params.js').Param[], secretSteps: number[] }[],
+ *   onSubmit: (
+ *     inputs: Record<string, { params: Record<string, string>, secrets: Record<string, string> }>,
+ *     notice: HTMLElement,
+ *   ) => Promise<boolean>,
+ * }} options onSubmit は、成功したときに true を返します。true の場合は入力欄を閉じます
+ */
+function showBatchForm(
+  batch,
+  { row, buttons },
+  { title, description, submitLabel, fields, onSubmit },
+) {
+  row.querySelector('form')?.remove();
+  const now = new Date();
+  const groups = fields.map(({ stored, params, secretSteps }, index) => {
     const element = document.createElement('div');
     element.className = 'lm-run-fields';
     const heading = document.createElement('h4');
@@ -931,7 +1051,7 @@ async function onBatchRunClick(batch, flows, { row, buttons, notice }) {
       heading,
       ...buildRunFields(document, stored.flow, {
         params,
-        secretSteps: secretStepIndexes(stored.flow),
+        secretSteps,
         now,
         idPrefix: `batch-run-${batch.id}-${index}`,
       }),
@@ -941,17 +1061,16 @@ async function onBatchRunClick(batch, flows, { row, buttons, notice }) {
   const form = document.createElement('form');
   form.className = 'lm-block lm-run-form';
   form.noValidate = true;
-  const title = document.createElement('h3');
-  title.className = 'lm-block-title';
-  title.textContent = '実行する値の入力';
-  const description = document.createElement('p');
-  description.className = 'lm-sub';
-  description.textContent =
-    '値の入力が必要なフローだけを表示しています。入力した値は保存しません。実行の状態はサイドパネルに表示します。';
+  const heading = document.createElement('h3');
+  heading.className = 'lm-block-title';
+  heading.textContent = title;
+  const text = document.createElement('p');
+  text.className = 'lm-sub';
+  text.textContent = description;
   const submit = document.createElement('button');
   submit.type = 'submit';
   submit.className = 'btn btn-primary';
-  submit.textContent = 'この値でまとめて実行';
+  submit.textContent = submitLabel;
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.className = 'btn';
@@ -961,7 +1080,7 @@ async function onBatchRunClick(batch, flows, { row, buttons, notice }) {
   formButtons.append(submit, cancel);
   const formNotice = document.createElement('p');
   formNotice.hidden = true;
-  form.append(title, description, ...groups.map(({ element }) => element), formButtons, formNotice);
+  form.append(heading, text, ...groups.map(({ element }) => element), formButtons, formNotice);
 
   const close = () => {
     // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
@@ -985,9 +1104,9 @@ async function onBatchRunClick(batch, flows, { row, buttons, notice }) {
     const inputs = Object.fromEntries(
       groups.map(({ flowId, element }) => [flowId, readRunFields(fieldEntries(element))]),
     );
-    startBatch(batch, inputs, formNotice)
-      .then((started) => {
-        if (started) {
+    onSubmit(inputs, formNotice)
+      .then((done) => {
+        if (done) {
           close();
         }
       })
