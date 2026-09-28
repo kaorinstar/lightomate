@@ -20,7 +20,10 @@ export function describeStep(step) {
     case 'navigate':
       return `${step.cause === 'user' ? 'ページを開く' : 'ページが移動'}：${step.url}`;
     case 'click':
-      return `クリック：${step.target.label}`;
+      // 新しいタブが開くクリック（#20）は、以降の手順をそのタブで行うことを添えます。
+      return step.newTab
+        ? `クリック：${step.target.label}（新しいタブで開き、以降はそのタブで実行）`
+        : `クリック：${step.target.label}`;
     case 'input':
       return step.secret
         ? `入力：${step.target.label}（値は記録していません）`
@@ -35,6 +38,8 @@ export function describeStep(step) {
       return `読み取り：${step.target.label} → {{${step.name}}}`;
     case 'wait':
       return `${step.ms / 1000} 秒待つ`;
+    case 'closeTab':
+      return 'タブを閉じて、元のタブに戻る';
     case 'if':
       return `条件：${describeCondition(step.condition)}`;
     case 'forEach':
@@ -190,6 +195,8 @@ export function stepKindLabel(step) {
       return '読み取り';
     case 'wait':
       return '待機';
+    case 'closeTab':
+      return 'タブを閉じる';
     case 'if':
       return '条件';
     case 'forEach':
