@@ -3,7 +3,7 @@
 // フローは chrome.storage.local に保存します。Chrome を終了しても残りますが、暗号化はされません。
 // 拡張機能を削除すると、保存したフローも削除されます。
 
-import { orderFlow, validateFlow, withInterval } from '../shared/flow.js';
+import { orderFlow, validateFlow, withInterval, withMinimumInterval } from '../shared/flow.js';
 import { uniqueName } from '../shared/flow-list.js';
 import { namesForImport } from '../shared/flow-file.js';
 
@@ -57,7 +57,17 @@ export async function getFlow(id) {
  * @returns {Promise<{ ok: true, id: string, name: string } | { ok: false, errors: string[] }>}
  */
 export async function saveFlow(flow, id) {
-  const errors = validateFlow(flow);
+  return writeFlow(flow, validateFlow(flow), id);
+}
+
+/**
+ * 検証した結果に誤りがなければ、フローを保存します。saveFlow と renameFlow から使います。
+ * @param {unknown} flow
+ * @param {string[]} errors 検証した結果
+ * @param {string} [id]
+ * @returns {Promise<{ ok: true, id: string, name: string } | { ok: false, errors: string[] }>}
+ */
+async function writeFlow(flow, errors, id) {
   if (errors.length > 0) {
     return { ok: false, errors };
   }
@@ -115,7 +125,9 @@ export async function renameFlow(id, name) {
   if (!stored) {
     return { ok: false, errors: ['フローが見つかりません。'] };
   }
-  return saveFlow({ ...stored.flow, name }, id);
+  // 手順の間隔が下限より短いフロー（#110）も、名前は変えられるようにします。間隔は書き換えずに保存します。
+  const flow = { ...stored.flow, name };
+  return writeFlow(flow, validateFlow(withMinimumInterval(flow)), id);
 }
 
 /**

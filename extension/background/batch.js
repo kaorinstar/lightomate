@@ -23,7 +23,7 @@ import {
   nextToStart,
   skipWaiting,
 } from '../shared/batch.js';
-import { flowOrigins, validateFlow } from '../shared/flow.js';
+import { flowOrigins, validateFlow, withMinimumInterval } from '../shared/flow.js';
 import {
   activeRunOrigins,
   getRunState,
@@ -92,7 +92,8 @@ export async function startBatch(batchId, inputs) {
   /** @type {string[]} */
   const errors = [];
   for (const { id, flow } of flows) {
-    const formatErrors = validateFlow(flow);
+    // 手順の間隔が下限より短いフロー（#110）は、下限として実行します。
+    const formatErrors = validateFlow(withMinimumInterval(flow));
     if (formatErrors.length > 0) {
       errors.push(`「${flow.name}」の形式に誤りがあります：${formatErrors.join(' ')}`);
       continue;

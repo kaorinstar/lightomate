@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_INTERVAL,
   MAX_INTERVAL_MS,
+  MIN_INTERVAL_MS,
   formatSeconds,
   parseSeconds,
   pickDelay,
@@ -46,18 +47,36 @@ test('最短と最長が同じ場合は、その値になる', () => {
 test('interval を省略したフローの間隔は、既定の 1,000 ミリ秒になる', () => {
   assert.deepEqual(stepInterval({}), { min: 1000, max: 1000 });
   assert.equal(stepInterval({}), DEFAULT_INTERVAL);
-  assert.deepEqual(stepInterval({ interval: { min: 0, max: 500 } }), { min: 0, max: 500 });
+  assert.deepEqual(stepInterval({ interval: { min: 2000, max: 3000 } }), { min: 2000, max: 3000 });
+});
+
+test('下限より短い間隔で保存したフローは、実行時に下限の 1,000 ミリ秒として待つ（#110）', () => {
+  assert.equal(MIN_INTERVAL_MS, 1000);
+  assert.deepEqual(stepInterval({ interval: { min: 0, max: 500 } }), { min: 1000, max: 1000 });
+  assert.deepEqual(stepInterval({ interval: { min: 500, max: 3000 } }), { min: 1000, max: 3000 });
+  for (let i = 0; i < 100; i += 1) {
+    assert.equal(pickDelay(stepInterval({ interval: { min: 0, max: 0 } })), 1000);
+  }
 });
 
 test('画面で入力した秒数を、小数第 1 位までミリ秒にする', () => {
-  assert.deepEqual(parseSeconds('1.5', MAX_INTERVAL_MS), { ok: true, ms: 1500 });
-  assert.deepEqual(parseSeconds(' 3 ', MAX_INTERVAL_MS), { ok: true, ms: 3000 });
-  assert.deepEqual(parseSeconds('0', MAX_INTERVAL_MS), { ok: true, ms: 0 });
-  assert.deepEqual(parseSeconds('60', MAX_INTERVAL_MS), { ok: true, ms: 60000 });
+  assert.deepEqual(parseSeconds('1.5', MIN_INTERVAL_MS, MAX_INTERVAL_MS), { ok: true, ms: 1500 });
+  assert.deepEqual(parseSeconds(' 3 ', MIN_INTERVAL_MS, MAX_INTERVAL_MS), { ok: true, ms: 3000 });
+  assert.deepEqual(parseSeconds('1', MIN_INTERVAL_MS, MAX_INTERVAL_MS), { ok: true, ms: 1000 });
+  assert.deepEqual(parseSeconds('60', MIN_INTERVAL_MS, MAX_INTERVAL_MS), { ok: true, ms: 60000 });
   for (const text of ['', '-1', '1.25', 'a', '1e3', '６０']) {
-    assert.equal(parseSeconds(text, MAX_INTERVAL_MS).ok, false, `値: ${text}`);
+    assert.equal(parseSeconds(text, MIN_INTERVAL_MS, MAX_INTERVAL_MS).ok, false, `値: ${text}`);
   }
-  assert.equal(parseSeconds('60.1', MAX_INTERVAL_MS).ok, false);
+  assert.equal(parseSeconds('60.1', MIN_INTERVAL_MS, MAX_INTERVAL_MS).ok, false);
+});
+
+test('間隔の欄は、1 秒未満（0.9 と 0）を誤りとし、1 秒を受け付ける（#110）', () => {
+  assert.deepEqual(parseSeconds('0.9', MIN_INTERVAL_MS, MAX_INTERVAL_MS), {
+    ok: false,
+    error: '1 秒以上で入力してください。',
+  });
+  assert.equal(parseSeconds('0', MIN_INTERVAL_MS, MAX_INTERVAL_MS).ok, false);
+  assert.deepEqual(parseSeconds('1', MIN_INTERVAL_MS, MAX_INTERVAL_MS), { ok: true, ms: 1000 });
 });
 
 test('ミリ秒を秒数で表示する', () => {
@@ -82,6 +101,10 @@ test('誤りのある欄を示す', () => {
     ['', 'abc', 'max'],
     ['1', '61', 'max'],
     ['3', '1', 'max'],
+    ['0.5', '', 'min'],
+    ['', '0.5', 'max'],
+    ['0.5', '3', 'min'],
+    ['1', '0.5', 'max'],
   ]) {
     const result = readIntervalInput(minText, maxText);
     assert.equal(result.ok, false);

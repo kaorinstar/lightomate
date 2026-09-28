@@ -13,6 +13,12 @@
 /** interval を指定しないフローの、手順の間隔です。 */
 export const DEFAULT_INTERVAL = Object.freeze({ min: 1000, max: 1000 });
 
+/**
+ * 手順の間隔の下限（ミリ秒）です（#110）。間隔を短くしすぎて、自動操作と判断されることを防ぎます。
+ * 既定の間隔と同じ値です。
+ */
+export const MIN_INTERVAL_MS = 1000;
+
 /** 手順の間隔の上限（ミリ秒）です。長すぎる値の誤入力を防ぎます。 */
 export const MAX_INTERVAL_MS = 60_000;
 
@@ -21,11 +27,21 @@ export const MAX_WAIT_MS = 300_000;
 
 /**
  * フローの手順の間隔を返します。指定がない場合は既定の間隔です。
+ * 下限より短い間隔は、下限として扱います（#110）。下限を設ける前に保存したフローを、書き換えずに実行するためです。
  * @param {{ interval?: Interval }} flow
  * @returns {Interval}
  */
 export function stepInterval(flow) {
-  return flow.interval ?? DEFAULT_INTERVAL;
+  return flow.interval ? atLeastMinimum(flow.interval) : DEFAULT_INTERVAL;
+}
+
+/**
+ * 手順の間隔の min と max を、下限以上にしたものを返します（#110）。下限以上の場合は同じ値です。
+ * @param {Interval} interval
+ * @returns {Interval}
+ */
+export function atLeastMinimum({ min, max }) {
+  return { min: Math.max(min, MIN_INTERVAL_MS), max: Math.max(max, MIN_INTERVAL_MS) };
 }
 
 /**
@@ -54,9 +70,9 @@ export function validateInterval(value) {
     ['min', min],
     ['max', max],
   ]) {
-    if (!isMilliseconds(ms, 0, MAX_INTERVAL_MS)) {
+    if (!isMilliseconds(ms, MIN_INTERVAL_MS, MAX_INTERVAL_MS)) {
       errors.push(
-        `interval.${key} が、0 以上 ${MAX_INTERVAL_MS} 以下の整数（ミリ秒）ではありません。`,
+        `interval.${key} が、${MIN_INTERVAL_MS} 以上 ${MAX_INTERVAL_MS} 以下の整数（ミリ秒）ではありません。`,
       );
     }
   }
@@ -80,15 +96,19 @@ export function validateWaitMs(ms) {
 /**
  * 画面で入力した秒数を、ミリ秒にします。小数第 1 位まで入力できます。
  * @param {string} text 入力した文字列（前後の空白は無視します）
+ * @param {number} minMs 下限（ミリ秒）
  * @param {number} maxMs 上限（ミリ秒）
  * @returns {{ ok: true, ms: number } | { ok: false, error: string }}
  */
-export function parseSeconds(text, maxMs) {
+export function parseSeconds(text, minMs, maxMs) {
   const trimmed = text.trim();
   if (!/^\d+(\.\d)?$/.test(trimmed)) {
     return { ok: false, error: '0 以上の数を、小数第 1 位までの秒数で入力してください。' };
   }
   const ms = Math.round(Number(trimmed) * 1000);
+  if (ms < minMs) {
+    return { ok: false, error: `${formatSeconds(minMs)} 秒以上で入力してください。` };
+  }
   if (ms > maxMs) {
     return { ok: false, error: `${formatSeconds(maxMs)} 秒以下で入力してください。` };
   }
@@ -110,11 +130,11 @@ export function readIntervalInput(minText, maxText) {
   if (minTrimmed === '' && maxTrimmed === '') {
     return { ok: true, interval: undefined };
   }
-  const min = parseSeconds(minTrimmed || maxTrimmed, MAX_INTERVAL_MS);
+  const min = parseSeconds(minTrimmed || maxTrimmed, MIN_INTERVAL_MS, MAX_INTERVAL_MS);
   if (!min.ok) {
     return { ok: false, field: minTrimmed ? 'min' : 'max', error: min.error };
   }
-  const max = parseSeconds(maxTrimmed || minTrimmed, MAX_INTERVAL_MS);
+  const max = parseSeconds(maxTrimmed || minTrimmed, MIN_INTERVAL_MS, MAX_INTERVAL_MS);
   if (!max.ok) {
     return { ok: false, field: 'max', error: max.error };
   }
