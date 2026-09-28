@@ -166,3 +166,14 @@ test('実行のカードの状態の印と、フロー名を含まない進み�
     assert.doesNotMatch(runDetailText({ ...base, status }, undefined), /注文/);
   }
 });
+
+test('新しいタブで開くクリックと、タブを閉じる手順の説明（#20）', () => {
+  const target = { selectors: ['a.receipt'], tag: 'a', label: '領収書' };
+  assert.equal(
+    describeStep({ type: 'click', target, newTab: true }),
+    'クリック：領収書（新しいタブで開き、以降はそのタブで実行）',
+  );
+  assert.equal(describeStep({ type: 'click', target }), 'クリック：領収書');
+  assert.equal(describeStep({ type: 'closeTab' }), 'タブを閉じて、元のタブに戻る');
+  assert.equal(stepKindLabel({ type: 'closeTab' }), 'タブを閉じる');
+});

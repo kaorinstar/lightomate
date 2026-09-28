@@ -24,7 +24,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -40,9 +40,11 @@ export const SCHEMA_VERSION = 10;
  * 版 9 は、版 8 に条件を満たす間の繰り返し（while）と、文字・日付による条件（condition の contains、equals、
  * month、from、to）を加えたものです（#103）。
  * 版 10 は、版 9 に、手順の後に開いたダイアログへの応答の指定（手順の dialog）を加えたものです（#88）。
+ * 版 11 は、版 10 に、クリックで開いた新しいタブでの実行（click の newTab）と、そのタブを閉じて元のタブに戻る
+ * 手順（closeTab）を加えたものです（#20）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -56,7 +58,11 @@ const MIN_SCHEMA_VERSION = {
   if: 6,
   forEach: 6,
   while: 9,
+  closeTab: 11,
 };
+
+/** click の newTab を使える最も古い版です（#20）。 */
+const NEW_TAB_MIN_SCHEMA_VERSION = 11;
 
 /** 文字・日付による条件（contains、equals、month、from、to）を使える最も古い版です（#103）。 */
 const VALUE_CONDITION_MIN_SCHEMA_VERSION = 9;
@@ -122,6 +128,14 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {true} [translated] 記録したときに、ページが Chrome の翻訳で表示されていたこと（#99）
  * @property {import('./dialog.js').DialogResponse[]} [dialog] この手順の後に開いたダイアログへの応答。
  *   開いた順に使います（#88）。版 10 で加えました
+ * @property {true} [newTab] クリックで新しいタブが開くこと。以降の手順を、開いたタブで実行します（#20）。
+ *   版 11 で加えました
+ */
+
+/**
+ * 新しいタブ（click の newTab で開いたタブ）を閉じ、開く前のタブに戻ります（#20）。版 11 で加えました。
+ * @typedef {object} CloseTabStep
+ * @property {'closeTab'} type
  */
 
 /**
@@ -240,7 +254,7 @@ export const MAX_TEXT_LENGTH = 2000;
  */
 
 /**
- * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep | WaitStep | IfStep | ForEachStep | WhileStep} Step
+ * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep | WaitStep | IfStep | ForEachStep | WhileStep | CloseTabStep} Step
  */
 
 /** @typedef {import('./params.js').Param} Param */
@@ -599,6 +613,15 @@ function validateStepList(list, path, depth, inLoop, context) {
         `${at}: translated は、schemaVersion が ${TRANSLATED_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
       );
     }
+    if (
+      step.newTab !== undefined &&
+      version !== undefined &&
+      version < NEW_TAB_MIN_SCHEMA_VERSION
+    ) {
+      errors.push(
+        `${at}: newTab は、schemaVersion が ${NEW_TAB_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+      );
+    }
     if (step.dialog !== undefined && version !== undefined && version < DIALOG_MIN_SCHEMA_VERSION) {
       errors.push(
         `${at}: dialog は、schemaVersion が ${DIALOG_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
@@ -754,6 +777,15 @@ export function validateStep(step) {
     }
   }
 
+  if (step.newTab !== undefined) {
+    if (step.type !== 'click') {
+      return ['newTab は、click の手順にだけ書けます。'];
+    }
+    if (step.newTab !== true) {
+      return ['newTab が true ではありません。'];
+    }
+  }
+
   switch (step.type) {
     case 'navigate': {
       /** @type {string[]} */
@@ -834,6 +866,9 @@ export function validateStep(step) {
     case 'wait':
       return validateWaitMs(step.ms);
 
+    case 'closeTab':
+      return [];
+
     case 'if': {
       /** @type {string[]} */
       const errors = [];
@@ -892,7 +927,7 @@ export function validateStep(step) {
 
     default:
       return [
-        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait、if、forEach、while のいずれでもありません。',
+        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait、closeTab、if、forEach、while のいずれでもありません。',
       ];
   }
 }

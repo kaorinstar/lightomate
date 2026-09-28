@@ -917,6 +917,12 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
   let skippedRedirect;
   /** 実行を終えた後も、ページの枠とアイコンで「ここから手で操作する」ことを示すか（#13）。 */
   let handOver = false;
+  /**
+   * 新しいタブ（click の newTab、#20）を開く前のタブと、そのときの状態です。closeTab でこのタブに戻ります。
+   * depth は、タブを開いたときの繰り返しの段数です。その段の行を、タブを閉じないまま終えないかの確認に使います。
+   * @type {{ tabId: number, documentBefore: string | undefined, expectedUrl: string | undefined, depth: number } | undefined}
+   */
+  let opener;
   /** サイドパネルと実行履歴に表示する、現在の位置です。 */
   /**
    * 表示する手順の番号です。繰り返しの終わり（一覧のページへの戻りとページ送り、#95）で止まった場合は、
@@ -939,12 +945,27 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
   };
   /** 実行履歴に記録する、止まった手順です（#93）。停止した場合は、次に実行する手順です。 */
   const stoppedStep = () => stepAt(steps, currentNumber());
-  const watch = dialogWatches.get(runId);
-  if (watch) {
-    // 応答の指定がないダイアログでは、手順の途中で一時停止します（#88）。ダイアログが閉じると手順の続きを行い、
-    // ［再開］を押されるまで次の手順に進みません。
-    watch.pause = (note) => pauseRun(runId, flow, tabId, position(), note);
-  }
+  /** ダイアログを受け取るための接続に、一時停止の処理を設定します。実行するタブを変えるたびに設定し直します（#20）。 */
+  const setDialogPause = () => {
+    const watch = dialogWatches.get(runId);
+    if (watch) {
+      // 応答の指定がないダイアログでは、手順の途中で一時停止します（#88）。ダイアログが閉じると手順の続きを行い、
+      // ［再開］を押されるまで次の手順に進みません。
+      watch.pause = (note) => pauseRun(runId, flow, tabId, position(), note);
+    }
+  };
+  /**
+   * 実行するタブを切り替えます（#20）。ダイアログを受け取るための接続を付け替え、実行の状態のタブを更新します。
+   * @param {number} next
+   */
+  const switchTab = async (next) => {
+    await unwatchDialogs(runId);
+    tabId = next;
+    await watchDialogs(runId, tabId);
+    setDialogPause();
+    await updateRunState(runId, { tabId });
+  };
+  setDialogPause();
   try {
     while (pc < program.length) {
       const instruction = program[pc];
@@ -954,6 +975,13 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       if (instruction.op === 'jump' || instruction.op === 'loop') {
         ({ pc, frames } = advance(program, pc, frames));
         continue;
+      }
+      if (instruction.op === 'next' && opener !== undefined && opener.depth >= frames.length) {
+        // 行の中で開いた新しいタブを閉じないまま、行の処理を終えた場合です（#20）。次の行を開いたタブで
+        // 探すことになるため、停止します。
+        throw new Error(
+          '繰り返しの行の中で開いた新しいタブを、閉じないまま次の行へ進もうとしたため、停止しました。行の手順の最後に closeTab の手順を加えてください。',
+        );
       }
       if (instruction.op === 'next') {
         // 一覧のページへ戻ることも、次のページへ送ることもない場合は、そのまま次の行へ進みます。
@@ -1123,6 +1151,29 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           }
         } else if (step.type === 'wait') {
           await waitWithStopCheck(runId, step.ms);
+        } else if (step.type === 'closeTab') {
+          // 新しいタブを閉じ、開く前のタブに戻ります（#20）。
+          if (opener === undefined) {
+            throw new Error(
+              '閉じる新しいタブがありません。closeTab の前に、newTab を付けたクリックの手順が必要です。',
+            );
+          }
+          const back = opener;
+          const closing = tabId;
+          const wasActive = await chrome.tabs.get(closing).then(
+            (tab) => tab.active,
+            () => false,
+          );
+          // 閉じる前に接続を切ります。切らずに閉じると、利用者がタブを閉じた場合と区別できないためです。
+          await unwatchDialogs(runId);
+          await chrome.tabs.remove(closing).catch(() => {});
+          opener = undefined;
+          await switchTab(back.tabId);
+          documentBefore = back.documentBefore;
+          expectedUrl = back.expectedUrl;
+          if (wasActive) {
+            await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+          }
         } else if (step.type === 'pause') {
           // 最後の手順の場合は、再開しても続ける手順がないため、これまでどおり実行を終えます。
           if (pc === program.length - 1) {
@@ -1164,10 +1215,33 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           documentBefore = await getDocumentId(tabId);
         } else {
           const scope = itemScope(program, frames);
-          const done = await withRetry(runId, flow, () =>
-            runInPage(runId, flow, tabId, step, expectedUrl, scope),
-          );
+          const opensTab = step.type === 'click' && step.newTab === true;
+          if (opensTab && opener !== undefined) {
+            throw new Error('新しいタブの中で、さらに新しいタブを開く手順には対応していません。');
+          }
+          // クリックの直後に開いたタブを取りこぼさないよう、クリックの前から待ち始めます（#20）。
+          const opened = opensTab ? watchOpenedTab(tabId) : undefined;
+          let done;
+          try {
+            done = await withRetry(runId, flow, () =>
+              runInPage(runId, flow, tabId, step, expectedUrl, scope),
+            );
+          } catch (error) {
+            opened?.cancel();
+            throw error;
+          }
           documentBefore = done.documentId;
+          if (opened) {
+            const next = await opened.wait(runId);
+            opener = { tabId, documentBefore, expectedUrl, depth: frames.length };
+            await waitForLoad(runId, next, () => true, '');
+            await switchTab(next);
+            // 開いたタブでは、読み込み済みのページから始めます。続く「ページの操作による移動」の手順は、
+            // このページを移動先として扱います。
+            documentBefore = undefined;
+            const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+            expectedUrl = tab?.url;
+          }
           if (step.type === 'extract') {
             const text = typeof done.response.text === 'string' ? done.response.text : '';
             if (!text) {
@@ -1247,7 +1321,52 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       kind: 'runner/finish',
       indicator: handOver ? 'handOver' : undefined,
     });
+    if (opener !== undefined) {
+      // 新しいタブを閉じないまま終えた場合は、開いたタブを残します（#20）。開く前のタブの表示も消します。
+      await chrome.action.setBadgeText({ tabId: opener.tabId, text: '' }).catch(() => {});
+      await sendToPageBriefly(opener.tabId, { kind: 'runner/finish', indicator: undefined });
+    }
   }
+}
+
+/**
+ * 指定したタブから開かれる新しいタブを待ちます（#20）。クリックの前に呼び、クリックの後に wait で受け取ります。
+ * 開いたタブは、Chrome が開いたタブ（openerTabId）で判定します。
+ * @param {number} openerTabId
+ * @returns {{ wait: (runId: string) => Promise<number>, cancel: () => void }}
+ */
+function watchOpenedTab(openerTabId) {
+  /** @type {number | undefined} */
+  let opened;
+  /** @param {chrome.tabs.Tab} tab */
+  const onCreated = (tab) => {
+    if (opened === undefined && tab.openerTabId === openerTabId && tab.id !== undefined) {
+      opened = tab.id;
+    }
+  };
+  chrome.tabs.onCreated.addListener(onCreated);
+  const cancel = () => chrome.tabs.onCreated.removeListener(onCreated);
+  return {
+    cancel,
+    async wait(runId) {
+      const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+      try {
+        while (opened === undefined) {
+          if (Date.now() > deadline) {
+            throw new Error(
+              `クリックの後、${Math.round(NAVIGATION_TIMEOUT_MS / 1000)} 秒待ちましたが、新しいタブが開きませんでした。` +
+                '新しいタブで開かない場合は、クリックの手順の newTab を外してください。',
+            );
+          }
+          await throwIfStopRequested(runId);
+          await sleep(STOP_CHECK_INTERVAL_MS);
+        }
+        return opened;
+      } finally {
+        cancel();
+      }
+    },
+  };
 }
 
 /**

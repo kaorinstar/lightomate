@@ -52,9 +52,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜9 のフローは、そのまま版 10 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 10);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+test('版 1〜10 のフローは、そのまま版 11 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 11);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -1061,4 +1061,37 @@ test('dialog は accept と dismiss を 1〜5 個並べた配列だけを受け�
       'dialog は、click、input、select、navigate の手順にだけ書けます。',
     ]);
   }
+});
+
+test('click の newTab と closeTab の手順は、版 11 のフローで検証を通る（#20）', () => {
+  const click = {
+    type: 'click',
+    target: { selectors: ['a.receipt'], tag: 'a', label: '領収書' },
+    newTab: true,
+  };
+  assert.deepEqual(
+    validateFlow({ ...validFlow, steps: [...validFlow.steps, click, { type: 'closeTab' }] }),
+    [],
+  );
+  const old = validateFlow({
+    ...validFlow,
+    schemaVersion: 10,
+    steps: [...validFlow.steps, click, { type: 'closeTab' }],
+  });
+  assert.equal(old.length, 2);
+  assert.match(old.join('\n'), /newTab は、schemaVersion が 11 以上/);
+  assert.match(old.join('\n'), /closeTab の手順は、schemaVersion が 11 以上/);
+});
+
+test('newTab は click の手順にだけ、true の値でだけ書ける（#20）', () => {
+  const target = { selectors: ['#a'], tag: 'a', label: 'a' };
+  assert.deepEqual(validateStep({ type: 'input', target, value: 'x', newTab: true }), [
+    'newTab は、click の手順にだけ書けます。',
+  ]);
+  for (const newTab of [false, 'true', 1]) {
+    assert.deepEqual(validateStep({ type: 'click', target, newTab }), [
+      'newTab が true ではありません。',
+    ]);
+  }
+  assert.deepEqual(validateStep({ type: 'closeTab' }), []);
 });
