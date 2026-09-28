@@ -442,6 +442,16 @@ body {
   cursor: pointer;
 }
 
+/* 免責事項（#109）です。項目の間を空け、1 項目ずつ読めるようにします。 */
+.lm-disclaimer {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.lm-disclaimer li + li {
+  margin-top: 0.375rem;
+}
+
 #all-sites-notice {
   margin: 0.5rem 0 0;
 }
