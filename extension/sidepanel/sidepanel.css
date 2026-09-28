@@ -299,11 +299,12 @@ body {
 /*
  * 区画の外に置く備考です（#108）。枠と背景を付けず、区画の中の一覧と見分けられるようにします。
  * 記号は読み上げの対象から外します（HTML の aria-hidden）。
+ * 画面の最下部に来るため、下に余白を設け、画面の端に接して見えないようにします。
  */
 .lm-aside {
   display: flex;
   gap: 0.25rem;
-  margin: 0.5rem 0 0;
+  margin: 0.5rem 0 1rem;
   padding-inline: 0.25rem;
 }
 
