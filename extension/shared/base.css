@@ -369,3 +369,13 @@
 .lm-group + .lm-group > summary {
   border-top: 1px solid var(--tblr-border-color);
 }
+
+/* タブの見出しです（管理画面と、サイドパネルの #7）。選ばれていないタブは文字を薄くします。 */
+.lm-tabs .nav-link {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.lm-tabs .nav-link:not(.active) {
+  color: var(--tblr-secondary);
+}

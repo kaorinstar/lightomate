@@ -69,7 +69,8 @@ const elements = {
   runSection: byId('run-section'),
   runs: byId('runs'),
   batchRuns: byId('batch-runs'),
-  batchSection: byId('batch-section'),
+  batchEmpty: byId('batch-empty'),
+  tabFlows: byId('tab-flows'),
   batchList: byId('batch-list'),
   formSection: byId('form-section'),
   formHeading: byId('form-heading'),
@@ -183,6 +184,51 @@ function clearNotices() {
   batchRunNotices.clear();
   menuOpenId = '';
 }
+
+// ---- タブ（#7） ----
+// ［このサイトのフロー］と［まとめフロー］を切り替えます。WAI-ARIA の Tabs パターンに従います
+// （https://www.w3.org/WAI/ARIA/apg/patterns/tabs/）。進行中の作業はタブの上に置くため、切り替えても見えます。
+// 選んだタブは保存しません。サイドパネルを開き直すと［このサイトのフロー］に戻ります。
+
+const tabs = /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll('[role="tab"]')]);
+
+/**
+ * タブを切り替えます。
+ * @param {string} name data-tab の値
+ * @param {boolean} [focus] 選んだタブにフォーカスを移すか。矢印キーで移動したときに使います
+ */
+function selectTab(name, focus = false) {
+  const current = tabs.find((tab) => tab.dataset.tab === name) ?? tabs[0];
+  for (const tab of tabs) {
+    const selected = tab === current;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    // 選ばれていないタブは Tab キーで移動せず、矢印キーで移動します。
+    tab.tabIndex = selected ? 0 : -1;
+    byId(tab.getAttribute('aria-controls') ?? '').hidden = !selected;
+  }
+  if (focus) {
+    current.focus();
+  }
+}
+
+for (const [index, tab] of tabs.entries()) {
+  tab.addEventListener('click', () => {
+    clearNotices();
+    selectTab(tab.dataset.tab ?? '');
+  });
+  tab.addEventListener('keydown', (event) => {
+    const moves = { ArrowRight: 1, ArrowLeft: -1 };
+    const move = moves[/** @type {'ArrowRight' | 'ArrowLeft'} */ (event.key)];
+    if (move) {
+      event.preventDefault();
+      const next = tabs[(index + move + tabs.length) % tabs.length];
+      selectTab(next.dataset.tab ?? '', true);
+    }
+  });
+}
+
+selectTab('flows');
 
 // ---- 記録 ----
 
@@ -603,8 +649,12 @@ async function render() {
     elements.flowName.value = lastFlow.name;
   }
 
-  await renderRuns(runs);
-  renderBatchRuns(batchRuns, runs);
+  // 一括実行（#7）に含まれる実行は、一括実行のカードの中に表示します。
+  const batchRunIds = new Set(
+    batchRuns.flatMap((batchRun) => batchRun.items.flatMap((item) => item.runId ?? [])),
+  );
+  await renderRuns(runs.filter((run) => !batchRunIds.has(run.runId)));
+  await renderBatchRuns(batchRuns, runs);
   elements.runSection.hidden = runs.length === 0 && batchRuns.length === 0;
 
   // 記録中は、まとめフローも実行できないようにします（#7）。
@@ -761,6 +811,7 @@ async function renderFlows() {
   }
 
   elements.flowsHeading.textContent = everything ? 'すべてのフロー' : 'このサイトのフロー';
+  elements.tabFlows.textContent = elements.flowsHeading.textContent;
   elements.searchArea.hidden = !everything || all.length === 0;
   if (elements.searchArea.hidden) {
     searchBox.close();
@@ -1095,7 +1146,7 @@ const batchRunNotices = new Map();
  * @param {StoredBatch[]} batches
  */
 function renderBatches(flows, batches) {
-  elements.batchSection.hidden = batches.length === 0;
+  elements.batchEmpty.hidden = batches.length > 0;
   elements.batchList.replaceChildren(...batches.map((batch) => batchItem(batch, flows)));
 }
 
@@ -1275,21 +1326,22 @@ async function startBatch(batchId, inputs) {
 }
 
 /**
- * 一括実行の状態を、一括実行ごとに 1 枚ずつ表示します。フローごとに状態と操作を並べます。
- * 一時停止中のフローの［再開］と、止まった理由の詳細は、下の個別の実行のカードに表示します。
+ * 一括実行の状態を、一括実行ごとに 1 枚ずつ表示します。フローごとに、状態、進み具合、操作を並べます。
+ * 一括実行に含まれる実行は、個別の実行のカードには表示せず、このカードの中に表示します。
  * @param {BatchRun[]} batchRuns
  * @param {RunState[]} runs
  */
-function renderBatchRuns(batchRuns, runs) {
-  elements.batchRuns.replaceChildren(...batchRuns.map((batchRun) => batchRunCard(batchRun, runs)));
+async function renderBatchRuns(batchRuns, runs) {
+  const cards = await Promise.all(batchRuns.map((batchRun) => batchRunCard(batchRun, runs)));
+  elements.batchRuns.replaceChildren(...cards);
 }
 
 /**
  * @param {BatchRun} batchRun
  * @param {RunState[]} runs
- * @returns {HTMLDivElement}
+ * @returns {Promise<HTMLDivElement>}
  */
-function batchRunCard(batchRun, runs) {
+async function batchRunCard(batchRun, runs) {
   const card = document.createElement('div');
   card.className = 'card';
   const body = document.createElement('div');
@@ -1306,8 +1358,12 @@ function batchRunCard(batchRun, runs) {
   if (finished) {
     buttons.append(
       button('閉じる', 'btn btn-sm', () => {
+        // 含まれる実行の状態も消します。個別の実行のカードとして残らないようにするためです。
         chrome.storage.session
-          .remove(BATCH_RUN_KEY_PREFIX + batchRun.batchRunId)
+          .remove([
+            BATCH_RUN_KEY_PREFIX + batchRun.batchRunId,
+            ...batchRun.items.flatMap((item) => (item.runId ? [RUN_KEY_PREFIX + item.runId] : [])),
+          ])
           .catch(console.error);
       }),
     );
@@ -1331,66 +1387,119 @@ function batchRunCard(batchRun, runs) {
 
   const list = document.createElement('ol');
   list.className = 'lm-batch-items';
-  list.append(
-    ...batchRun.items.map((item, index) => {
-      const run = runs.find((state) => state.runId === item.runId);
-      const row = document.createElement('li');
-      const name = document.createElement('div');
-      name.className = 'lm-batch-item-name';
-      name.textContent = `${item.flowName}：${batchItemLabel(item, run)}`;
-      const site = document.createElement('div');
-      site.className = 'lm-sub';
-      site.textContent = item.origin;
-      row.append(name, site);
-      if (item.note) {
-        const note = document.createElement('div');
-        note.className = 'lm-sub';
-        note.textContent = item.note;
-        row.append(note);
-      }
-
-      const actions = document.createElement('div');
-      actions.className = 'lm-buttons mt-1';
-      const follower = hasWaitingFollower(batchRun.items, index);
-      if (item.status === 'held' && follower) {
-        actions.append(
-          button('確認済み・次へ', 'btn btn-sm btn-primary', () => {
-            sendBatchAction('batch/acknowledge', batchRun.batchRunId, index);
-          }),
-        );
-      }
-      if (run && (item.status === 'running' || item.status === 'held')) {
-        actions.append(
-          button('タブを開く', 'btn btn-sm', () => {
-            focusTab(run.tabId).catch(() =>
-              setBatchRunNotice(
-                batchRun.batchRunId,
-                `「${item.flowName}」のタブは閉じられています。`,
-                'error',
-              ),
-            );
-          }),
-        );
-      }
-      if (
-        item.status === 'waiting' ||
-        item.status === 'running' ||
-        (item.status === 'held' && follower)
-      ) {
-        const abort = button('中止', 'btn btn-sm btn-ghost-danger', () => {
-          sendBatchAction('batch/abort', batchRun.batchRunId, index);
-        });
-        abort.disabled = run?.status === 'stopping';
-        actions.append(abort);
-      }
-      if (actions.childElementCount > 0) {
-        row.append(actions);
-      }
-      return row;
-    }),
+  const rows = await Promise.all(
+    batchRun.items.map((item, index) => batchItemRow(batchRun, item, index, runs)),
   );
+  list.append(...rows);
   body.append(list);
   return card;
+}
+
+/**
+ * 一括実行の中のフロー 1 件の行です。フロー名と状態、サイト、進み具合（止まった理由）、操作を並べます。
+ * @param {BatchRun} batchRun
+ * @param {import('../shared/batch.js').BatchItem} item
+ * @param {number} index
+ * @param {RunState[]} runs
+ * @returns {Promise<HTMLLIElement>}
+ */
+async function batchItemRow(batchRun, item, index, runs) {
+  const run = runs.find((state) => state.runId === item.runId);
+  const row = document.createElement('li');
+  const name = document.createElement('div');
+  name.className = 'lm-batch-item-name';
+  name.textContent = `${item.flowName}：${batchItemLabel(item, run)}`;
+  const site = document.createElement('div');
+  site.className = 'lm-sub';
+  site.textContent = item.origin;
+  row.append(name, site);
+
+  // 操作のボタンは、進み具合の文より上に置きます。文の行数が変わっても、ボタンの位置が動かないようにするためです（#98）。
+  const actions = document.createElement('div');
+  actions.className = 'lm-buttons mt-1';
+  const follower = hasWaitingFollower(batchRun.items, index);
+  if (item.status === 'held' && follower) {
+    actions.append(
+      button('確認済み・次へ', 'btn btn-sm btn-primary', () => {
+        sendBatchAction('batch/acknowledge', batchRun.batchRunId, index);
+      }),
+    );
+  }
+  if (run && item.status === 'running') {
+    // 一時停止中は［再開］、それ以外は［一時停止］を置きます（#37）。
+    const paused = run.status === 'paused';
+    const toggle = button(paused ? '再開' : '一時停止', 'btn btn-sm', () => {
+      clearNotices();
+      chrome.runtime
+        .sendMessage({ kind: paused ? 'runner/resume' : 'runner/pause', runId: run.runId })
+        .then((response) => {
+          if (!response?.ok) {
+            setBatchRunNotice(
+              batchRun.batchRunId,
+              `「${item.flowName}」：${response?.error ?? '再開できませんでした。'}`,
+              'error',
+            );
+          }
+        })
+        .catch((error) => setBatchRunNotice(batchRun.batchRunId, String(error), 'error'));
+    });
+    toggle.disabled = run.status !== 'running' && !paused;
+    actions.append(toggle);
+  }
+  if (run && (item.status === 'running' || item.status === 'held')) {
+    actions.append(
+      button('タブを開く', 'btn btn-sm', () => {
+        focusTab(run.tabId).catch(() =>
+          setBatchRunNotice(
+            batchRun.batchRunId,
+            `「${item.flowName}」のタブは閉じられています。`,
+            'error',
+          ),
+        );
+      }),
+    );
+  }
+  if (
+    item.status === 'waiting' ||
+    item.status === 'running' ||
+    (item.status === 'held' && follower)
+  ) {
+    const abort = button('中止', 'btn btn-sm btn-ghost-danger', () => {
+      sendBatchAction('batch/abort', batchRun.batchRunId, index);
+    });
+    abort.disabled = run?.status === 'stopping';
+    actions.append(abort);
+  }
+  if (actions.childElementCount > 0) {
+    row.append(actions);
+  }
+
+  // 進み具合と止まった理由です。実行を始めていないフローは、始めなかった理由（note）を表示します。
+  if (run && item.status !== 'done') {
+    const stored = await getFlow(run.flowId);
+    const text = runStatusText(run, stored && stepAt(stored.flow.steps, run.stepIndex));
+    const status = document.createElement('p');
+    if (run.status === 'failed') {
+      showNotice(status, text, 'error');
+    } else if (run.status === 'halted' || run.status === 'paused') {
+      showNotice(status, text, 'warning');
+    } else if (isActiveRun(run)) {
+      status.className = 'lm-sub m-0 mt-1 lm-run-progress';
+      status.setAttribute('role', 'status');
+      status.textContent = text;
+      status.title = text;
+    } else {
+      status.className = 'lm-sub m-0 mt-1';
+      status.textContent = text;
+    }
+    row.append(status);
+  } else if (item.note) {
+    const note = document.createElement('div');
+    note.className = 'lm-sub';
+    note.textContent = item.note;
+    row.append(note);
+  }
+  return row;
 }
 
 /**

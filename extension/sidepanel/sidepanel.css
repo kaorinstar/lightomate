@@ -112,7 +112,8 @@ body {
   border-top: 0;
 }
 
-#flows-empty[hidden] {
+#flows-empty[hidden],
+#batch-empty[hidden] {
   display: none;
 }
 

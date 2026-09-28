@@ -45,6 +45,7 @@ import { MATCH_MODES, filterFlows, groupByHost, suggestions } from '../shared/fl
 import {
   NO_FIRST_PAGE,
   buildRunFields,
+  fieldEntries,
   firstPageParams,
   firstPageUrl,
   readRunFields,
@@ -783,7 +784,7 @@ elements.batchForm.addEventListener('submit', async (event) => {
   elements.batchName.value = '';
   showToast(
     elements.toast,
-    `まとめフロー「${name}」を保存しました。サイドパネルの「まとめフロー」から実行できます。`,
+    `まとめフロー「${name}」を保存しました。［まとめフロー］のタブか、サイドパネルから実行できます。`,
   );
 });
 
@@ -803,8 +804,8 @@ async function renderBatches() {
 }
 
 /**
- * まとめフローの一覧の 1 行です。名前、実行する順のフロー、［削除］を並べます。
- * 削除されたフローを含む場合など、実行できない理由があれば、警告として表示します。
+ * まとめフローの一覧の 1 行です。名前、実行する順のフロー、［実行］［削除］を並べます。
+ * 削除されたフローを含む場合など、実行できない理由があれば、警告として表示し、［実行］を押せなくします。
  * @param {StoredBatch} batch
  * @param {StoredFlow[]} flows 保存したすべてのフロー
  * @returns {HTMLDivElement}
@@ -836,6 +837,12 @@ function batchRow(batch, flows) {
     row.append(warning);
   }
 
+  const run = document.createElement('button');
+  run.type = 'button';
+  run.className = 'btn btn-sm btn-primary';
+  run.textContent = '実行';
+  run.setAttribute('aria-label', `まとめフロー「${batch.name}」を実行`);
+  run.disabled = problems.length > 0;
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'btn btn-sm btn-ghost-danger';
@@ -843,7 +850,7 @@ function batchRow(batch, flows) {
   remove.setAttribute('aria-label', `まとめフロー「${batch.name}」を削除`);
   const buttons = document.createElement('div');
   buttons.className = 'lm-buttons';
-  buttons.append(remove);
+  buttons.append(run, remove);
   const confirm = document.createElement('div');
   confirm.hidden = true;
   const notice = document.createElement('p');
@@ -874,8 +881,148 @@ function batchRow(batch, flows) {
       await renderBatches();
     }
   });
+  run.addEventListener('click', () => {
+    onBatchRunClick(batch, flows, { row, buttons, notice }).catch((error) =>
+      showNotice(notice, String(error), 'error'),
+    );
+  });
   row.append(buttons, confirm, notice);
   return row;
+}
+
+/**
+ * まとめフローの［実行］です。値の入力が必要なフローがあれば、行の中に入力欄を開きます。
+ * 入力欄を開いている間は、行の［実行］［削除］を隠します。押すボタンを入力欄の［この値でまとめて実行］に絞るためです。
+ * 実行の状態は、サイドパネルに表示します。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ * @param {{ row: HTMLElement, buttons: HTMLElement, notice: HTMLElement }} parts 行の要素
+ */
+async function onBatchRunClick(batch, flows, { row, buttons, notice }) {
+  clearNotices();
+  batchRowNotices.clear();
+  showNotice(notice, '');
+  const contained = batch.flowIds.flatMap((id) => flows.filter((stored) => stored.id === id));
+  // 許可を求める処理は、ボタンを押した直後に呼び出す必要があります。この前に待ち時間を入れないでください。
+  const denied = await requestPermission([
+    ...new Set(contained.flatMap((stored) => flowOrigins(stored.flow))),
+  ]);
+  if (denied) {
+    showNotice(notice, denied, 'error');
+    return;
+  }
+  const needInput = contained.filter(
+    (stored) => (stored.flow.params ?? []).length > 0 || secretStepIndexes(stored.flow).length > 0,
+  );
+  if (needInput.length === 0) {
+    await startBatch(batch, {}, notice);
+    return;
+  }
+
+  const now = new Date();
+  const groups = needInput.map((stored, index) => {
+    const params = stored.flow.params ?? [];
+    const element = document.createElement('div');
+    element.className = 'lm-run-fields';
+    const heading = document.createElement('h4');
+    heading.className = 'lm-item-name';
+    heading.textContent = stored.flow.name;
+    element.append(
+      heading,
+      ...buildRunFields(document, stored.flow, {
+        params,
+        secretSteps: secretStepIndexes(stored.flow),
+        now,
+        idPrefix: `batch-run-${batch.id}-${index}`,
+      }),
+    );
+    return { flowId: stored.id, params, element };
+  });
+  const form = document.createElement('form');
+  form.className = 'lm-block lm-run-form';
+  form.noValidate = true;
+  const title = document.createElement('h3');
+  title.className = 'lm-block-title';
+  title.textContent = '実行する値の入力';
+  const description = document.createElement('p');
+  description.className = 'lm-sub';
+  description.textContent =
+    '値の入力が必要なフローだけを表示しています。入力した値は保存しません。実行の状態はサイドパネルに表示します。';
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.className = 'btn btn-primary';
+  submit.textContent = 'この値でまとめて実行';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn';
+  cancel.textContent = 'キャンセル';
+  const formButtons = document.createElement('div');
+  formButtons.className = 'lm-buttons';
+  formButtons.append(submit, cancel);
+  const formNotice = document.createElement('p');
+  formNotice.hidden = true;
+  form.append(title, description, ...groups.map(({ element }) => element), formButtons, formNotice);
+
+  const close = () => {
+    // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
+    form.remove();
+    buttons.hidden = false;
+  };
+  cancel.addEventListener('click', close);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    showNotice(formNotice, '');
+    const invalid = groups
+      .map(({ element, params }) => showRunFieldErrors(element, params, new Date(), false))
+      .some(Boolean);
+    if (invalid) {
+      const first = form.querySelector('.is-invalid');
+      if (first instanceof HTMLElement) {
+        first.focus();
+      }
+      return;
+    }
+    const inputs = Object.fromEntries(
+      groups.map(({ flowId, element }) => [flowId, readRunFields(fieldEntries(element))]),
+    );
+    startBatch(batch, inputs, formNotice)
+      .then((started) => {
+        if (started) {
+          close();
+        }
+      })
+      .catch((error) => showNotice(formNotice, String(error), 'error'));
+  });
+  buttons.hidden = true;
+  row.append(form);
+  const first = form.querySelector('input, select');
+  if (first instanceof HTMLElement) {
+    first.focus();
+  }
+}
+
+/**
+ * まとめフローの一括実行を始めます。始められた場合は、サイドパネルで状態を確かめられることを知らせます。
+ * @param {StoredBatch} batch
+ * @param {Record<string, { params: Record<string, string>, secrets: Record<string, string> }>} inputs
+ * @param {HTMLElement} notice 始められなかったときに知らせを出す場所
+ * @returns {Promise<boolean>} 始められた場合は true
+ */
+async function startBatch(batch, inputs, notice) {
+  const response = await chrome.runtime.sendMessage({
+    kind: 'batch/start',
+    batchId: batch.id,
+    inputs,
+  });
+  if (!response?.ok) {
+    showNotice(notice, response?.error ?? 'まとめて実行を開始できません。', 'error');
+    return false;
+  }
+  showToast(
+    elements.toast,
+    `まとめフロー「${batch.name}」の実行を始めました。進み具合はサイドパネルで確認できます。`,
+  );
+  return true;
 }
 
 onBatchesChanged(() => {

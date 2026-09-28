@@ -17,15 +17,6 @@ body {
   margin-bottom: 1rem;
 }
 
-.lm-tabs .nav-link {
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.lm-tabs .nav-link:not(.active) {
-  color: var(--tblr-secondary);
-}
-
 .lm-panel-note {
   max-width: 60rem;
   margin: 0 0 1rem;
@@ -168,6 +159,23 @@ body {
 
 .lm-batch-row .lm-buttons {
   margin-top: 0.5rem;
+}
+
+/* まとめフローの行の中に開く、実行する値の入力欄です（#7）。フローごとの欄の間と、ボタンの上に余白を置きます。 */
+.lm-batch-row .lm-run-form {
+  margin-top: 0.5rem;
+}
+
+.lm-batch-row .lm-run-fields + .lm-run-fields {
+  margin-top: 1rem;
+}
+
+.lm-batch-row .lm-run-form .lm-buttons {
+  margin-top: 1rem;
+}
+
+.lm-batch-row .lm-buttons[hidden] {
+  display: none;
 }
 
 #empty[hidden],
