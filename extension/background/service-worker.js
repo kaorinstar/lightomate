@@ -18,6 +18,14 @@ import {
 } from './recording.js';
 import { removeHistory } from '../common/history-store.js';
 import {
+  abortAllBatches,
+  abortBatch,
+  abortBatchItem,
+  acknowledgeBatchItem,
+  markInterruptedBatches,
+  startBatch,
+} from './batch.js';
+import {
   markInterruptedRuns,
   registerDialogEvents,
   requestPause,
@@ -38,11 +46,16 @@ const extensionOrigin = new URL(chrome.runtime.getURL('')).origin;
 
 registerDialogEvents();
 markInterruptedRuns().catch((error) => console.error('実行の状態を確認できませんでした。', error));
+markInterruptedBatches().catch((error) =>
+  console.error('一括実行の状態を確認できませんでした。', error),
+);
 
 // 緊急停止のキー（#18）です。既定は Alt+Shift+Q で、chrome://extensions/shortcuts で変えられます。
 // サイドパネルを開いていなくても、実行中と一時停止中のすべての実行を停止します。
 chrome.commands.onCommand.addListener((command) => {
   if (command === 'emergency-stop') {
+    // まとめフローの一括実行（#7）では、まだ始めていないフローも始めないようにします。
+    abortAllBatches().catch((error) => console.error('一括実行を停止できませんでした。', error));
     requestStopAll().catch((error) => console.error('実行を停止できませんでした。', error));
   }
 });
@@ -148,6 +161,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       );
       return true;
 
+    case 'batch/start':
+      if (
+        !fromExtensionPage ||
+        typeof message.batchId !== 'string' ||
+        !isBatchInputs(message.inputs)
+      ) {
+        return false;
+      }
+      startBatch(message.batchId, message.inputs).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'batch/abortAll':
+      if (!fromExtensionPage || typeof message.batchRunId !== 'string') {
+        return false;
+      }
+      abortBatch(message.batchRunId).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'batch/acknowledge':
+    case 'batch/abort':
+      if (
+        !fromExtensionPage ||
+        typeof message.batchRunId !== 'string' ||
+        !Number.isInteger(message.index)
+      ) {
+        return false;
+      }
+      (message.kind === 'batch/acknowledge' ? acknowledgeBatchItem : abortBatchItem)(
+        message.batchRunId,
+        message.index,
+      ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
+      return true;
+
     case 'history/remove':
       if (
         !fromExtensionPage ||
@@ -198,5 +248,25 @@ function isStringRecord(value) {
     value !== null &&
     !Array.isArray(value) &&
     Object.values(value).every((item) => typeof item === 'string')
+  );
+}
+
+/**
+ * 一括実行の、フローごとの実行する値かを判定します。キーはフローの id です。
+ * @param {unknown} value
+ * @returns {value is Record<string, { params: Record<string, string>, secrets: Record<string, string> }>}
+ */
+function isBatchInputs(value) {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every(
+      (input) =>
+        typeof input === 'object' &&
+        input !== null &&
+        isStringRecord(input.params) &&
+        isStringRecord(input.secrets),
+    )
   );
 }

@@ -10,7 +10,7 @@
   </head>
   <!--
     配置は docs/design-guidelines.md の「サイドパネル」に従います。
-    上から、見出し、進行中の作業（該当する状態のときだけ）、このサイトのフローの順です。
+    上から、見出し、進行中の作業（該当する状態のときだけ）、このサイトのフロー、まとめフロー（ある場合だけ）の順です。
   -->
   <body>
     <header class="lm-header">
@@ -26,6 +26,8 @@
     <main class="lm-stack">
       <section id="run-section" class="lm-stack" aria-labelledby="run-heading" hidden>
         <h2 id="run-heading" class="visually-hidden">実行の状態</h2>
+        <!-- まとめフローの一括実行（#7）の状態です。フローごとの状態と操作を、個別の実行の上に置きます。 -->
+        <div id="batch-runs" class="lm-stack"></div>
         <div id="runs" class="lm-stack"></div>
       </section>
 
@@ -146,6 +148,17 @@
         <div id="flows" class="list-group list-group-flush lm-flows"></div>
         <div class="card-footer lm-sub">
           ほかのサイトのフローの確認、JSON の編集と読み込みは「フローの管理」で行います。
+        </div>
+      </section>
+
+      <!-- まとめフロー（#7）です。複数のサイトのフローを含むため、表示中のサイトにかかわらず表示します。 -->
+      <section id="batch-section" class="card" aria-labelledby="batch-heading" hidden>
+        <div class="card-header lm-card-header">
+          <h2 id="batch-heading" class="card-title">まとめフロー</h2>
+        </div>
+        <div id="batch-list" class="list-group list-group-flush lm-flows"></div>
+        <div class="card-footer lm-sub">
+          まとめフローの登録と削除は「フローの管理」で行います。各フローは背景のタブで実行し、確定ボタンの手前で止まります。
         </div>
       </section>
     </main>

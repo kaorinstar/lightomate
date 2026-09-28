@@ -131,13 +131,15 @@ export function buildRunFields(
 /**
  * 入力フォームの値を検証し、誤りをそれぞれの入力欄の直下に表示します。
  * パラメータの欄は実行時と同じ検証（paramFieldErrors）を行い、値を記録していない入力欄は空を誤りにします。
- * @param {HTMLFormElement} form buildRunFields で作った欄を含むフォーム
+ * @param {HTMLElement} form buildRunFields で作った欄を含む要素。まとめフロー（#7）では、フローごとの
+ *   欄をまとめた要素を渡します
  * @param {Param[]} params フォームを作ったときのパラメータ
  * @param {Date} now
- * @returns {boolean} 誤りがある場合は true。最初の誤りの欄にフォーカスを移します
+ * @param {boolean} [focus] 最初の誤りの欄にフォーカスを移すか
+ * @returns {boolean} 誤りがある場合は true
  */
-export function showRunFieldErrors(form, params, now) {
-  const { params: input } = readRunFields(new FormData(form));
+export function showRunFieldErrors(form, params, now, focus = true) {
+  const { params: input } = readRunFields(fieldEntries(form));
   const errors = paramFieldErrors(params, input, now);
   /** @type {HTMLElement | null} */
   let first = null;
@@ -159,8 +161,22 @@ export function showRunFieldErrors(form, params, now) {
       first = control;
     }
   }
-  first?.focus();
+  if (focus) {
+    first?.focus();
+  }
   return first !== null;
+}
+
+/**
+ * 要素の中の入力欄の名前と値を返します。new FormData(form) と同じ形です。フォームの一部だけを読むために使います。
+ * @param {HTMLElement} container
+ * @returns {[string, string][]}
+ */
+export function fieldEntries(container) {
+  const controls = /** @type {NodeListOf<HTMLInputElement | HTMLSelectElement>} */ (
+    container.querySelectorAll('input[name], select[name]')
+  );
+  return [...controls].map((control) => [control.name, control.value]);
 }
 
 /**

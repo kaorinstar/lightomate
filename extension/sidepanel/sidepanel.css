@@ -171,3 +171,20 @@ body {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
+
+/* まとめフローの一括実行の、フローごとの状態の一覧です（#7）。 */
+.lm-batch-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding-inline-start: 1.5em;
+}
+
+.lm-batch-items li {
+  overflow-wrap: anywhere;
+}
+
+.lm-batch-item-name {
+  font-weight: 600;
+}

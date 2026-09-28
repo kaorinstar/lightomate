@@ -145,15 +145,37 @@ body {
   justify-content: space-between;
 }
 
-#bulk-notice {
+#bulk-notice,
+#batch-notice {
   margin: 0;
+}
+
+/* まとめフロー（#7）の登録の欄です。一括操作の帯の下に開きます。 */
+.lm-batch-form[hidden] {
+  display: none;
+}
+
+.lm-batch-order {
+  margin: 0 0 0.5rem;
+  padding-inline-start: 1.5em;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+#batch-notice:not([hidden]) {
+  margin-top: 0.5rem;
+}
+
+.lm-batch-row .lm-buttons {
+  margin-top: 0.5rem;
 }
 
 #empty[hidden],
 #no-match[hidden],
 #history-empty[hidden],
 #history-table-wrap[hidden],
-#stop-empty[hidden] {
+#stop-empty[hidden],
+#batch-empty[hidden] {
   display: none;
 }
 

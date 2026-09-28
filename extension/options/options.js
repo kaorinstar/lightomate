@@ -16,7 +16,9 @@ import {
   saveFlow,
   setFlowInterval,
 } from '../common/flow-store.js';
+import { deleteBatch, listBatches, onBatchesChanged, saveBatch } from '../common/batch-store.js';
 import { ALL_SITES, hasAllSites, requestPermission } from '../common/permissions.js';
+import { batchProblems } from '../shared/batch.js';
 import {
   getStopRule,
   listStopRules,
@@ -61,6 +63,7 @@ import {
 } from '../shared/ui.js';
 
 /** @typedef {import('../common/flow-store.js').StoredFlow} StoredFlow */
+/** @typedef {import('../common/batch-store.js').StoredBatch} StoredBatch */
 
 const elements = {
   version: byId('version'),
@@ -117,6 +120,16 @@ const elements = {
   bulkBar: byId('bulk-bar'),
   bulkCount: byId('bulk-count'),
   bulkExport: byId('bulk-export'),
+  bulkBatch: byId('bulk-batch'),
+  batchForm: /** @type {HTMLFormElement} */ (byId('batch-form')),
+  batchName: /** @type {HTMLInputElement} */ (byId('batch-name')),
+  batchNameFeedback: byId('batch-name-feedback'),
+  batchOrder: byId('batch-order'),
+  batchCancel: byId('batch-cancel'),
+  batchNotice: byId('batch-notice'),
+  batchCount: byId('batch-count'),
+  batchEmpty: byId('batch-empty'),
+  batchList: byId('batch-list'),
   bulkDelete: byId('bulk-delete'),
   bulkConfirm: byId('bulk-confirm'),
   bulkNotice: byId('bulk-notice'),
@@ -161,6 +174,7 @@ const elements = {
 const notices = [
   elements.flowsNotice,
   elements.bulkNotice,
+  elements.batchNotice,
   elements.importNotice,
   elements.editorNotice,
   elements.runNotice,
@@ -177,6 +191,7 @@ const notices = [
  */
 const fieldFeedbacks = [
   [elements.json, elements.jsonFeedback],
+  [elements.batchName, elements.batchNameFeedback],
   [elements.intervalMin, elements.intervalFeedback],
   [elements.intervalMax, elements.intervalFeedback],
   [elements.importJson, elements.importJsonFeedback],
@@ -625,6 +640,10 @@ function renderBulk() {
   if (count === 0) {
     elements.bulkConfirm.replaceChildren();
     elements.bulkConfirm.hidden = true;
+    elements.batchForm.hidden = true;
+  }
+  if (!elements.batchForm.hidden) {
+    renderBatchOrder();
   }
 }
 
@@ -703,6 +722,166 @@ elements.bulkDelete.addEventListener('click', async () => {
       (running.length === 0 ? '' : `実行中の ${running.length} 件は削除しませんでした。`),
   );
 });
+
+// ---- まとめフロー（#7） ----
+// 一覧で選んだフローを、選んだ順に実行するまとめフローとして保存します。実行はサイドパネルで行います。
+
+/** @returns {StoredFlow[]} 表示中で選んでいるフローを、選んだ順に並べたもの */
+function checkedFlowsInOrder() {
+  return [...checkedIds].flatMap((id) => shownFlows.filter((stored) => stored.id === id));
+}
+
+/** 登録の欄に、実行する順を表示します。 */
+function renderBatchOrder() {
+  elements.batchOrder.replaceChildren(
+    ...checkedFlowsInOrder().map((stored) => {
+      const item = document.createElement('li');
+      item.textContent = `${stored.flow.name}（${stored.flow.origin}）`;
+      return item;
+    }),
+  );
+}
+
+elements.bulkBatch.addEventListener('click', () => {
+  clearNotices();
+  elements.batchForm.hidden = false;
+  renderBatchOrder();
+  elements.batchName.focus();
+});
+
+elements.batchCancel.addEventListener('click', () => {
+  clearNotices();
+  elements.batchForm.hidden = true;
+  elements.batchName.value = '';
+});
+
+elements.batchForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearNotices();
+  const name = elements.batchName.value.trim();
+  if (!name) {
+    showFieldError(
+      elements.batchName,
+      elements.batchNameFeedback,
+      'まとめフローの名前を入力してください。',
+    );
+    elements.batchName.focus();
+    return;
+  }
+  const flowIds = checkedFlowsInOrder().map((stored) => stored.id);
+  const problems = batchProblems(flowIds, await listFlows());
+  if (problems.length > 0) {
+    showNotice(elements.batchNotice, problems.join('\n'), 'error');
+    return;
+  }
+  const result = await saveBatch(name, flowIds);
+  if (!result.ok) {
+    showNotice(elements.batchNotice, result.error, 'error');
+    return;
+  }
+  elements.batchForm.hidden = true;
+  elements.batchName.value = '';
+  showToast(
+    elements.toast,
+    `まとめフロー「${name}」を保存しました。サイドパネルの「まとめフロー」から実行できます。`,
+  );
+});
+
+/**
+ * まとめフローを削除するときの確認と、行の中の知らせです。キーはまとめフローの id です。
+ * 一覧を作り直しても消えないよう、ここに保持します。
+ * @type {Map<string, { text: string, kind: import('../shared/ui.js').NoticeKind }>}
+ */
+const batchRowNotices = new Map();
+
+/** まとめフローの一覧を表示します。 */
+async function renderBatches() {
+  const [batches, flows] = await Promise.all([listBatches(), listFlows()]);
+  elements.batchCount.textContent = batches.length > 0 ? String(batches.length) : '';
+  elements.batchEmpty.hidden = batches.length > 0;
+  elements.batchList.replaceChildren(...batches.map((batch) => batchRow(batch, flows)));
+}
+
+/**
+ * まとめフローの一覧の 1 行です。名前、実行する順のフロー、［削除］を並べます。
+ * 削除されたフローを含む場合など、実行できない理由があれば、警告として表示します。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ * @returns {HTMLDivElement}
+ */
+function batchRow(batch, flows) {
+  const row = document.createElement('div');
+  row.className = 'list-group-item lm-batch-row';
+  const name = document.createElement('div');
+  name.className = 'lm-item-name';
+  name.textContent = batch.name;
+  const order = document.createElement('ol');
+  order.className = 'lm-batch-order';
+  order.append(
+    ...batch.flowIds.map((id) => {
+      const stored = flows.find((entry) => entry.id === id);
+      const item = document.createElement('li');
+      item.textContent = stored
+        ? `${stored.flow.name}（${stored.flow.origin}）`
+        : '（削除されたフロー）';
+      return item;
+    }),
+  );
+  row.append(name, order);
+
+  const problems = batchProblems(batch.flowIds, flows);
+  if (problems.length > 0) {
+    const warning = document.createElement('p');
+    showNotice(warning, problems.join('\n'), 'warning');
+    row.append(warning);
+  }
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn btn-sm btn-ghost-danger';
+  remove.textContent = '削除';
+  remove.setAttribute('aria-label', `まとめフロー「${batch.name}」を削除`);
+  const buttons = document.createElement('div');
+  buttons.className = 'lm-buttons';
+  buttons.append(remove);
+  const confirm = document.createElement('div');
+  confirm.hidden = true;
+  const notice = document.createElement('p');
+  const saved = batchRowNotices.get(batch.id);
+  if (saved) {
+    showNotice(notice, saved.text, saved.kind);
+  } else {
+    notice.hidden = true;
+  }
+  remove.addEventListener('click', async () => {
+    clearNotices();
+    batchRowNotices.clear();
+    showNotice(notice, '');
+    if (
+      !(await confirmInline(confirm, {
+        message: `まとめフロー「${batch.name}」を削除します。含めているフローは削除しません。`,
+        confirmLabel: '削除する',
+        danger: true,
+      }))
+    ) {
+      return;
+    }
+    try {
+      await deleteBatch(batch.id);
+      showToast(elements.toast, `まとめフロー「${batch.name}」を削除しました。`);
+    } catch (error) {
+      batchRowNotices.set(batch.id, { text: String(error), kind: 'error' });
+      await renderBatches();
+    }
+  });
+  row.append(buttons, confirm, notice);
+  return row;
+}
+
+onBatchesChanged(() => {
+  renderBatches().catch(console.error);
+});
+renderBatches().catch(console.error);
 
 /**
  * フローを JSON ファイルとして、Chrome のダウンロード先フォルダーに保存します。
@@ -865,6 +1044,8 @@ elements.searchMode.addEventListener('change', () => {
 onFlowsChanged(() => {
   render().catch(console.error);
   renderStopRules().catch(console.error);
+  // まとめフローの一覧に、フロー名と削除されたフローを反映します（#7）。
+  renderBatches().catch(console.error);
 });
 render().catch(console.error);
 
