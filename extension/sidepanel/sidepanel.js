@@ -46,7 +46,14 @@ import {
 } from '../shared/flow-list.js';
 import { attachCombobox } from '../shared/combobox.js';
 import { buildFlowGroups } from '../shared/flow-groups.js';
-import { MATCH_MODES, filterFlows, groupByHost, suggestions } from '../shared/flow-search.js';
+import {
+  MATCH_MODES,
+  batchSuggestions,
+  filterBatches,
+  filterFlows,
+  groupByHost,
+  suggestions,
+} from '../shared/flow-search.js';
 import {
   NO_FIRST_PAGE,
   buildRunFields,
@@ -79,6 +86,11 @@ const elements = {
   runSection: byId('run-section'),
   runs: byId('runs'),
   batchEmpty: byId('batch-empty'),
+  batchNoMatch: byId('batch-no-match'),
+  batchSearchArea: byId('batch-search-area'),
+  batchSearch: /** @type {HTMLInputElement} */ (byId('batch-search')),
+  batchSearchSuggestions: byId('batch-search-suggestions'),
+  batchSearchMode: /** @type {HTMLSelectElement} */ (byId('batch-search-mode')),
   tabFlows: byId('tab-flows'),
   batchList: byId('batch-list'),
   formSection: byId('form-section'),
@@ -1260,15 +1272,63 @@ const expandedBatchRuns = new Set();
 const batchRunNotices = new Map();
 
 /**
- * まとめフローの一覧を表示します。まとめフローがない場合は、区画を表示しません。
+ * まとめフローの一覧を表示します。検索欄の語と一致方法で絞り込みます（#113）。
+ * まとめフローがない場合は、検索欄を出さず、登録の方法を案内します。
  * ［実行］で許可を求める前に待たないよう、含めるフローもここで読んでおきます。
  * @param {StoredFlow[]} flows 保存したすべてのフロー
  * @param {StoredBatch[]} batches
  */
 function renderBatches(flows, batches) {
+  batchSearchData = { batches, flows };
+  const shown = filterBatches(batches, flows, elements.batchSearch.value, batchSearchMode());
   elements.batchEmpty.hidden = batches.length > 0;
-  elements.batchList.replaceChildren(...batches.map((batch) => batchItem(batch, flows)));
+  elements.batchSearchArea.hidden = batches.length === 0;
+  if (elements.batchSearchArea.hidden) {
+    batchSearchBox.close();
+  }
+  elements.batchNoMatch.hidden = batches.length === 0 || shown.length > 0;
+  elements.batchList.replaceChildren(...shown.map((batch) => batchItem(batch, flows)));
 }
+
+// ---- まとめフローの検索（#113） ----
+// まとめフローの名前、含めたフローの名前、そのサイトで絞り込みます。検索語と一致方法は保存しません。
+
+/**
+ * 候補を作るための、まとめフローと保存したフローです。一覧を表示するたびに更新します。
+ * @type {{ batches: StoredBatch[], flows: StoredFlow[] }}
+ */
+let batchSearchData = { batches: [], flows: [] };
+
+/** 検索欄の候補に添える、種類の説明です。 */
+const BATCH_SUGGESTION_NOTES = { batch: 'まとめフロー', flow: 'フロー', site: 'サイト' };
+
+elements.batchSearchMode.append(...MATCH_MODES.map(({ value, label }) => new Option(label, value)));
+
+/** @returns {import('../shared/flow-search.js').MatchMode} */
+function batchSearchMode() {
+  return /** @type {import('../shared/flow-search.js').MatchMode} */ (
+    elements.batchSearchMode.value
+  );
+}
+
+const batchSearchBox = attachCombobox(elements.batchSearch, elements.batchSearchSuggestions, {
+  getOptions: () =>
+    batchSuggestions(
+      batchSearchData.batches,
+      batchSearchData.flows,
+      elements.batchSearch.value,
+      batchSearchMode(),
+    ).map(({ value, kind }) => ({ value, note: BATCH_SUGGESTION_NOTES[kind] })),
+  onSelect: () => renderFlows().catch(console.error),
+});
+
+elements.batchSearch.addEventListener('input', () => {
+  renderFlows().catch(console.error);
+});
+
+elements.batchSearchMode.addEventListener('change', () => {
+  renderFlows().catch(console.error);
+});
 
 /**
  * まとめフローの一覧の 1 行を作ります。

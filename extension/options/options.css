@@ -183,7 +183,8 @@ body {
 #history-empty[hidden],
 #history-table-wrap[hidden],
 #stop-empty[hidden],
-#batch-empty[hidden] {
+#batch-empty[hidden],
+#batch-no-match[hidden] {
   display: none;
 }
 

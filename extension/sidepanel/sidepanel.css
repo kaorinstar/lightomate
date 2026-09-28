@@ -113,7 +113,8 @@ body {
 }
 
 #flows-empty[hidden],
-#batch-empty[hidden] {
+#batch-empty[hidden],
+#batch-no-match[hidden] {
   display: none;
 }
 

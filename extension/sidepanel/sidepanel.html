@@ -188,6 +188,27 @@
         <div class="card-header lm-card-header">
           <h2 id="batch-heading" class="card-title">まとめフロー</h2>
         </div>
+        <!-- まとめフローの名前、含めたフローの名前、サイトで絞り込みます（#113）。 -->
+        <div class="lm-search" id="batch-search-area" hidden>
+          <div class="lm-combobox">
+            <label class="visually-hidden" for="batch-search"
+              >まとめフロー名、フロー名かサイトで検索</label
+            >
+            <input
+              type="search"
+              class="form-control form-control-sm"
+              id="batch-search"
+              placeholder="まとめフロー名、フロー名かサイトで検索"
+            />
+            <ul id="batch-search-suggestions" class="lm-suggestions" aria-label="検索の候補"></ul>
+          </div>
+          <select
+            class="form-select form-select-sm lm-search-mode"
+            id="batch-search-mode"
+            aria-label="一致方法"
+          ></select>
+        </div>
+        <p id="batch-no-match" class="lm-sub m-3" hidden>該当するまとめフローはありません。</p>
         <p id="batch-empty" class="lm-sub m-3">
           まとめフローはまだありません。「フローの管理」の［保存したフロー］でフローを選び、［まとめフローとして保存］を押すと登録できます。
         </p>

@@ -41,7 +41,14 @@ import { attachCombobox } from '../shared/combobox.js';
 import { flowFileName, flowFileText, parseFlowFile, splitDuplicates } from '../shared/flow-file.js';
 import { buildFlowGroups } from '../shared/flow-groups.js';
 import { pruneSelection, selectAllState, splitDeletable } from '../shared/flow-selection.js';
-import { MATCH_MODES, filterFlows, groupByHost, suggestions } from '../shared/flow-search.js';
+import {
+  MATCH_MODES,
+  batchSuggestions,
+  filterBatches,
+  filterFlows,
+  groupByHost,
+  suggestions,
+} from '../shared/flow-search.js';
 import {
   NO_FIRST_PAGE,
   buildRunFields,
@@ -130,6 +137,11 @@ const elements = {
   batchNotice: byId('batch-notice'),
   batchCount: byId('batch-count'),
   batchEmpty: byId('batch-empty'),
+  batchNoMatch: byId('batch-no-match'),
+  batchSearchArea: byId('batch-search-area'),
+  batchSearch: /** @type {HTMLInputElement} */ (byId('batch-search')),
+  batchSearchSuggestions: byId('batch-search-suggestions'),
+  batchSearchMode: /** @type {HTMLSelectElement} */ (byId('batch-search-mode')),
   batchList: byId('batch-list'),
   bulkDelete: byId('bulk-delete'),
   bulkConfirm: byId('bulk-confirm'),
@@ -788,6 +800,9 @@ elements.batchForm.addEventListener('submit', async (event) => {
   );
 });
 
+/** まとめフローの検索欄の候補に添える、種類の説明です（#113）。 */
+const BATCH_SUGGESTION_NOTES = { batch: 'まとめフロー', flow: 'フロー', site: 'サイト' };
+
 /**
  * まとめフローを削除するときの確認と、行の中の知らせです。キーはまとめフローの id です。
  * 一覧を作り直しても消えないよう、ここに保持します。
@@ -795,13 +810,57 @@ elements.batchForm.addEventListener('submit', async (event) => {
  */
 const batchRowNotices = new Map();
 
-/** まとめフローの一覧を表示します。 */
+/**
+ * 検索の候補を作るための、まとめフローと保存したフローです。一覧を表示するたびに更新します。
+ * @type {{ batches: StoredBatch[], flows: StoredFlow[] }}
+ */
+let batchSearchData = { batches: [], flows: [] };
+
+/**
+ * まとめフローの一覧を表示します。検索欄の語と一致方法で絞り込みます（#113）。
+ * 検索語と一致方法は保存しません。フローの一覧の検索と同じです。
+ */
 async function renderBatches() {
   const [batches, flows] = await Promise.all([listBatches(), listFlows()]);
+  batchSearchData = { batches, flows };
+  const shown = filterBatches(batches, flows, elements.batchSearch.value, batchSearchMode());
   elements.batchCount.textContent = batches.length > 0 ? String(batches.length) : '';
   elements.batchEmpty.hidden = batches.length > 0;
-  elements.batchList.replaceChildren(...batches.map((batch) => batchRow(batch, flows)));
+  elements.batchSearchArea.hidden = batches.length === 0;
+  if (elements.batchSearchArea.hidden) {
+    batchSearchBox.close();
+  }
+  elements.batchNoMatch.hidden = batches.length === 0 || shown.length > 0;
+  elements.batchList.replaceChildren(...shown.map((batch) => batchRow(batch, flows)));
 }
+
+elements.batchSearchMode.append(...MATCH_MODES.map(({ value, label }) => new Option(label, value)));
+
+/** @returns {import('../shared/flow-search.js').MatchMode} */
+function batchSearchMode() {
+  return /** @type {import('../shared/flow-search.js').MatchMode} */ (
+    elements.batchSearchMode.value
+  );
+}
+
+const batchSearchBox = attachCombobox(elements.batchSearch, elements.batchSearchSuggestions, {
+  getOptions: () =>
+    batchSuggestions(
+      batchSearchData.batches,
+      batchSearchData.flows,
+      elements.batchSearch.value,
+      batchSearchMode(),
+    ).map(({ value, kind }) => ({ value, note: BATCH_SUGGESTION_NOTES[kind] })),
+  onSelect: () => renderBatches().catch(console.error),
+});
+
+elements.batchSearch.addEventListener('input', () => {
+  renderBatches().catch(console.error);
+});
+
+elements.batchSearchMode.addEventListener('change', () => {
+  renderBatches().catch(console.error);
+});
 
 /**
  * まとめフローの一覧の 1 行です。名前、実行する順のフロー、［実行］［すべて開く］［削除］を並べます。
