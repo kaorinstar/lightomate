@@ -12,7 +12,13 @@
 
 import { getFlow } from '../common/flow-store.js';
 import { addHistory } from '../common/history-store.js';
-import { flowOrigins, isWebUrl, stepOrigin, validateFlow } from '../shared/flow.js';
+import {
+  flowOrigins,
+  isWebUrl,
+  stepOrigin,
+  validateFlow,
+  withMinimumInterval,
+} from '../shared/flow.js';
 import {
   RUN_KEY_PREFIX,
   conflictMessage,
@@ -569,7 +575,8 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
     return { ok: false, error: 'フローが見つかりません。' };
   }
   const { flow } = stored;
-  const errors = validateFlow(flow);
+  // 手順の間隔が下限より短いフロー（#110）は、下限として実行します。間隔は stepInterval で下限にします。
+  const errors = validateFlow(withMinimumInterval(flow));
   if (errors.length > 0) {
     return { ok: false, error: `フローの形式に誤りがあります：${errors.join(' ')}` };
   }

@@ -13,6 +13,7 @@ import {
   validateFlow,
   validateStep,
   withInterval,
+  withMinimumInterval,
 } from '../extension/shared/flow.js';
 
 const target = { selectors: ['#login'], tag: 'button', label: 'ログイン', text: 'ログイン' };
@@ -58,10 +59,13 @@ test('版 1〜9 のフローは、そのまま版 10 として検証を通る', 
   }
 });
 
-test('手順の間隔（interval）は、0〜60,000 の整数で、min が max 以下の場合だけ通る（#15）', () => {
-  assert.deepEqual(validateFlow({ ...validFlow, interval: { min: 0, max: 0 } }), []);
+test('手順の間隔（interval）は、1,000〜60,000 の整数で、min が max 以下の場合だけ通る（#15、#110）', () => {
+  assert.deepEqual(validateFlow({ ...validFlow, interval: { min: 1000, max: 1000 } }), []);
   assert.deepEqual(validateFlow({ ...validFlow, interval: { min: 1000, max: 60000 } }), []);
   for (const interval of [
+    { min: 999, max: 1000 },
+    { min: 1000, max: 999 },
+    { min: 0, max: 1000 },
     { min: -1, max: 1000 },
     { min: 1000, max: 60001 },
     { min: 1.5, max: 2000 },
@@ -77,6 +81,20 @@ test('手順の間隔（interval）は、0〜60,000 の整数で、min が max �
       `値: ${JSON.stringify(interval)}`,
     );
   }
+});
+
+test('withMinimumInterval は、下限より短い間隔を 1,000 にしたフローを返し、元のフローは変えない（#110）', () => {
+  const flow = /** @type {import('../extension/shared/flow.js').Flow} */ (validFlow);
+  const old = { ...flow, interval: { min: 0, max: 500 } };
+  const raised = withMinimumInterval(old);
+  assert.deepEqual(raised.interval, { min: 1000, max: 1000 });
+  assert.deepEqual(validateFlow(raised), []);
+  assert.deepEqual(old.interval, { min: 0, max: 500 });
+  assert.equal(withMinimumInterval(flow), flow);
+  // 値が数でない場合は変えず、検証で誤りにする
+  const broken = /** @type {any} */ ({ ...validFlow, interval: { min: '0', max: 1000 } });
+  assert.equal(withMinimumInterval(broken), broken);
+  assert.equal(validateFlow(withMinimumInterval(broken)).length, 1);
 });
 
 test('待機の手順（wait）は、1〜300,000 の整数のミリ秒だけ通る（#15）', () => {

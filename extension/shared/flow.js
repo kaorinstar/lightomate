@@ -11,7 +11,7 @@ import {
   withPlaceholders,
 } from './params.js';
 import { RESERVED_NAMES, nonBuiltinReferences, validateSaveTemplate } from './save-path.js';
-import { validateInterval, validateWaitMs } from './speed.js';
+import { atLeastMinimum, validateInterval, validateWaitMs } from './speed.js';
 import {
   CONTROL_STEP_TYPES,
   FOREACH_MAX_LIMIT,
@@ -312,6 +312,21 @@ export function withInterval(flow, interval) {
     schemaVersion: Math.max(flow.schemaVersion, INTERVAL_MIN_SCHEMA_VERSION),
     interval: { min: interval.min, max: interval.max },
   };
+}
+
+/**
+ * 手順の間隔を下限以上にしたフローを返します（#110）。元のフローは変更しません。
+ * 保存済みのフローを実行する前と、名前を変える前の検証に使います。下限を設ける前に保存したフローを、
+ * 書き換えずに使えるようにするためです。間隔の値が数でない場合は変えず、検証で誤りにします。
+ * @param {Flow} flow
+ * @returns {Flow}
+ */
+export function withMinimumInterval(flow) {
+  const { interval } = flow;
+  if (!isRecord(interval) || typeof interval.min !== 'number' || typeof interval.max !== 'number') {
+    return flow;
+  }
+  return { ...flow, interval: atLeastMinimum(interval) };
 }
 
 /**

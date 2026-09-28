@@ -37,6 +37,9 @@ function stored(value) {
 
 test('フロー 1 件のファイルを読み込む', () => {
   assert.deepEqual(parseFlowFile(flow('a')), { ok: true, flows: [flow('a')], multiple: false });
+  // 1 秒未満の手順の間隔を含むファイルは、直さずに誤りとして読み込まない（#110）
+  const short = parseFlowFile({ ...flow('a'), interval: { min: 500, max: 1000 } });
+  assert.equal(short.ok, false);
 });
 
 test('フローの配列のファイルを読み込む', () => {
