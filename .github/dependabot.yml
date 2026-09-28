@@ -1,8 +1,10 @@
 # Dependabot は、このリポジトリが依存するものに新しいバージョンが出たときにプルリクエストを作成します。
 #
 # 対象は GitHub Actions と npm です。ワークフローが使うアクションはコミット SHA で固定しているため、
-# この設定がなければ古いまま更新されません。npm のパッケージは開発用（ESLint、Prettier、TypeScript
-# など）のみで、拡張機能の本体には含まれません。
+# この設定がなければ古いまま更新されません。npm のパッケージの大半は開発用（ESLint、Prettier、
+# TypeScript など）で、拡張機能の本体には含まれません。例外は Tabler の CSS（@tabler/core）で、
+# `npm run vendor` で extension/vendor/ に複写して同梱します。版を上げるプルリクエストでは複写し直す
+# 必要があり、忘れると test/vendor.test.js が失敗します。
 #
 # Dependabot は独自の名前でブランチを作成します（dependabot/...）。これは CLAUDE.md のブランチ名の
 # 規約の対象外で、変更できません。
