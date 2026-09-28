@@ -72,6 +72,7 @@ Prettier の対象はコードと設定ファイルだけです。Markdown と `
 | `scripts/` | 開発とリリース用のスクリプト（Node.js）。拡張機能には含めません |
 | `tools/` | 利用者に配るファイル。`lightomate-update.bat` はリリースに添付します |
 | `docs/flow-format.md` | フロー定義（JSON）の形式の説明。`extension/shared/flow.js` と同時に変更します |
+| `docs/receipt-flow.md` | 領収書のフローの作り方の手引き。例の JSON は `docs/examples/receipt-flow.json` で、`test/receipt-flow.test.js` が形式を確かめます |
 | `docs/backup-format.md` | 一括バックアップのファイルの形式の説明。`extension/shared/backup.js` と同時に変更します |
 | `docs/design-guidelines.md` | 画面の配置、見た目、知らせの出し方の規則。画面を変更するときはこれに従います |
 | `extension/vendor/` | 同梱した外部のファイル（Tabler の CSS）。`npm run vendor` で `node_modules` から複写します。手で編集しません |

@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 10,
+  "name": "領収書（前月分）",
+  "origin": "https://shop.example.com",
+  "params": [{ "name": "month", "label": "対象月", "type": "month", "default": "@previous-month" }],
+  "interval": { "min": 2000, "max": 4000 },
+  "steps": [
+    { "type": "navigate", "cause": "user", "url": "https://shop.example.com/orders" },
+    {
+      "type": "forEach",
+      "items": { "selectors": ["tr.order-row"], "tag": "tr", "label": "注文の行" },
+      "max": 200,
+      "nextPage": { "selectors": ["a.next:not(.disabled)"], "tag": "a", "label": "次へ" },
+      "maxPages": 12,
+      "steps": [
+        {
+          "type": "if",
+          "condition": {
+            "target": {
+              "selectors": [".order-date"],
+              "tag": "span",
+              "label": "注文日",
+              "scope": "item"
+            },
+            "month": "{{month}}"
+          },
+          "then": [
+            {
+              "type": "extract",
+              "target": {
+                "selectors": [".order-date"],
+                "tag": "span",
+                "label": "注文日",
+                "scope": "item"
+              },
+              "name": "orderDate"
+            },
+            {
+              "type": "extract",
+              "target": {
+                "selectors": [".order-number"],
+                "tag": "span",
+                "label": "注文番号",
+                "scope": "item"
+              },
+              "name": "orderNumber"
+            },
+            {
+              "type": "click",
+              "target": {
+                "selectors": ["a.receipt"],
+                "tag": "a",
+                "label": "領収書",
+                "scope": "item"
+              }
+            },
+            { "type": "navigate", "cause": "page", "url": "https://shop.example.com/receipt" },
+            {
+              "type": "savePdf",
+              "path": "Lightomate/領収書/{{site.host}}/{{month}}/{{orderDate}}_{{orderNumber}}.pdf",
+              "onConflict": "overwrite"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
