@@ -12,8 +12,27 @@ import {
   renameFlow,
   saveFlow,
 } from '../common/flow-store.js';
+import { listBatches, onBatchesChanged } from '../common/batch-store.js';
 import { requestPermission } from '../common/permissions.js';
-import { describeStep, formatDateTime, runStatusText } from '../shared/describe.js';
+import {
+  BATCH_RUN_KEY_PREFIX,
+  batchItemLabel,
+  batchItemTone,
+  batchOverall,
+  batchProblems,
+  batchRunsFrom,
+  batchSummary,
+  hasWaitingFollower,
+  isBatchFinished,
+  needsAttention,
+} from '../shared/batch.js';
+import {
+  describeStep,
+  formatDateTime,
+  runDetailText,
+  runStatusLabel,
+  runStatusTone,
+} from '../shared/describe.js';
 import { flattenSteps, stepAt } from '../shared/control-flow.js';
 import { flowOrigins, orderFlow } from '../shared/flow.js';
 import {
@@ -27,10 +46,19 @@ import {
 } from '../shared/flow-list.js';
 import { attachCombobox } from '../shared/combobox.js';
 import { buildFlowGroups } from '../shared/flow-groups.js';
-import { MATCH_MODES, filterFlows, groupByHost, suggestions } from '../shared/flow-search.js';
+import {
+  MATCH_MODES,
+  batchSuggestions,
+  filterBatches,
+  filterFlows,
+  groupByHost,
+  suggestions,
+} from '../shared/flow-search.js';
 import {
   NO_FIRST_PAGE,
+  batchFirstPageUrls,
   buildRunFields,
+  fieldEntries,
   firstPageParams,
   firstPageUrl,
   readRunFields,
@@ -50,12 +78,22 @@ import {
 /** @typedef {import('../background/recording.js').RecordingPage} RecordingPage */
 /** @typedef {import('../background/runner.js').RunState} RunState */
 /** @typedef {import('../common/flow-store.js').StoredFlow} StoredFlow */
+/** @typedef {import('../common/batch-store.js').StoredBatch} StoredBatch */
+/** @typedef {import('../shared/batch.js').BatchRun} BatchRun */
 /** @typedef {import('../shared/ui.js').NoticeKind} NoticeKind */
 
 const elements = {
   pageOrigin: byId('page-origin'),
   runSection: byId('run-section'),
   runs: byId('runs'),
+  batchEmpty: byId('batch-empty'),
+  batchNoMatch: byId('batch-no-match'),
+  batchSearchArea: byId('batch-search-area'),
+  batchSearch: /** @type {HTMLInputElement} */ (byId('batch-search')),
+  batchSearchSuggestions: byId('batch-search-suggestions'),
+  batchSearchMode: /** @type {HTMLSelectElement} */ (byId('batch-search-mode')),
+  tabFlows: byId('tab-flows'),
+  batchList: byId('batch-list'),
   formSection: byId('form-section'),
   formHeading: byId('form-heading'),
   formDescription: byId('form-description'),
@@ -125,9 +163,17 @@ let currentPage = null;
 /** 入力フォームを表示しているフローの id です。 */
 let formFlowId = '';
 
-/** 入力フォームで行う操作です。実行する（run）か、最初のページを開く（open）かです。 */
-/** @type {'run' | 'open'} */
+/** 入力フォームで行う操作です。実行する（run）か、最初のページを開く（open）か、まとめて実行する（batch、#7）かです。 */
+/** @type {'run' | 'open' | 'batch'} */
 let formMode = 'run';
+
+/**
+ * まとめフローの入力フォームの内容です（#7）。値の入力が必要なフローごとに、欄をまとめた要素を持ちます。
+ * mode は、まとめて実行する（run）か、各フローの最初のページを開く（open）かです。
+ * flows は、まとめフローに含めたすべてのフロー（登録した順）です。開くときに使います。
+ * @type {{ batch: StoredBatch, mode: 'run' | 'open', flows: StoredFlow[], groups: { flowId: string, params: import('../shared/params.js').Param[], element: HTMLElement }[] } | null}
+ */
+let formBatch = null;
 
 /** 入力フォームを作ったときのパラメータです。送信時の検証に使います。 */
 /** @type {import('../shared/params.js').Param[]} */
@@ -158,8 +204,55 @@ function clearNotices() {
     showNotice(notice, '');
   }
   rowNotices.clear();
+  batchRowNotices.clear();
+  batchRunNotices.clear();
   menuOpenId = '';
 }
+
+// ---- タブ（#7） ----
+// ［このサイトのフロー］と［まとめフロー］を切り替えます。WAI-ARIA の Tabs パターンに従います
+// （https://www.w3.org/WAI/ARIA/apg/patterns/tabs/）。進行中の作業はタブの上に置くため、切り替えても見えます。
+// 選んだタブは保存しません。サイドパネルを開き直すと［このサイトのフロー］に戻ります。
+
+const tabs = /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll('[role="tab"]')]);
+
+/**
+ * タブを切り替えます。
+ * @param {string} name data-tab の値
+ * @param {boolean} [focus] 選んだタブにフォーカスを移すか。矢印キーで移動したときに使います
+ */
+function selectTab(name, focus = false) {
+  const current = tabs.find((tab) => tab.dataset.tab === name) ?? tabs[0];
+  for (const tab of tabs) {
+    const selected = tab === current;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    // 選ばれていないタブは Tab キーで移動せず、矢印キーで移動します。
+    tab.tabIndex = selected ? 0 : -1;
+    byId(tab.getAttribute('aria-controls') ?? '').hidden = !selected;
+  }
+  if (focus) {
+    current.focus();
+  }
+}
+
+for (const [index, tab] of tabs.entries()) {
+  tab.addEventListener('click', () => {
+    clearNotices();
+    selectTab(tab.dataset.tab ?? '');
+  });
+  tab.addEventListener('keydown', (event) => {
+    const moves = { ArrowRight: 1, ArrowLeft: -1 };
+    const move = moves[/** @type {'ArrowRight' | 'ArrowLeft'} */ (event.key)];
+    if (move) {
+      event.preventDefault();
+      const next = tabs[(index + move + tabs.length) % tabs.length];
+      selectTab(next.dataset.tab ?? '', true);
+    }
+  });
+}
+
+selectTab('flows');
 
 // ---- 記録 ----
 
@@ -422,6 +515,10 @@ function showForm(stored, mode) {
 elements.form.addEventListener('submit', async (event) => {
   event.preventDefault();
   clearNotices();
+  if (formMode === 'batch') {
+    await submitBatchForm();
+    return;
+  }
   if (showRunFieldErrors(elements.form, formParams, new Date())) {
     return;
   }
@@ -461,6 +558,7 @@ async function startRun(flowId, params, secrets) {
 function hideForm() {
   elements.formSection.hidden = true;
   formParams = [];
+  formBatch = null;
   // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
   elements.formFields.replaceChildren();
   showNotice(elements.formNotice, '');
@@ -474,6 +572,9 @@ chrome.storage.session.onChanged.addListener(() => {
   render().catch(console.error);
 });
 onFlowsChanged(() => {
+  renderFlows().catch(console.error);
+});
+onBatchesChanged(() => {
   renderFlows().catch(console.error);
 });
 
@@ -529,6 +630,7 @@ async function render() {
   const recording = /** @type {Recording | undefined} */ (stored.recording);
   const lastFlow = /** @type {Flow | undefined} */ (stored.lastFlow);
   const runs = /** @type {RunState[]} */ (runStatesFrom(stored));
+  const batchRuns = batchRunsFrom(stored);
   // フローの実行中は、記録した手順の削除と破棄をできないようにします。
   const running = runs.some(isActiveRun);
 
@@ -571,7 +673,18 @@ async function render() {
     elements.flowName.value = lastFlow.name;
   }
 
-  await renderRuns(runs);
+  await renderActivity(runs, batchRuns);
+
+  // 記録中は、まとめフローも実行できないようにします（#7）。
+  for (const item of elements.batchList.querySelectorAll('button[data-batch-run]')) {
+    const run = /** @type {HTMLButtonElement} */ (item);
+    run.disabled = Boolean(recording);
+    const reason = run.closest('.list-group-item')?.querySelector('.lm-flow-reason');
+    if (reason instanceof HTMLElement) {
+      reason.textContent = recording ? '記録中は実行できません。' : '';
+      reason.hidden = !recording;
+    }
+  }
 
   // 記録中と、同じサイトのフローを実行中は、実行のボタンを押せなくし、理由を行の中に表示します。
   // すべてのフローを表示しているとき（Web ページ以外）は、最初の手順がページを開く手順でないフローも
@@ -626,78 +739,191 @@ function stepItems(steps, locked, errorNotice) {
 }
 
 /**
- * 実行の状態を、実行ごとに 1 枚ずつ表示します。止まった理由は、その実行の区画の中に表示します。
+ * 進行中の作業のうち、実行のカード（個別の実行と、まとめフローの一括実行、#7）を表示します。
+ * 個別とまとめフローの区別なく、始めた日時の新しい順に上から並べます。新しく始めた実行は一番上に入ります。
+ * まとめフローに含まれる実行は、個別のカードにはせず、まとめフローのカードの中に表示します。
  * @param {RunState[]} runs
+ * @param {BatchRun[]} batchRuns
  */
-async function renderRuns(runs) {
-  elements.runSection.hidden = runs.length === 0;
-  const cards = await Promise.all(
-    runs.map(async (run) => {
-      const stored = await getFlow(run.flowId);
-      const card = document.createElement('div');
-      card.className = 'card';
-      const body = document.createElement('div');
-      body.className = 'card-body';
-      card.append(body);
-
-      const status = document.createElement('p');
-      // stepIndex は、if と forEach の内側を展開した通し番号です（#6）。
-      const text = runStatusText(run, stored && stepAt(stored.flow.steps, run.stepIndex));
-      if (run.status === 'failed') {
-        card.classList.add('lm-card-failed');
-        showNotice(status, text, 'error');
-      } else if (run.status === 'halted' || run.status === 'paused') {
-        showNotice(status, text, 'warning');
-      } else if (run.status === 'done') {
-        showNotice(status, text, 'success');
-      } else {
-        // 実行中の文は手順ごとに長さが変わるため、高さを固定し、はみ出す分は省略します（#98）。
-        // 省略した部分は、マウスを重ねると表示します。
-        status.className = 'm-0 lm-run-progress';
-        status.setAttribute('role', 'status');
-        status.textContent = text;
-        status.title = text;
-      }
-
-      // ボタンは状態の文より上に置きます。文の行数が変わっても、ボタンの位置が動かないようにするためです（#98）。
-      const buttons = document.createElement('div');
-      buttons.className = 'lm-buttons mb-3';
-      if (isActiveRun(run)) {
-        // 一時停止中は［再開］、それ以外は［一時停止］を置きます（#37）。
-        const paused = run.status === 'paused';
-        const toggle = button(paused ? '再開' : '一時停止', 'btn btn-sm', () => {
-          chrome.runtime
-            .sendMessage({ kind: paused ? 'runner/resume' : 'runner/pause', runId: run.runId })
-            .then((response) => {
-              if (!response?.ok) {
-                showNotice(status, response?.error ?? '再開できませんでした。', 'error');
-              }
-            })
-            .catch((error) => showNotice(status, String(error), 'error'));
-        });
-        toggle.disabled = run.status !== 'running' && !paused;
-        const stop = button('実行停止', 'btn btn-sm btn-danger', () => {
-          chrome.runtime
-            .sendMessage({ kind: 'runner/stop', runId: run.runId })
-            .catch(console.error);
-        });
-        stop.disabled = run.status === 'stopping';
-        buttons.append(toggle, stop);
-      } else {
-        buttons.append(
-          button('閉じる', 'btn btn-sm', () => {
-            chrome.storage.session.remove(RUN_KEY_PREFIX + run.runId).catch(console.error);
-          }),
-        );
-        if (run.status === 'failed' && stored) {
-          buttons.append(editLink(stored, 'フローを編集'));
-        }
-      }
-      body.append(buttons, status);
-      return card;
-    }),
+async function renderActivity(runs, batchRuns) {
+  const inBatch = new Set(
+    batchRuns.flatMap((batchRun) => batchRun.items.flatMap((item) => item.runId ?? [])),
   );
+  const entries = [
+    ...runs
+      .filter((run) => !inBatch.has(run.runId))
+      .map((run) => ({ startedAt: run.startedAt, build: () => runCard(run) })),
+    ...batchRuns.map((batchRun) => ({
+      startedAt: batchRun.startedAt,
+      build: () => batchRunCard(batchRun, runs),
+    })),
+  ].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const cards = await Promise.all(entries.map((entry) => entry.build()));
   elements.runs.replaceChildren(...cards);
+  elements.runSection.hidden = cards.length === 0;
+}
+
+/**
+ * 個別の実行のカードです。まとめフローのカードと同じ形にします。
+ * 1 行目にフロー名、状態の印、右端に［実行停止］（実行中）か［閉じる］（終了後）。
+ * その下に操作のボタン、進み具合（止まった理由）の文の順です。完了した場合は 1 行目だけです。
+ * @param {RunState} run
+ * @returns {Promise<HTMLDivElement>}
+ */
+async function runCard(run) {
+  const stored = await getFlow(run.flowId);
+  const { card, body } = activityCard();
+  if (run.status === 'failed') {
+    card.classList.add('lm-card-failed');
+  }
+  const notice = document.createElement('p');
+  notice.hidden = true;
+  /** @param {string} text */
+  const showError = (text) => showNotice(notice, text, 'error');
+
+  const end = isActiveRun(run)
+    ? button('実行停止', 'btn btn-sm btn-danger', () => {
+        chrome.runtime.sendMessage({ kind: 'runner/stop', runId: run.runId }).catch(console.error);
+      })
+    : button('閉じる', 'btn btn-sm', () => {
+        chrome.storage.session.remove(RUN_KEY_PREFIX + run.runId).catch(console.error);
+      });
+  end.disabled = run.status === 'stopping';
+  body.append(
+    headLine(
+      run.flowName,
+      'lm-flow-name',
+      statusMark(runStatusLabel(run.status), runStatusTone(run.status)),
+      end,
+    ),
+  );
+
+  const actions = runActions(run, run.flowName, showError);
+  if (run.status === 'failed' && stored) {
+    actions.append(editLink(stored, 'フローを編集'));
+  }
+  if (actions.childElementCount > 0) {
+    body.append(actions);
+  }
+  const detail = detailLine(run, stored);
+  if (detail) {
+    body.append(detail);
+  }
+  body.append(notice);
+  return card;
+}
+
+/**
+ * 実行中のフローの［一時停止］または［再開］と、［タブを開く］です。個別の実行とまとめフローの行で使います。
+ * @param {RunState} run
+ * @param {string} flowName
+ * @param {(text: string) => void} showError 操作できなかったときに知らせを出す処理
+ * @returns {HTMLDivElement}
+ */
+function runActions(run, flowName, showError) {
+  const actions = document.createElement('div');
+  actions.className = 'lm-buttons mt-2';
+  if (isActiveRun(run)) {
+    // 一時停止中は［再開］、それ以外は［一時停止］を置きます（#37）。
+    const paused = run.status === 'paused';
+    const toggle = button(paused ? '再開' : '一時停止', 'btn btn-sm', () => {
+      clearNotices();
+      chrome.runtime
+        .sendMessage({ kind: paused ? 'runner/resume' : 'runner/pause', runId: run.runId })
+        .then((response) => {
+          if (!response?.ok) {
+            showError(response?.error ?? '再開できませんでした。');
+          }
+        })
+        .catch((error) => showError(String(error)));
+    });
+    toggle.disabled = run.status !== 'running' && !paused;
+    actions.append(toggle);
+  }
+  if (isActiveRun(run) || run.status === 'halted') {
+    actions.append(
+      button('タブを開く', 'btn btn-sm', () => {
+        focusTab(run.tabId).catch(() => showError(`「${flowName}」のタブは閉じられています。`));
+      }),
+    );
+  }
+  return actions;
+}
+
+/**
+ * 進み具合と止まった理由の 1 行です。フロー名は 1 行目にあるため含めません。
+ * 長い場合は 3 行までに省略し、マウスを重ねると全体を表示します。完了した場合は作りません。
+ * @param {RunState} run
+ * @param {StoredFlow | undefined} stored
+ * @returns {HTMLParagraphElement | null}
+ */
+function detailLine(run, stored) {
+  // stepIndex は、if と forEach の内側を展開した通し番号です（#6）。
+  const text = runDetailText(run, stored && stepAt(stored.flow.steps, run.stepIndex));
+  if (!text) {
+    return null;
+  }
+  const detail = document.createElement('p');
+  detail.className = 'lm-run-detail';
+  if (run.status === 'failed') {
+    detail.classList.add('lm-text-danger');
+  }
+  if (isActiveRun(run) && run.status !== 'paused') {
+    // 実行中の文は手順ごとに長さが変わるため、高さを固定し、下のカードが動かないようにします（#98）。
+    detail.classList.add('lm-run-progress');
+    detail.setAttribute('role', 'status');
+  }
+  detail.textContent = text;
+  detail.title = text;
+  return detail;
+}
+
+/**
+ * 実行のカードの枠です。
+ * @returns {{ card: HTMLDivElement, body: HTMLDivElement }}
+ */
+function activityCard() {
+  const card = document.createElement('div');
+  card.className = 'card';
+  const body = document.createElement('div');
+  body.className = 'card-body';
+  card.append(body);
+  return { card, body };
+}
+
+/**
+ * カードと行の 1 行目です。名前、状態の印、右端の操作の順に並べます。個別の実行とまとめフローで同じ形にします。
+ * @param {string} name
+ * @param {string} nameClass 名前の文字の段階（lm-flow-name など）
+ * @param {HTMLElement} mark 状態の印
+ * @param {HTMLButtonElement | null} action 右端の操作
+ * @returns {HTMLDivElement}
+ */
+function headLine(name, nameClass, mark, action) {
+  const line = document.createElement('div');
+  line.className = 'lm-row lm-head-line';
+  const text = document.createElement('span');
+  text.className = `${nameClass} lm-row-text`;
+  text.textContent = name;
+  line.append(text, mark);
+  if (action) {
+    action.classList.add('ms-auto');
+    line.append(action);
+  }
+  return line;
+}
+
+/**
+ * 状態の印です。色だけで伝えないよう、状態は文字で示します。
+ * @param {string} text
+ * @param {'success' | 'primary' | 'warning' | 'danger' | 'muted'} tone
+ * @returns {HTMLSpanElement}
+ */
+function statusMark(text, tone) {
+  const mark = document.createElement('span');
+  mark.className = `lm-status lm-status-${tone}`;
+  mark.textContent = text;
+  return mark;
 }
 
 /**
@@ -717,6 +943,7 @@ async function renderFlows() {
   }
 
   elements.flowsHeading.textContent = everything ? 'すべてのフロー' : 'このサイトのフロー';
+  elements.tabFlows.textContent = elements.flowsHeading.textContent;
   elements.searchArea.hidden = !everything || all.length === 0;
   if (elements.searchArea.hidden) {
     searchBox.close();
@@ -749,6 +976,7 @@ async function renderFlows() {
         })
       : flows.map(flowItem)),
   );
+  renderBatches(all, await listBatches());
   await render();
 }
 
@@ -1026,6 +1254,560 @@ function setEditing(state) {
 function setRowNotice(flowId, text, kind) {
   rowNotices.set(flowId, { text, kind });
   renderFlows().catch(console.error);
+}
+
+// ---- まとめフロー（#7） ----
+// まとめフローの登録と削除は管理画面で行い、サイドパネルでは実行と、実行中の状態の表示だけを行います。
+
+/**
+ * まとめフローの行の中に出す知らせです。キーはまとめフローの id です。
+ * @type {Map<string, { text: string, kind: NoticeKind }>}
+ */
+const batchRowNotices = new Map();
+
+/** 終わった一括実行のカードで、［詳細］を開いているものの id です。表示を作り直しても開いたままにします。 */
+const expandedBatchRuns = new Set();
+
+/**
+ * 一括実行のカードの中に出す知らせです。キーは一括実行の id です。
+ * @type {Map<string, { text: string, kind: NoticeKind }>}
+ */
+const batchRunNotices = new Map();
+
+/**
+ * まとめフローの一覧を表示します。検索欄の語と一致方法で絞り込みます（#113）。
+ * まとめフローがない場合は、検索欄を出さず、登録の方法を案内します。
+ * ［実行］で許可を求める前に待たないよう、含めるフローもここで読んでおきます。
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ * @param {StoredBatch[]} batches
+ */
+function renderBatches(flows, batches) {
+  batchSearchData = { batches, flows };
+  const shown = filterBatches(batches, flows, elements.batchSearch.value, batchSearchMode());
+  elements.batchEmpty.hidden = batches.length > 0;
+  elements.batchSearchArea.hidden = batches.length === 0;
+  if (elements.batchSearchArea.hidden) {
+    batchSearchBox.close();
+  }
+  elements.batchNoMatch.hidden = batches.length === 0 || shown.length > 0;
+  elements.batchList.replaceChildren(...shown.map((batch) => batchItem(batch, flows)));
+}
+
+// ---- まとめフローの検索（#113） ----
+// まとめフローの名前、含めたフローの名前、そのサイトで絞り込みます。検索語と一致方法は保存しません。
+
+/**
+ * 候補を作るための、まとめフローと保存したフローです。一覧を表示するたびに更新します。
+ * @type {{ batches: StoredBatch[], flows: StoredFlow[] }}
+ */
+let batchSearchData = { batches: [], flows: [] };
+
+/** 検索欄の候補に添える、種類の説明です。 */
+const BATCH_SUGGESTION_NOTES = { batch: 'まとめフロー', flow: 'フロー', site: 'サイト' };
+
+elements.batchSearchMode.append(...MATCH_MODES.map(({ value, label }) => new Option(label, value)));
+
+/** @returns {import('../shared/flow-search.js').MatchMode} */
+function batchSearchMode() {
+  return /** @type {import('../shared/flow-search.js').MatchMode} */ (
+    elements.batchSearchMode.value
+  );
+}
+
+const batchSearchBox = attachCombobox(elements.batchSearch, elements.batchSearchSuggestions, {
+  getOptions: () =>
+    batchSuggestions(
+      batchSearchData.batches,
+      batchSearchData.flows,
+      elements.batchSearch.value,
+      batchSearchMode(),
+    ).map(({ value, kind }) => ({ value, note: BATCH_SUGGESTION_NOTES[kind] })),
+  onSelect: () => renderFlows().catch(console.error),
+});
+
+elements.batchSearch.addEventListener('input', () => {
+  renderFlows().catch(console.error);
+});
+
+elements.batchSearchMode.addEventListener('change', () => {
+  renderFlows().catch(console.error);
+});
+
+/**
+ * まとめフローの一覧の 1 行を作ります。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ * @returns {HTMLDivElement}
+ */
+function batchItem(batch, flows) {
+  const item = document.createElement('div');
+  item.className = 'list-group-item';
+  const contained = batchFlows(batch, flows);
+  const sites = [...new Set(contained.map((stored) => stored.flow.origin))];
+
+  const name = document.createElement('div');
+  name.className = 'lm-flow-name';
+  name.textContent = batch.name;
+  const detail = document.createElement('div');
+  detail.className = 'lm-sub';
+  detail.textContent = `フロー ${batch.flowIds.length} 件・${sites.join('、')}`;
+  const text = document.createElement('div');
+  text.className = 'lm-flow-text';
+  text.append(name, detail);
+
+  const run = button('実行', 'btn btn-sm btn-primary', () => {
+    onBatchRunClick(batch, flows).catch((error) =>
+      setBatchRowNotice(batch.id, String(error), 'error'),
+    );
+  });
+  run.dataset.batchRun = batch.id;
+  run.setAttribute('aria-label', `まとめフロー「${batch.name}」を実行`);
+  // 含めた各フローの最初のページを開きます。手順は実行しません。管理画面の［すべて開く］と同じです。
+  const open = button('すべて開く', 'btn btn-sm', () => {
+    onBatchOpenClick(batch, flows).catch((error) =>
+      setBatchRowNotice(batch.id, String(error), 'error'),
+    );
+  });
+  open.setAttribute(
+    'aria-label',
+    `まとめフロー「${batch.name}」の各フローの最初のページをすべて開く`,
+  );
+  open.disabled = batchProblems(batch.flowIds, flows).length > 0;
+  // 並びは、主な操作（［実行］）、そのほかの操作（［すべて開く］）の順です。
+  const actions = document.createElement('div');
+  actions.className = 'lm-flow-actions';
+  actions.append(run, open);
+
+  const main = document.createElement('div');
+  main.className = 'lm-flow-main';
+  main.append(text, actions);
+  const reason = document.createElement('p');
+  reason.className = 'lm-flow-reason lm-sub';
+  reason.hidden = true;
+  item.append(main, reason);
+
+  const notice = batchRowNotices.get(batch.id);
+  if (notice) {
+    const element = document.createElement('p');
+    showNotice(element, notice.text, notice.kind);
+    item.append(element);
+  }
+  return item;
+}
+
+/**
+ * まとめフローに含めるフローを、登録した順に返します。削除されたフローは含めません。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} flows
+ * @returns {StoredFlow[]}
+ */
+function batchFlows(batch, flows) {
+  return batch.flowIds.flatMap((id) => flows.filter((stored) => stored.id === id));
+}
+
+/**
+ * まとめフローの［実行］を押したときの処理です。誤りは、そのまとめフローの行の中に表示します。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ */
+async function onBatchRunClick(batch, flows) {
+  clearNotices();
+  const problems = batchProblems(batch.flowIds, flows);
+  if (problems.length > 0) {
+    setBatchRowNotice(batch.id, problems.join('\n'), 'error');
+    return;
+  }
+  const contained = batchFlows(batch, flows);
+  // 許可を求める処理は、ボタンを押した直後に呼び出す必要があります。この前に待ち時間を入れないでください。
+  // すべてのフローが操作するサイトの許可を、1 回の確認でまとめて求めます。
+  const denied = await requestPermission([
+    ...new Set(contained.flatMap((stored) => flowOrigins(stored.flow))),
+  ]);
+  if (denied) {
+    setBatchRowNotice(batch.id, denied, 'error');
+    return;
+  }
+  const needInput = contained.filter(
+    (stored) => (stored.flow.params ?? []).length > 0 || secretStepIndexes(stored.flow).length > 0,
+  );
+  if (needInput.length === 0) {
+    const error = await startBatch(batch.id, {});
+    if (error) {
+      setBatchRowNotice(batch.id, error, 'error');
+    }
+    return;
+  }
+  showBatchForm(batch, 'run', contained, needInput);
+}
+
+/**
+ * まとめフローの［すべて開く］を押したときの処理です。含めた各フローの最初のページを新しいタブで開きます。
+ * 最初のページの URL が値を使うフローがあれば、先に値を尋ねます。誤りは、そのまとめフローの行の中に表示します。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ */
+async function onBatchOpenClick(batch, flows) {
+  clearNotices();
+  const problems = batchProblems(batch.flowIds, flows);
+  if (problems.length > 0) {
+    setBatchRowNotice(batch.id, problems.join('\n'), 'error');
+    return;
+  }
+  const contained = batchFlows(batch, flows);
+  const needInput = contained.filter((stored) => firstPageParams(stored.flow).length > 0);
+  if (needInput.length === 0) {
+    const error = await openBatchPages(batch, contained, {});
+    if (error) {
+      setBatchRowNotice(batch.id, error, 'error');
+    }
+    return;
+  }
+  showBatchForm(batch, 'open', contained, needInput);
+}
+
+/**
+ * 含めた各フローの最初のページを、新しいタブで開きます。1 件目を前面に、残りを背景のタブで開きます。
+ * @param {StoredBatch} batch
+ * @param {StoredFlow[]} contained まとめフローに含めたフロー（登録した順）
+ * @param {Record<string, { params: Record<string, string> }>} inputs フローごとの入力した値
+ * @returns {Promise<string>} 開けなかった理由。開いた場合は空の文字列
+ */
+async function openBatchPages(batch, contained, inputs) {
+  const pages = batchFirstPageUrls(contained, inputs, new Date());
+  if (!pages.ok) {
+    return pages.error;
+  }
+  for (const [index, url] of pages.urls.entries()) {
+    await chrome.tabs.create({ url, active: index === 0 });
+  }
+  showToast(
+    elements.toast,
+    `まとめフロー「${batch.name}」の ${pages.urls.length} 件の最初のページを開きました。`,
+  );
+  return '';
+}
+
+/**
+ * まとめフローの値の入力フォームを表示します。値の入力が必要なフローだけを、フロー名の見出しの下に並べます。
+ * 開く場合は、最初の手順の URL が参照するパラメータだけを尋ねます。
+ * @param {StoredBatch} batch
+ * @param {'run' | 'open'} mode
+ * @param {StoredFlow[]} contained まとめフローに含めたフロー（登録した順）
+ * @param {StoredFlow[]} flows 値の入力が必要なフロー
+ */
+function showBatchForm(batch, mode, contained, flows) {
+  const open = mode === 'open';
+  formMode = 'batch';
+  formFlowId = '';
+  formParams = [];
+  elements.formHeading.textContent = open ? '開くページの値の入力' : '実行する値の入力';
+  elements.formDescription.textContent = open
+    ? `まとめフロー「${batch.name}」の各フローの最初のページを開きます。値の入力が必要なフローだけを表示しています。入力した値は保存しません。`
+    : `まとめフロー「${batch.name}」を実行します。値の入力が必要なフローだけを表示しています。入力した値は保存しません。`;
+  elements.formSubmit.textContent = open ? 'この値で開く' : 'この値でまとめて実行';
+  const now = new Date();
+  const groups = flows.map((stored, index) => {
+    const params = open ? firstPageParams(stored.flow) : (stored.flow.params ?? []);
+    const element = document.createElement('div');
+    element.className = 'lm-stack';
+    const heading = document.createElement('h3');
+    heading.className = 'lm-flow-name m-0';
+    heading.textContent = stored.flow.name;
+    element.append(
+      heading,
+      ...buildRunFields(document, stored.flow, {
+        params,
+        secretSteps: open ? [] : secretStepIndexes(stored.flow),
+        now,
+        idPrefix: `batch-field-${index}`,
+      }),
+    );
+    return { flowId: stored.id, params, element };
+  });
+  formBatch = { batch, mode, flows: contained, groups };
+  elements.formFields.replaceChildren(...groups.map(({ element }) => element));
+  showNotice(elements.formNotice, '');
+  elements.formSection.hidden = false;
+  elements.formSection.scrollIntoView({ block: 'start' });
+  const first = elements.formFields.querySelector('input, select');
+  if (first instanceof HTMLElement) {
+    first.focus();
+  }
+}
+
+/** まとめフローの入力フォームの送信です。1 件でも誤りがあれば、どのフローも始めません。 */
+async function submitBatchForm() {
+  if (!formBatch) {
+    return;
+  }
+  const now = new Date();
+  // 誤りはすべてのフローの欄に表示してから、最初の誤りの欄にフォーカスを移します。
+  const invalid = formBatch.groups
+    .map(({ element, params }) => showRunFieldErrors(element, params, now, false))
+    .some(Boolean);
+  if (invalid) {
+    const first = elements.formFields.querySelector('.is-invalid');
+    if (first instanceof HTMLElement) {
+      first.focus();
+    }
+    return;
+  }
+  const inputs = Object.fromEntries(
+    formBatch.groups.map(({ flowId, element }) => [flowId, readRunFields(fieldEntries(element))]),
+  );
+  const error =
+    formBatch.mode === 'open'
+      ? await openBatchPages(formBatch.batch, formBatch.flows, inputs)
+      : await startBatch(formBatch.batch.id, inputs);
+  if (error) {
+    showNotice(elements.formNotice, error, 'error');
+    return;
+  }
+  hideForm();
+}
+
+/**
+ * @param {string} batchId
+ * @param {Record<string, { params: Record<string, string>, secrets: Record<string, string> }>} inputs
+ * @returns {Promise<string>} 実行を始められなかった理由。始められた場合は空の文字列
+ */
+async function startBatch(batchId, inputs) {
+  const response = await chrome.runtime.sendMessage({ kind: 'batch/start', batchId, inputs });
+  return response?.ok ? '' : (response?.error ?? 'まとめて実行を開始できません。');
+}
+
+/**
+ * まとめフローの一括実行のカードです。個別の実行のカードと同じ形にします。
+ * 1 行目にまとめフローの名前、全体の状態の印、右端に［すべて中止］（実行中）か［閉じる］（終了後）。
+ * その下に「まとめフロー・3 件中 1 件が終了」と進行のバー、フローごとの行の順です。
+ * 終わった後は、フローごとの行を［各フローの結果］（details）の中に畳みます。自動では消しません。
+ * @param {BatchRun} batchRun
+ * @param {RunState[]} runs
+ * @returns {Promise<HTMLDivElement>}
+ */
+async function batchRunCard(batchRun, runs) {
+  const { card, body } = activityCard();
+  const finished = isBatchFinished(batchRun.items);
+  const overall = batchOverall(batchRun.items, runs);
+  const summary = batchSummary(batchRun.items);
+
+  const end = finished
+    ? button('閉じる', 'btn btn-sm', () => {
+        // 含まれる実行の状態も消します。個別の実行のカードとして残らないようにするためです。
+        chrome.storage.session
+          .remove([
+            BATCH_RUN_KEY_PREFIX + batchRun.batchRunId,
+            ...batchRun.items.flatMap((item) => (item.runId ? [RUN_KEY_PREFIX + item.runId] : [])),
+          ])
+          .catch(console.error);
+        expandedBatchRuns.delete(batchRun.batchRunId);
+      })
+    : button('すべて中止', 'btn btn-sm btn-danger', () => {
+        abortAll(batchRun).catch((error) =>
+          setBatchRunNotice(batchRun.batchRunId, String(error), 'error'),
+        );
+      });
+  body.append(
+    headLine(batchRun.name, 'lm-flow-name', statusMark(overall.label, overall.tone), end),
+  );
+
+  const text = document.createElement('p');
+  text.className = 'lm-run-detail';
+  text.textContent = `まとめフロー・${summary.text}`;
+  const bar = document.createElement('div');
+  bar.className = 'progress progress-sm lm-batch-bar';
+  const fill = document.createElement('div');
+  fill.className = 'progress-bar';
+  fill.style.width = `${Math.round((summary.ended / summary.total) * 100)}%`;
+  fill.setAttribute('role', 'progressbar');
+  fill.setAttribute('aria-valuemin', '0');
+  fill.setAttribute('aria-valuemax', String(summary.total));
+  fill.setAttribute('aria-valuenow', String(summary.ended));
+  fill.setAttribute('aria-label', '終了したフローの数');
+  bar.append(fill);
+  body.append(text, bar);
+
+  const notice = batchRunNotices.get(batchRun.batchRunId);
+  if (notice) {
+    const element = document.createElement('p');
+    showNotice(element, notice.text, notice.kind);
+    body.append(element);
+  }
+
+  const list = document.createElement('ol');
+  list.className = 'lm-batch-items';
+  list.append(
+    ...(await Promise.all(
+      batchRun.items.map((item, index) => batchItemRow(batchRun, item, index, runs)),
+    )),
+  );
+  if (finished) {
+    const details = document.createElement('details');
+    details.className = 'lm-batch-details';
+    details.open = expandedBatchRuns.has(batchRun.batchRunId);
+    const toggle = document.createElement('summary');
+    toggle.className = 'lm-sub';
+    toggle.textContent = '各フローの結果';
+    details.append(toggle, list);
+    details.addEventListener('toggle', () => {
+      if (details.open) {
+        expandedBatchRuns.add(batchRun.batchRunId);
+      } else {
+        expandedBatchRuns.delete(batchRun.batchRunId);
+      }
+    });
+    body.append(details);
+  } else {
+    body.append(list);
+  }
+  return card;
+}
+
+/**
+ * まとめフローの中のフロー 1 件の行です。1 行目は個別の実行のカードと同じく、フロー名、状態の印、右端の操作です。
+ * まだ始めていないフローの［中止］は、1 行に収まるよう、右端の「×」にします。
+ * 操作が必要な行（実行中・確定の手前・失敗）だけ、その下に操作のボタンと、進み具合（止まった理由）の文を出します。
+ * サイトと、始めなかった理由は、フロー名にマウスを重ねると表示します。
+ * @param {BatchRun} batchRun
+ * @param {import('../shared/batch.js').BatchItem} item
+ * @param {number} index
+ * @param {RunState[]} runs
+ * @returns {Promise<HTMLLIElement>}
+ */
+async function batchItemRow(batchRun, item, index, runs) {
+  const run = runs.find((state) => state.runId === item.runId);
+  const row = document.createElement('li');
+  /** @type {HTMLButtonElement | null} */
+  let end = null;
+  if (item.status === 'waiting') {
+    end = button('×', 'btn btn-sm btn-ghost-secondary lm-step-remove', () => {
+      sendBatchAction('batch/abort', batchRun.batchRunId, index);
+    });
+    end.title = '中止';
+    end.setAttribute('aria-label', `「${item.flowName}」を中止`);
+  }
+  const line = headLine(
+    item.flowName,
+    'lm-batch-item-name',
+    statusMark(batchItemLabel(item, run), batchItemTone(item, run)),
+    end,
+  );
+  const name = line.querySelector('.lm-row-text');
+  if (name instanceof HTMLElement) {
+    name.title = [item.origin, needsAttention(item) ? '' : (item.note ?? '')]
+      .filter(Boolean)
+      .join('\n');
+  }
+  row.append(line);
+  if (!needsAttention(item)) {
+    return row;
+  }
+
+  /** @param {string} text */
+  const showError = (text) =>
+    setBatchRunNotice(batchRun.batchRunId, `「${item.flowName}」：${text}`, 'error');
+  // 並びは、主な操作（［確認済み・次へ］）、そのほかの操作、元に戻せない操作（［中止］）の順です。
+  const actions = run ? runActions(run, item.flowName, showError) : document.createElement('div');
+  actions.className = 'lm-buttons mt-1';
+  const follower = hasWaitingFollower(batchRun.items, index);
+  if (item.status === 'held' && follower) {
+    actions.prepend(
+      button('確認済み・次へ', 'btn btn-sm btn-primary', () => {
+        sendBatchAction('batch/acknowledge', batchRun.batchRunId, index);
+      }),
+    );
+  }
+  if (item.status === 'running' || (item.status === 'held' && follower)) {
+    const abort = button('中止', 'btn btn-sm btn-ghost-danger', () => {
+      sendBatchAction('batch/abort', batchRun.batchRunId, index);
+    });
+    abort.disabled = run?.status === 'stopping';
+    actions.append(abort);
+  }
+  if (actions.childElementCount > 0) {
+    row.append(actions);
+  }
+
+  if (run) {
+    const detail = detailLine(run, await getFlow(run.flowId));
+    if (detail) {
+      row.append(detail);
+    }
+  } else if (item.note) {
+    // 実行を始められなかった理由です。
+    const detail = document.createElement('p');
+    detail.className = 'lm-run-detail lm-text-danger';
+    detail.textContent = item.note;
+    row.append(detail);
+  }
+  return row;
+}
+
+/**
+ * 一括実行の中のフロー 1 件の［確認済み・次へ］と［中止］を、Service Worker に送ります。
+ * @param {'batch/acknowledge' | 'batch/abort'} kind
+ * @param {string} batchRunId
+ * @param {number} index
+ */
+function sendBatchAction(kind, batchRunId, index) {
+  clearNotices();
+  chrome.runtime
+    .sendMessage({ kind, batchRunId, index })
+    .then((response) => {
+      if (!response?.ok) {
+        setBatchRunNotice(batchRunId, response?.error ?? '操作できませんでした。', 'error');
+      }
+    })
+    .catch((error) => setBatchRunNotice(batchRunId, String(error), 'error'));
+}
+
+/**
+ * 一括実行のすべてのフローを中止します。実行中のフローは停止し、まだ始めていないフローは始めません。
+ * @param {BatchRun} batchRun
+ */
+async function abortAll(batchRun) {
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'batch/abortAll',
+    batchRunId: batchRun.batchRunId,
+  });
+  if (!response?.ok) {
+    setBatchRunNotice(batchRun.batchRunId, response?.error ?? '中止できませんでした。', 'error');
+  }
+}
+
+/**
+ * タブを前面に表示します。タブのあるウィンドウも前面に出します。
+ * @param {number} tabId
+ * @returns {Promise<void>}
+ */
+async function focusTab(tabId) {
+  const tab = await chrome.tabs.update(tabId, { active: true });
+  if (tab?.windowId !== undefined) {
+    await chrome.windows.update(tab.windowId, { focused: true });
+  }
+}
+
+/**
+ * まとめフローの行の中に知らせを出します。
+ * @param {string} batchId
+ * @param {string} text
+ * @param {NoticeKind} kind
+ */
+function setBatchRowNotice(batchId, text, kind) {
+  batchRowNotices.set(batchId, { text, kind });
+  renderFlows().catch(console.error);
+}
+
+/**
+ * 一括実行のカードの中に知らせを出します。
+ * @param {string} batchRunId
+ * @param {string} text
+ * @param {NoticeKind} kind
+ */
+function setBatchRunNotice(batchRunId, text, kind) {
+  batchRunNotices.set(batchRunId, { text, kind });
+  render().catch(console.error);
 }
 
 // ---- 補助 ----

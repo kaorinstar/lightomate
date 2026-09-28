@@ -17,15 +17,6 @@ body {
   margin-bottom: 1rem;
 }
 
-.lm-tabs .nav-link {
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.lm-tabs .nav-link:not(.active) {
-  color: var(--tblr-secondary);
-}
-
 .lm-panel-note {
   max-width: 60rem;
   margin: 0 0 1rem;
@@ -145,15 +136,55 @@ body {
   justify-content: space-between;
 }
 
-#bulk-notice {
+#bulk-notice,
+#batch-notice {
   margin: 0;
+}
+
+/* まとめフロー（#7）の登録の欄です。一括操作の帯の下に開きます。 */
+.lm-batch-form[hidden] {
+  display: none;
+}
+
+.lm-batch-order {
+  margin: 0 0 0.5rem;
+  padding-inline-start: 1.5em;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+#batch-notice:not([hidden]) {
+  margin-top: 0.5rem;
+}
+
+.lm-batch-row .lm-buttons {
+  margin-top: 0.5rem;
+}
+
+/* まとめフローの行の中に開く、実行する値の入力欄です（#7）。フローごとの欄の間と、ボタンの上に余白を置きます。 */
+.lm-batch-row .lm-run-form {
+  margin-top: 0.5rem;
+}
+
+.lm-batch-row .lm-run-fields + .lm-run-fields {
+  margin-top: 1rem;
+}
+
+.lm-batch-row .lm-run-form .lm-buttons {
+  margin-top: 1rem;
+}
+
+.lm-batch-row .lm-buttons[hidden] {
+  display: none;
 }
 
 #empty[hidden],
 #no-match[hidden],
 #history-empty[hidden],
 #history-table-wrap[hidden],
-#stop-empty[hidden] {
+#stop-empty[hidden],
+#batch-empty[hidden],
+#batch-no-match[hidden] {
   display: none;
 }
 

@@ -5,7 +5,10 @@ import assert from 'node:assert/strict';
 import {
   describeParam,
   describeStep,
+  runDetailText,
+  runStatusLabel,
   runStatusText,
+  runStatusTone,
   stepKindLabel,
 } from '../extension/shared/describe.js';
 
@@ -135,4 +138,31 @@ test('while の中では、手順の番号に何回目かを添える（#103）'
     loops: /** @type {('item' | 'round')[]} */ (['round']),
   };
   assert.equal(runStatusText(run, undefined), '「a」を実行中です。手順 5 / 9（3 回目）');
+});
+
+test('実行のカードの状態の印と、フロー名を含まない進み具合の文（#7）', () => {
+  const base = { flowName: '注文', stepIndex: 1, total: 3 };
+  assert.equal(runStatusLabel('running'), '実行中');
+  assert.equal(runStatusLabel('paused'), '一時停止中');
+  assert.equal(runStatusLabel('halted'), '確定の手前で停止');
+  assert.equal(runStatusLabel('failed'), '失敗');
+  assert.equal(runStatusTone('running'), 'primary');
+  assert.equal(runStatusTone('paused'), 'warning');
+  assert.equal(runStatusTone('done'), 'success');
+  assert.equal(runStatusTone('failed'), 'danger');
+  assert.equal(runStatusTone('stopped'), 'muted');
+
+  assert.equal(
+    runDetailText({ ...base, status: 'running' }, { type: 'click', target }),
+    '手順 2 / 3：クリック：注文履歴',
+  );
+  assert.equal(runDetailText({ ...base, status: 'done' }, undefined), '');
+  assert.equal(
+    runDetailText({ ...base, status: 'failed', error: '要素が見つかりません。' }, undefined),
+    '手順 2 / 3 で止まりました。要素が見つかりません。',
+  );
+  // フロー名は含めません。カードの 1 行目に出すためです。
+  for (const status of ['running', 'paused', 'stopped', 'halted', 'failed']) {
+    assert.doesNotMatch(runDetailText({ ...base, status }, undefined), /注文/);
+  }
 });

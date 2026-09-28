@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   MAX_SUGGESTIONS,
+  batchSuggestions,
+  filterBatches,
   filterFlows,
   groupByHost,
   hostOf,
@@ -118,4 +120,46 @@ test(`候補は最大 ${MAX_SUGGESTIONS} 件にする`, () => {
   const result = suggestions(many, 'フロー', 'prefix');
   assert.equal(result.length, MAX_SUGGESTIONS);
   assert.equal(result[0].value, 'フロー 00');
+});
+
+// まとめフローの絞り込み（#113）です。
+const batchFlows = [
+  stored('a', '発注', 'https://www.monotaro.com'),
+  stored('b', '発注', 'https://www.askul.co.jp'),
+  stored('c', '領収書', 'https://www.amazon.co.jp'),
+];
+const batches = [
+  { name: '月初の発注', flowIds: ['a', 'b'] },
+  { name: '月末の締め', flowIds: ['c', 'deleted'] },
+];
+
+test('まとめフローを、名前・含めたフローの名前・サイトで絞り込む', () => {
+  const names = (/** @type {{ name: string }[]} */ list) => list.map((batch) => batch.name);
+  assert.deepEqual(names(filterBatches(batches, batchFlows, '月初', 'contains')), ['月初の発注']);
+  // 含めたフローの名前で探します。
+  assert.deepEqual(names(filterBatches(batches, batchFlows, '領収書', 'contains')), ['月末の締め']);
+  // 含めたフローのサイト（ホスト名）で探します。
+  assert.deepEqual(names(filterBatches(batches, batchFlows, 'askul', 'contains')), ['月初の発注']);
+  assert.deepEqual(names(filterBatches(batches, batchFlows, '月', 'prefix')), [
+    '月初の発注',
+    '月末の締め',
+  ]);
+  assert.deepEqual(names(filterBatches(batches, batchFlows, '締め', 'suffix')), ['月末の締め']);
+  assert.deepEqual(names(filterBatches(batches, batchFlows, '締め', 'prefix')), []);
+  // 検索語が空の場合は、すべて返します。
+  assert.equal(filterBatches(batches, batchFlows, '  ', 'contains').length, 2);
+});
+
+test('まとめフローの検索欄の候補は、まとめフロー・フロー・サイトの順に重複なく出す', () => {
+  assert.deepEqual(batchSuggestions(batches, batchFlows, '発注', 'contains'), [
+    { value: '月初の発注', kind: 'batch' },
+    { value: '発注', kind: 'flow' },
+  ]);
+  assert.deepEqual(batchSuggestions(batches, batchFlows, 'www.a', 'prefix'), [
+    { value: 'www.amazon.co.jp', kind: 'site' },
+    { value: 'www.askul.co.jp', kind: 'site' },
+  ]);
+  assert.deepEqual(batchSuggestions(batches, batchFlows, '', 'contains'), []);
+  const many = Array.from({ length: 12 }, (_, i) => ({ name: `まとめ ${i}`, flowIds: [] }));
+  assert.equal(batchSuggestions(many, [], 'まとめ', 'contains').length, MAX_SUGGESTIONS);
 });

@@ -53,6 +53,8 @@ const cases = [
     button: 'bulk-delete',
     notices: ['bulk-confirm', 'bulk-notice'],
   },
+  // まとめフローの登録の欄（#7）です。
+  { page: '管理画面', html: options, button: 'batch-cancel', notices: ['batch-notice'] },
   { page: '管理画面', html: options, button: 'save', notices: ['json-notice'] },
   { page: '管理画面', html: options, button: 'speed-save', notices: ['speed-notice'] },
   {
@@ -121,6 +123,7 @@ const fields = [
   { page: 'サイドパネル', html: sidepanel, control: 'flow-name' },
   { page: '管理画面', html: options, control: 'rename-input', feedback: 'rename-feedback' },
   { page: '管理画面', html: options, control: 'json' },
+  { page: '管理画面', html: options, control: 'batch-name' },
   { page: '管理画面', html: options, control: 'import-json' },
   { page: '管理画面', html: options, control: 'stop-origin' },
   { page: '管理画面', html: options, control: 'stop-selectors' },

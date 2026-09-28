@@ -132,6 +132,65 @@ export function suggestions(flows, query, mode) {
 }
 
 /**
+ * 絞り込みに使う、まとめフロー（#7）の項目です。
+ * @typedef {{ name: string, flowIds: string[] }} BatchEntry
+ */
+
+/**
+ * まとめフローの名前、含めたフローの名前、含めたフローのホスト名のどれかが条件に合うまとめフローだけを返します（#113）。
+ * 順序は変えません。削除されたフローは、名前とサイトが分からないため、判定に使いません。
+ * @template {BatchEntry} T
+ * @param {T[]} batches
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ * @param {string} query
+ * @param {MatchMode} mode
+ * @returns {T[]}
+ */
+export function filterBatches(batches, flows, query, mode) {
+  return batches.filter(
+    (batch) =>
+      matchesText(batch.name, query, mode) ||
+      filterFlows(containedFlows(batch, flows), query, mode).length > 0,
+  );
+}
+
+/**
+ * まとめフローの検索欄の候補を作ります（#113）。まとめフローの名前、含めたフローの名前、そのホスト名のうち、
+ * 条件に合うものを重複なく返します。この順に、それぞれ名前の順で並べ、最大 MAX_SUGGESTIONS 件とします。
+ * 検索語が空の場合は、候補を出しません。
+ * @param {BatchEntry[]} batches
+ * @param {StoredFlow[]} flows 保存したすべてのフロー
+ * @param {string} query
+ * @param {MatchMode} mode
+ * @returns {{ value: string, kind: 'batch' | 'flow' | 'site' }[]}
+ */
+export function batchSuggestions(batches, flows, query, mode) {
+  if (!normalize(query)) {
+    return [];
+  }
+  const names = [...new Set(batches.map((batch) => batch.name))]
+    .filter((value) => matchesText(value, query, mode))
+    .sort(compareText)
+    .map((value) => ({ value, kind: /** @type {const} */ ('batch') }));
+  const contained = [
+    ...new Map(
+      batches.flatMap((batch) => containedFlows(batch, flows)).map((stored) => [stored.id, stored]),
+    ).values(),
+  ];
+  return [...names, ...suggestions(contained, query, mode)].slice(0, MAX_SUGGESTIONS);
+}
+
+/**
+ * まとめフローに含めたフローのうち、保存されているものを返します。
+ * @param {BatchEntry} batch
+ * @param {StoredFlow[]} flows
+ * @returns {StoredFlow[]}
+ */
+function containedFlows(batch, flows) {
+  return batch.flowIds.flatMap((id) => flows.filter((stored) => stored.id === id));
+}
+
+/**
  * 名前の順に並べるための比較です。日本語の照合順を使います。かなは五十音順ですが、漢字は読みの順になりません。
  * @param {string} a
  * @param {string} b

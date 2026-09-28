@@ -10,7 +10,8 @@
   </head>
   <!--
     配置は docs/design-guidelines.md の「サイドパネル」に従います。
-    上から、見出し、進行中の作業（該当する状態のときだけ）、このサイトのフローの順です。
+    上から、見出し、進行中の作業（該当する状態のときだけ）、［このサイトのフロー］［まとめフロー］のタブの順です。
+    進行中の作業はタブの上に置き、タブを切り替えても見えるようにします（#7）。
   -->
   <body>
     <header class="lm-header">
@@ -26,6 +27,10 @@
     <main class="lm-stack">
       <section id="run-section" class="lm-stack" aria-labelledby="run-heading" hidden>
         <h2 id="run-heading" class="visually-hidden">実行の状態</h2>
+        <!--
+          個別の実行と、まとめフローの一括実行（#7）のカードです。区別なく、始めた日時の新しい順に上から並べます。
+          まとめフローに含まれる実行は、まとめフローのカードの中に表示します。
+        -->
         <div id="runs" class="lm-stack"></div>
       </section>
 
@@ -116,7 +121,30 @@
         </div>
       </section>
 
-      <section class="card" aria-labelledby="flows-heading">
+      <div class="nav nav-tabs lm-tabs" role="tablist" aria-label="表示するフロー">
+        <button
+          type="button"
+          class="nav-link"
+          role="tab"
+          id="tab-flows"
+          data-tab="flows"
+          aria-controls="panel-flows"
+        >
+          このサイトのフロー
+        </button>
+        <button
+          type="button"
+          class="nav-link"
+          role="tab"
+          id="tab-batches"
+          data-tab="batches"
+          aria-controls="panel-batches"
+        >
+          まとめフロー
+        </button>
+      </div>
+
+      <section id="panel-flows" class="card" role="tabpanel" aria-labelledby="flows-heading">
         <div class="card-header lm-card-header">
           <h2 id="flows-heading" class="card-title">このサイトのフロー</h2>
           <button type="button" class="btn btn-sm" id="start" disabled>
@@ -146,6 +174,47 @@
         <div id="flows" class="list-group list-group-flush lm-flows"></div>
         <div class="card-footer lm-sub">
           ほかのサイトのフローの確認、JSON の編集と読み込みは「フローの管理」で行います。
+        </div>
+      </section>
+
+      <!-- まとめフロー（#7）です。複数のサイトのフローを含むため、表示中のサイトにかかわらず同じ内容を表示します。 -->
+      <section
+        id="panel-batches"
+        class="card"
+        role="tabpanel"
+        aria-labelledby="batch-heading"
+        hidden
+      >
+        <div class="card-header lm-card-header">
+          <h2 id="batch-heading" class="card-title">まとめフロー</h2>
+        </div>
+        <!-- まとめフローの名前、含めたフローの名前、サイトで絞り込みます（#113）。 -->
+        <div class="lm-search" id="batch-search-area" hidden>
+          <div class="lm-combobox">
+            <label class="visually-hidden" for="batch-search"
+              >まとめフロー名、フロー名かサイトで検索</label
+            >
+            <input
+              type="search"
+              class="form-control form-control-sm"
+              id="batch-search"
+              placeholder="まとめフロー名、フロー名かサイトで検索"
+            />
+            <ul id="batch-search-suggestions" class="lm-suggestions" aria-label="検索の候補"></ul>
+          </div>
+          <select
+            class="form-select form-select-sm lm-search-mode"
+            id="batch-search-mode"
+            aria-label="一致方法"
+          ></select>
+        </div>
+        <p id="batch-no-match" class="lm-sub m-3" hidden>該当するまとめフローはありません。</p>
+        <p id="batch-empty" class="lm-sub m-3">
+          まとめフローはまだありません。「フローの管理」の［保存したフロー］でフローを選び、［まとめフローとして保存］を押すと登録できます。
+        </p>
+        <div id="batch-list" class="list-group list-group-flush lm-flows"></div>
+        <div class="card-footer lm-sub">
+          まとめフローの登録と削除は「フローの管理」で行います。各フローは背景のタブで実行し、確定ボタンの手前で止まります。
         </div>
       </section>
     </main>

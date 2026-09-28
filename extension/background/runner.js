@@ -558,9 +558,12 @@ export async function markInterruptedRuns() {
  * @param {string} flowId
  * @param {Record<string, string>} paramInput 入力フォームの値
  * @param {Record<string, string>} secretInput 値を記録していない入力欄の値（手順の番号ごと）
- * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ * @param {{ active?: boolean, onEnd?: (runId: string) => void }} [options]
+ *   active は、最初のページを前面のタブで開くかです。まとめフローの一括実行（#7）では、作業中の画面を
+ *   妨げないよう背景のタブで開きます。onEnd は、実行が終わったとき（状態を保存した後）に呼び出す処理です
+ * @returns {Promise<{ ok: true, runId: string } | { ok: false, error: string }>}
  */
-export async function startRun(flowId, paramInput, secretInput) {
+export async function startRun(flowId, paramInput, secretInput, options = {}) {
   const stored = await getFlow(flowId);
   if (!stored) {
     return { ok: false, error: 'フローが見つかりません。' };
@@ -611,7 +614,7 @@ export async function startRun(flowId, paramInput, secretInput) {
   savedFiles.set(runId, []);
 
   try {
-    const tabId = await openTab(flow, resolved.steps);
+    const tabId = await openTab(flow, resolved.steps, options.active ?? true);
     // サイトが表示するダイアログに応答できるよう、実行の初めに接続します（#88）。
     await watchDialogs(runId, tabId);
     await setRunState({
@@ -629,8 +632,9 @@ export async function startRun(flowId, paramInput, secretInput) {
     });
     runSteps(flow, resolved.steps, tabId, runId, pathValues).finally(() => {
       activeRuns.delete(runId);
+      options.onEnd?.(runId);
     });
-    return { ok: true };
+    return { ok: true, runId };
   } catch (error) {
     await unwatchDialogs(runId);
     activeRuns.delete(runId);
@@ -639,6 +643,15 @@ export async function startRun(flowId, paramInput, secretInput) {
     retryCounts.delete(runId);
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * この Service Worker で実行中の実行のオリジンです。状態を保存する前の実行も含みます。
+ * 一括実行（#7）を始めてよいかの判定に使います。
+ * @returns {string[]}
+ */
+export function activeRunOrigins() {
+  return [...activeRuns.values()];
 }
 
 /**
@@ -834,12 +847,13 @@ function resolveCondition(condition, values) {
  * そうでなければ、表示中のタブを使います。
  * @param {Flow} flow
  * @param {Step[]} steps
+ * @param {boolean} active 最初のページを前面のタブで開くか
  * @returns {Promise<number>}
  */
-async function openTab(flow, steps) {
+async function openTab(flow, steps, active) {
   const first = steps[0];
   if (first?.type === 'navigate') {
-    const tab = await chrome.tabs.create({ url: first.url, active: true });
+    const tab = await chrome.tabs.create({ url: first.url, active });
     if (tab.id === undefined) {
       throw new Error('タブを開けませんでした。');
     }
