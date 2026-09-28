@@ -138,6 +138,7 @@ const elements = {
   flowsEmpty: byId('flows-empty'),
   toast: byId('toast'),
   flowsHeading: byId('flows-heading'),
+  flowsAsideScope: byId('flows-aside-scope'),
   searchArea: byId('search-area'),
   search: /** @type {HTMLInputElement} */ (byId('search')),
   searchSuggestions: byId('search-suggestions'),
@@ -952,6 +953,8 @@ async function renderFlows() {
 
   elements.flowsHeading.textContent = everything ? 'すべてのフロー' : 'このサイトのフロー';
   elements.tabFlows.textContent = elements.flowsHeading.textContent;
+  // すべてのフローを表示しているときは、ほかのサイトのフローもこの画面で確認できるため、案内から外します（#108）。
+  elements.flowsAsideScope.hidden = everything;
   elements.searchArea.hidden = !everything || all.length === 0;
   if (elements.searchArea.hidden) {
     searchBox.close();
