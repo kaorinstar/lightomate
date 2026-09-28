@@ -30,7 +30,13 @@ import { historyEntryFromRun } from '../shared/history.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
 import { confirmPauseNote, findConfirm } from '../shared/purchase-guard.js';
 import { findStopPath, stopRuleNote } from '../shared/stop-rules.js';
-import { DEFAULT_SAVE_PATH, buildSavePath, builtinValues } from '../shared/save-path.js';
+import {
+  DEFAULT_SAVE_PATH,
+  buildSavePath,
+  builtinValues,
+  fileExtension,
+  withExtension,
+} from '../shared/save-path.js';
 import { pickDelay, stepInterval } from '../shared/speed.js';
 import {
   AUTH_PAUSE_NOTE,
@@ -1221,6 +1227,11 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           }
           // クリックの直後に開いたタブを取りこぼさないよう、クリックの前から待ち始めます（#20）。
           const opened = opensTab ? watchOpenedTab(tabId) : undefined;
+          // サイトが提供するファイルのダウンロード（#20）も、クリックの前から待ち始めます。
+          const downloading =
+            step.type === 'click' && step.download
+              ? watchDownload(step.download, pathValues)
+              : undefined;
           let done;
           try {
             done = await withRetry(runId, flow, () =>
@@ -1228,7 +1239,12 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             );
           } catch (error) {
             opened?.cancel();
+            downloading?.cancel();
             throw error;
+          }
+          if (downloading) {
+            const file = await downloading.wait(runId);
+            savedFiles.get(runId)?.push(file);
           }
           documentBefore = done.documentId;
           if (opened) {
@@ -1327,6 +1343,71 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       await sendToPageBriefly(opener.tabId, { kind: 'runner/finish', indicator: undefined });
     }
   }
+}
+
+/**
+ * クリックで始まるダウンロードを待ち、保存先とファイル名を download.path のひな形で決めます（#20）。
+ * クリックの前に呼び、クリックの後に wait で受け取ります。chrome.downloads の通知には、どのタブから始まったかが
+ * 含まれないため、待ち始めた後に最初に始まったダウンロード 1 件を対象にします。
+ * ほかの拡張機能がファイル名を決めた場合は、名前を変えられないことがあります。その場合も停止せず、
+ * 実際に保存されたパスを返します。
+ * @param {import('../shared/flow.js').DownloadTarget} download
+ * @param {Record<string, string>} values 保存先に埋め込む値
+ * @returns {{ wait: (runId: string) => Promise<string>, cancel: () => void }}
+ */
+function watchDownload(download, values) {
+  // 埋め込む値がないなどの誤りは、クリックの前に確かめます。拡張子は、サイトのファイルが分かってから付けます。
+  const base = buildSavePath(download.path, values, '');
+  if (!base.ok) {
+    throw new Error(base.error);
+  }
+  /** @type {number | undefined} */
+  let target;
+  /** @param {chrome.downloads.DownloadItem} item */
+  const onCreated = (item) => {
+    target ??= item.id;
+  };
+  /**
+   * @param {chrome.downloads.DownloadItem} item
+   * @param {(suggestion?: chrome.downloads.FilenameSuggestion) => void} suggest
+   */
+  const onDeterminingFilename = (item, suggest) => {
+    target ??= item.id;
+    if (item.id !== target) {
+      // 対象でないダウンロードは、Chrome が決めた名前のままにします。
+      return;
+    }
+    suggest({
+      filename: withExtension(base.path, fileExtension(item.filename)),
+      conflictAction: download.onConflict === 'overwrite' ? 'overwrite' : 'uniquify',
+    });
+  };
+  chrome.downloads.onCreated.addListener(onCreated);
+  chrome.downloads.onDeterminingFilename.addListener(onDeterminingFilename);
+  const cancel = () => {
+    chrome.downloads.onCreated.removeListener(onCreated);
+    chrome.downloads.onDeterminingFilename.removeListener(onDeterminingFilename);
+  };
+  return {
+    cancel,
+    async wait(runId) {
+      const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+      try {
+        while (target === undefined) {
+          if (Date.now() > deadline) {
+            throw new Error(
+              `クリックの後、${Math.round(NAVIGATION_TIMEOUT_MS / 1000)} 秒待ちましたが、ダウンロードが始まりませんでした。`,
+            );
+          }
+          await throwIfStopRequested(runId);
+          await sleep(STOP_CHECK_INTERVAL_MS);
+        }
+        return await waitForDownload(runId, target, 'ファイル');
+      } finally {
+        cancel();
+      }
+    },
+  };
 }
 
 /**
@@ -2086,9 +2167,12 @@ async function setOverlayHidden(tabId, hidden) {
  * ダウンロードが終わるのを待ち、保存したファイルのパスを返します。
  * @param {string} runId
  * @param {number} downloadId
+ * @param {string} [label] 失敗の説明に使う、保存するものの名前
  * @returns {Promise<string>}
  */
-async function waitForDownload(runId, downloadId) {
+async function waitForDownload(runId, downloadId, label = 'PDF') {
+  // 「PDF を保存」「ファイルを保存」のように、英字で終わる名前の後にだけ空白を入れます。
+  const name = /[A-Za-z]$/.test(label) ? `${label} ` : label;
   const deadline = Date.now() + DOWNLOAD_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const [item] = await chrome.downloads.search({ id: downloadId });
@@ -2096,13 +2180,13 @@ async function waitForDownload(runId, downloadId) {
       return item.filename;
     }
     if (item?.state === 'interrupted') {
-      throw new Error(`PDF を保存できませんでした（${item.error ?? '理由は不明です'}）。`);
+      throw new Error(`${name}を保存できませんでした（${item.error ?? '理由は不明です'}）。`);
     }
     await throwIfStopRequested(runId);
     await sleep(STOP_CHECK_INTERVAL_MS);
   }
   throw new Error(
-    `${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)} 秒待ちましたが、PDF の保存が終わりませんでした。`,
+    `${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)} 秒待ちましたが、${name}の保存が終わりませんでした。`,
   );
 }
 

@@ -24,7 +24,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -42,9 +42,10 @@ export const SCHEMA_VERSION = 11;
  * 版 10 は、版 9 に、手順の後に開いたダイアログへの応答の指定（手順の dialog）を加えたものです（#88）。
  * 版 11 は、版 10 に、クリックで開いた新しいタブでの実行（click の newTab）と、そのタブを閉じて元のタブに戻る
  * 手順（closeTab）を加えたものです（#20）。
+ * 版 12 は、版 11 に、クリックで始まったダウンロードの保存先の指定（click の download）を加えたものです（#20）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -63,6 +64,9 @@ const MIN_SCHEMA_VERSION = {
 
 /** click の newTab を使える最も古い版です（#20）。 */
 const NEW_TAB_MIN_SCHEMA_VERSION = 11;
+
+/** click の download を使える最も古い版です（#20）。 */
+const DOWNLOAD_MIN_SCHEMA_VERSION = 12;
 
 /** 文字・日付による条件（contains、equals、month、from、to）を使える最も古い版です（#103）。 */
 const VALUE_CONDITION_MIN_SCHEMA_VERSION = 9;
@@ -130,6 +134,15 @@ export const MAX_TEXT_LENGTH = 2000;
  *   開いた順に使います（#88）。版 10 で加えました
  * @property {true} [newTab] クリックで新しいタブが開くこと。以降の手順を、開いたタブで実行します（#20）。
  *   版 11 で加えました
+ * @property {DownloadTarget} [download] クリックで始まるダウンロードの保存先（#20）。版 12 で加えました
+ */
+
+/**
+ * サイトが提供するファイルのダウンロードの保存先です（#20）。
+ * @typedef {object} DownloadTarget
+ * @property {string} path 保存先のひな形。savePdf の path と同じ書き方です。ファイル名がサイトのファイルの
+ *   拡張子で終わっていない場合は、その拡張子を付けます
+ * @property {'rename' | 'overwrite'} [onConflict] 同じ名前のファイルがある場合の動作。既定は rename です
  */
 
 /**
@@ -614,6 +627,18 @@ function validateStepList(list, path, depth, inLoop, context) {
       );
     }
     if (
+      step.download !== undefined &&
+      version !== undefined &&
+      version < DOWNLOAD_MIN_SCHEMA_VERSION
+    ) {
+      errors.push(
+        `${at}: download は、schemaVersion が ${DOWNLOAD_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+      );
+    }
+    if (type === 'click' && isRecord(step.download) && typeof step.download.path === 'string') {
+      validatePathReferences(step.download.path, `${at}.download`, context);
+    }
+    if (
       step.newTab !== undefined &&
       version !== undefined &&
       version < NEW_TAB_MIN_SCHEMA_VERSION
@@ -786,6 +811,19 @@ export function validateStep(step) {
     }
   }
 
+  if (step.download !== undefined) {
+    if (step.type !== 'click') {
+      return ['download は、click の手順にだけ書けます。'];
+    }
+    if (step.newTab !== undefined) {
+      return ['newTab と download は、同じクリックの手順に書けません。'];
+    }
+    const errors = validateDownload(step.download);
+    if (errors.length > 0) {
+      return errors;
+    }
+  }
+
   switch (step.type) {
     case 'navigate': {
       /** @type {string[]} */
@@ -930,6 +968,32 @@ export function validateStep(step) {
         '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait、closeTab、if、forEach、while のいずれでもありません。',
       ];
   }
+}
+
+/**
+ * click の download を検証します（#20）。
+ * @param {unknown} download
+ * @returns {string[]}
+ */
+function validateDownload(download) {
+  if (!isRecord(download)) {
+    return ['download がオブジェクトではありません。'];
+  }
+  /** @type {string[]} */
+  const errors = [];
+  if (!isText(download.path)) {
+    errors.push('download.path が文字列ではありません。');
+  } else {
+    errors.push(...validateSaveTemplate(download.path).map((error) => `download.${error}`));
+  }
+  if (
+    download.onConflict !== undefined &&
+    download.onConflict !== 'rename' &&
+    download.onConflict !== 'overwrite'
+  ) {
+    errors.push('download.onConflict が rename または overwrite ではありません。');
+  }
+  return errors;
 }
 
 /** 条件に書ける項目です。target と、条件の種類ごとの項目です。 */
