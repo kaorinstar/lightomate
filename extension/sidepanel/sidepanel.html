@@ -144,79 +144,89 @@
         </button>
       </div>
 
-      <section id="panel-flows" class="card" role="tabpanel" aria-labelledby="flows-heading">
-        <div class="card-header lm-card-header">
-          <h2 id="flows-heading" class="card-title">このサイトのフロー</h2>
-          <button type="button" class="btn btn-sm" id="start" disabled>
-            <span class="lm-rec-dot" aria-hidden="true"></span>記録開始
-          </button>
-        </div>
-        <p id="flows-notice" hidden></p>
-        <!-- Web ページ以外を表示しているときだけ、すべてのフローを検索できるようにします（#44）。 -->
-        <div class="lm-search" id="search-area" hidden>
-          <div class="lm-combobox">
-            <label class="visually-hidden" for="search">フロー名かサイトで検索</label>
-            <input
-              type="search"
-              class="form-control form-control-sm"
-              id="search"
-              placeholder="フロー名かサイトで検索"
-            />
-            <ul id="search-suggestions" class="lm-suggestions" aria-label="検索の候補"></ul>
+      <!-- 備考（#108）はフローの一覧の一部に見えないよう、区画の枠の外に置きます。タブの切り替えで一緒に隠すため、
+           区画と備考をまとめてタブの内容とします。 -->
+      <div id="panel-flows" role="tabpanel" aria-labelledby="flows-heading">
+        <section class="card" aria-labelledby="flows-heading">
+          <div class="card-header lm-card-header">
+            <h2 id="flows-heading" class="card-title">このサイトのフロー</h2>
+            <button type="button" class="btn btn-sm" id="start" disabled>
+              <span class="lm-rec-dot" aria-hidden="true"></span>記録開始
+            </button>
           </div>
-          <select
-            class="form-select form-select-sm lm-search-mode"
-            id="search-mode"
-            aria-label="一致方法"
-          ></select>
-        </div>
-        <p id="flows-empty" class="lm-sub m-3"></p>
-        <div id="flows" class="list-group list-group-flush lm-flows"></div>
-        <div class="card-footer lm-sub">
-          ほかのサイトのフローの確認、JSON の編集と読み込みは「フローの管理」で行います。
-        </div>
-      </section>
+          <p id="flows-notice" hidden></p>
+          <!-- Web ページ以外を表示しているときだけ、すべてのフローを検索できるようにします（#44）。 -->
+          <div class="lm-search" id="search-area" hidden>
+            <div class="lm-combobox">
+              <label class="visually-hidden" for="search">フロー名かサイトで検索</label>
+              <input
+                type="search"
+                class="form-control form-control-sm"
+                id="search"
+                placeholder="フロー名かサイトで検索"
+              />
+              <ul id="search-suggestions" class="lm-suggestions" aria-label="検索の候補"></ul>
+            </div>
+            <select
+              class="form-select form-select-sm lm-search-mode"
+              id="search-mode"
+              aria-label="一致方法"
+            ></select>
+          </div>
+          <p id="flows-empty" class="lm-sub m-3"></p>
+          <div id="flows" class="list-group list-group-flush lm-flows"></div>
+        </section>
+        <p class="lm-sub lm-aside">
+          <span class="lm-aside-mark" aria-hidden="true">ⓘ</span>
+          <span
+            ><span id="flows-aside-scope">ほかのサイトのフローの確認、</span>JSON
+            の編集と読み込みは「<a href="../options/options.html" target="_blank">フローの管理</a
+            >」で行います。</span
+          >
+        </p>
+      </div>
 
       <!-- まとめフロー（#7）です。複数のサイトのフローを含むため、表示中のサイトにかかわらず同じ内容を表示します。 -->
-      <section
-        id="panel-batches"
-        class="card"
-        role="tabpanel"
-        aria-labelledby="batch-heading"
-        hidden
-      >
-        <div class="card-header lm-card-header">
-          <h2 id="batch-heading" class="card-title">まとめフロー</h2>
-        </div>
-        <!-- まとめフローの名前、含めたフローの名前、サイトで絞り込みます（#113）。 -->
-        <div class="lm-search" id="batch-search-area" hidden>
-          <div class="lm-combobox">
-            <label class="visually-hidden" for="batch-search"
-              >まとめフロー名、フロー名かサイトで検索</label
-            >
-            <input
-              type="search"
-              class="form-control form-control-sm"
-              id="batch-search"
-              placeholder="まとめフロー名、フロー名かサイトで検索"
-            />
-            <ul id="batch-search-suggestions" class="lm-suggestions" aria-label="検索の候補"></ul>
+      <div id="panel-batches" role="tabpanel" aria-labelledby="batch-heading" hidden>
+        <section class="card" aria-labelledby="batch-heading">
+          <div class="card-header lm-card-header">
+            <h2 id="batch-heading" class="card-title">まとめフロー</h2>
           </div>
-          <select
-            class="form-select form-select-sm lm-search-mode"
-            id="batch-search-mode"
-            aria-label="一致方法"
-          ></select>
-        </div>
-        <p id="batch-no-match" class="lm-sub m-3" hidden>該当するまとめフローはありません。</p>
-        <p id="batch-empty" class="lm-sub m-3">
-          まとめフローはまだありません。「フローの管理」の［保存したフロー］でフローを選び、［まとめフローとして保存］を押すと登録できます。
+          <!-- まとめフローの名前、含めたフローの名前、サイトで絞り込みます（#113）。 -->
+          <div class="lm-search" id="batch-search-area" hidden>
+            <div class="lm-combobox">
+              <label class="visually-hidden" for="batch-search"
+                >まとめフロー名、フロー名かサイトで検索</label
+              >
+              <input
+                type="search"
+                class="form-control form-control-sm"
+                id="batch-search"
+                placeholder="まとめフロー名、フロー名かサイトで検索"
+              />
+              <ul id="batch-search-suggestions" class="lm-suggestions" aria-label="検索の候補"></ul>
+            </div>
+            <select
+              class="form-select form-select-sm lm-search-mode"
+              id="batch-search-mode"
+              aria-label="一致方法"
+            ></select>
+          </div>
+          <p id="batch-no-match" class="lm-sub m-3" hidden>該当するまとめフローはありません。</p>
+          <p id="batch-empty" class="lm-sub m-3">
+            まとめフローはまだありません。「フローの管理」の［保存したフロー］でフローを選び、［まとめフローとして保存］を押すと登録できます。
+          </p>
+          <div id="batch-list" class="list-group list-group-flush lm-flows"></div>
+        </section>
+        <p class="lm-sub lm-aside">
+          <span class="lm-aside-mark" aria-hidden="true">ⓘ</span>
+          <span
+            >まとめフローの登録と削除は「<a href="../options/options.html" target="_blank"
+              >フローの管理</a
+            >」で行います。各フローは背景のタブで実行し、確定ボタンの手前で止まります。</span
+          >
         </p>
-        <div id="batch-list" class="list-group list-group-flush lm-flows"></div>
-        <div class="card-footer lm-sub">
-          まとめフローの登録と削除は「フローの管理」で行います。各フローは背景のタブで実行し、確定ボタンの手前で止まります。
-        </div>
-      </section>
+      </div>
     </main>
 
     <div id="toast" class="lm-toast-region" role="status" aria-live="polite"></div>
