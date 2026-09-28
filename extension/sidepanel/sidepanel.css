@@ -270,3 +270,10 @@ body {
   height: 2lh;
   -webkit-line-clamp: 2;
 }
+
+/* 値の入力フォームを開いている間は、一覧の行の操作と［記録開始］を隠します（#112）。
+   押すボタンをフォームの中の［この値で実行］に絞るためです。 */
+.lm-form-open .lm-flow-actions,
+.lm-form-open #start {
+  display: none;
+}

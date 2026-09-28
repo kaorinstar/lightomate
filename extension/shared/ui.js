@@ -152,12 +152,14 @@ export function showFieldError(control, feedback, text) {
 /**
  * 確認を、操作した区画の中に表示します。ブラウザ標準の confirm() は使いません。
  * 画面の中央に出る確認は、どの操作の確認かが画面上の位置から読み取れないためです。
+ * 確認を表示している間は、hide に渡した要素（確認を開いたボタンの並びなど）を隠し、確定と［キャンセル］の
+ * どちらで閉じても元の表示に戻します（#112）。押すボタンを確認の中のボタンに絞るためです。
  * @param {HTMLElement} container 確認を表示する要素。表示中は中身を置き換えます
- * @param {{ message: string, confirmLabel: string, danger?: boolean }} options
+ * @param {{ message: string, confirmLabel: string, danger?: boolean, hide?: HTMLElement[] }} options
  *   danger は、元に戻せない操作（削除など）のときに true にします
  * @returns {Promise<boolean>} 確定のボタンを押した場合は true
  */
-export function confirmInline(container, { message, confirmLabel, danger = false }) {
+export function confirmInline(container, { message, confirmLabel, danger = false, hide = [] }) {
   const document = container.ownerDocument;
   return new Promise((resolve) => {
     const text = document.createElement('p');
@@ -175,10 +177,15 @@ export function confirmInline(container, { message, confirmLabel, danger = false
     buttons.className = 'lm-buttons';
     buttons.append(ok, cancel);
 
+    // 確認の前から隠れていた要素は、閉じた後も隠れたままにします。
+    const restore = hide.filter((element) => !element.hidden);
     /** @param {boolean} answer */
     const finish = (answer) => {
       container.replaceChildren();
       container.hidden = true;
+      for (const element of restore) {
+        element.hidden = false;
+      }
       resolve(answer);
     };
     ok.addEventListener('click', () => finish(true));
@@ -190,6 +197,9 @@ export function confirmInline(container, { message, confirmLabel, danger = false
     container.setAttribute('role', 'alertdialog');
     container.replaceChildren(text, buttons);
     container.hidden = false;
+    for (const element of restore) {
+      element.hidden = true;
+    }
     cancel.focus();
   });
 }

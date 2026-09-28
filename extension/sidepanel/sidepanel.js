@@ -112,6 +112,9 @@ const elements = {
   steps: byId('steps'),
   stop: /** @type {HTMLButtonElement} */ (byId('stop')),
   recordingDiscard: /** @type {HTMLButtonElement} */ (byId('recording-discard')),
+  recordingButtons: byId('recording-buttons'),
+  resultButtons: byId('result-buttons'),
+  main: byId('main'),
   recordingConfirm: byId('recording-confirm'),
   recordingDiscardNotice: byId('recording-discard-notice'),
   resultSection: byId('result-section'),
@@ -344,6 +347,7 @@ elements.discard.addEventListener('click', async () => {
     message: '記録した手順を破棄します。元に戻せません。',
     confirmLabel: '破棄する',
     danger: true,
+    hide: [elements.resultButtons],
   });
   if (!confirmed) {
     return;
@@ -357,6 +361,7 @@ elements.recordingDiscard.addEventListener('click', async () => {
     message: '記録を停止し、記録した手順を破棄します。元に戻せません。',
     confirmLabel: '破棄する',
     danger: true,
+    hide: [elements.recordingButtons, elements.stop],
   });
   if (!confirmed) {
     return;
@@ -502,6 +507,8 @@ function showForm(stored, mode) {
   elements.formFields.replaceChildren(...fields);
   showNotice(elements.formNotice, '');
   elements.formSection.hidden = false;
+  // 入力フォームを開いている間は、一覧の［実行］などを隠します。押すボタンをフォームの中に絞るためです（#112）。
+  elements.main.classList.add('lm-form-open');
   elements.formSection.scrollIntoView({ block: 'start' });
   const first = elements.formFields.querySelector('input, select');
   if (first instanceof HTMLElement) {
@@ -554,6 +561,7 @@ async function startRun(flowId, params, secrets) {
 
 function hideForm() {
   elements.formSection.hidden = true;
+  elements.main.classList.remove('lm-form-open');
   formParams = [];
   formBatch = null;
   // 入力したパスワードなどを画面に残さないよう、入力欄ごと消します。
@@ -1085,8 +1093,10 @@ function flowItem(stored) {
   more.title = 'その他の操作';
   more.setAttribute('aria-label', `「${stored.flow.name}」のその他の操作`);
   more.setAttribute('aria-expanded', String(menuOpen));
+  // 並びは、主な操作（［実行］）、そのほかの操作（［開く］）、「…」の順です（#112）。
   const actions = document.createElement('div');
   actions.className = 'lm-flow-actions';
+  actions.append(run);
   if (allScope) {
     // Web ページ以外を表示しているときは、対象のサイトを開く手段として［開く］を置きます（#44）。
     // 幅が狭いため、ボタンの文字は短くし、読み上げと説明には「最初のページを開く」を使います。
@@ -1098,7 +1108,7 @@ function flowItem(stored) {
     open.disabled = item.dataset.noFirstPage === 'true';
     actions.append(open);
   }
-  actions.append(run, more);
+  actions.append(more);
   main.append(actions);
 
   const reason = document.createElement('p');
@@ -1460,6 +1470,8 @@ function showBatchForm(batch, flows) {
   elements.formFields.replaceChildren(...groups.map(({ element }) => element));
   showNotice(elements.formNotice, '');
   elements.formSection.hidden = false;
+  // 入力フォームを開いている間は、一覧の［実行］などを隠します。押すボタンをフォームの中に絞るためです（#112）。
+  elements.main.classList.add('lm-form-open');
   elements.formSection.scrollIntoView({ block: 'start' });
   const first = elements.formFields.querySelector('input, select');
   if (first instanceof HTMLElement) {
