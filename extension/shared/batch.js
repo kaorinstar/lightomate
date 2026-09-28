@@ -383,29 +383,45 @@ export function needsAttention(item) {
 }
 
 /**
- * 一括実行全体の進み具合です。終わったフロー（待機中と実行中以外）の数と、状態ごとの件数の文を返します。
- * 例：「3 件中 2 件が終了：完了 1・未実行 1・実行中 1」
+ * 一括実行全体の進み具合です。終わったフロー（待機中と実行中以外）の数を返します。
+ * 状態ごとの内訳は各行の印で示すため、文には含めません（#7）。例：「3 件中 2 件が終了」
  * @param {BatchItem[]} items
- * @param {{ runId: string, status: string }[]} runs 実行の状態の一覧
  * @returns {{ ended: number, total: number, text: string }}
  */
-export function batchSummary(items, runs) {
+export function batchSummary(items) {
   const ended = items.filter((item) => !UNFINISHED.includes(item.status)).length;
-  /** @type {Map<string, number>} */
-  const counts = new Map();
-  for (const item of items) {
-    const label = batchItemLabel(
-      item,
-      runs.find((run) => run.runId === item.runId),
+  return { ended, total: items.length, text: `${items.length} 件中 ${ended} 件が終了` };
+}
+
+/**
+ * 一括実行全体の状態の印です。カードの 1 行目で、個別の実行の印と同じ位置に出します（#7）。
+ * - 終わっていない場合：人の操作を待っているフロー（一時停止中、次のフローを待っている確定の手前）があれば
+ *   「操作待ち」、なければ「実行中」
+ * - 終わった場合：すべて完了なら「完了」、失敗があれば「失敗あり」、それ以外は「終了」
+ * @param {BatchItem[]} items
+ * @param {{ runId: string, status: string }[]} runs 実行の状態の一覧
+ * @returns {{ label: string, tone: 'success' | 'primary' | 'warning' | 'danger' | 'muted' }}
+ */
+export function batchOverall(items, runs) {
+  if (!isBatchFinished(items)) {
+    const waiting = items.some(
+      (item, index) =>
+        (item.status === 'held' && hasWaitingFollower(items, index)) ||
+        (batchItemTone(
+          item,
+          runs.find((run) => run.runId === item.runId),
+        ) === 'warning' &&
+          item.status === 'running'),
     );
-    counts.set(label, (counts.get(label) ?? 0) + 1);
+    return waiting ? { label: '操作待ち', tone: 'warning' } : { label: '実行中', tone: 'primary' };
   }
-  const parts = [...counts].map(([label, count]) => `${label} ${count}`);
-  return {
-    ended,
-    total: items.length,
-    text: `${items.length} 件中 ${ended} 件が終了：${parts.join('・')}`,
-  };
+  if (items.every((item) => item.status === 'done')) {
+    return { label: '完了', tone: 'success' };
+  }
+  if (items.some((item) => item.status === 'failed')) {
+    return { label: '失敗あり', tone: 'danger' };
+  }
+  return { label: '終了', tone: 'muted' };
 }
 
 /**

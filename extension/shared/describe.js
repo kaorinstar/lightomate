@@ -87,6 +87,87 @@ export function runStatusText(run, step) {
 }
 
 /**
+ * 実行の状態の短い名前です。サイドパネルの実行のカードで、状態の印に使います（#7）。
+ * @param {string} status 実行の状態（RunState の status）
+ * @returns {string}
+ */
+export function runStatusLabel(status) {
+  switch (status) {
+    case 'running':
+      return '実行中';
+    case 'pausing':
+    case 'paused':
+      return '一時停止中';
+    case 'stopping':
+      return '停止中';
+    case 'done':
+      return '完了';
+    case 'stopped':
+      return '中止';
+    case 'halted':
+      return '確定の手前で停止';
+    default:
+      return '失敗';
+  }
+}
+
+/**
+ * 実行の状態の印の色の種類です。操作が必要な状態（一時停止中・確定の手前・失敗）を目立たせます（#7）。
+ * @param {string} status 実行の状態（RunState の status）
+ * @returns {'success' | 'primary' | 'warning' | 'danger' | 'muted'}
+ */
+export function runStatusTone(status) {
+  switch (status) {
+    case 'running':
+      return 'primary';
+    case 'pausing':
+    case 'paused':
+    case 'halted':
+      return 'warning';
+    case 'done':
+      return 'success';
+    case 'failed':
+      return 'danger';
+    default:
+      return 'muted';
+  }
+}
+
+/**
+ * 実行の進み具合と止まった理由の文です。フロー名は、カードの 1 行目に出すため含めません（#7）。
+ * 完了した場合は、状態の印だけで足りるため、空の文字列を返します。
+ * @param {{ flowName: string, status: string, stepIndex: number, total: number, items?: number[],
+ *   page?: number, loops?: ('item' | 'round')[], error?: string, note?: string }} run
+ * @param {Step | undefined} step stepIndex の手順
+ * @returns {string}
+ */
+export function runDetailText(run, step) {
+  const item = itemText(run.items, run.page, run.loops);
+  const number = `手順 ${run.stepIndex + 1} / ${run.total}${item ? `（${item}）` : ''}`;
+  const where = `${number}${step ? `：${describeStep(step)}` : ''}`;
+  switch (run.status) {
+    case 'running':
+    case 'stopping':
+      return where;
+    case 'pausing':
+      return `${where}。この手順が終わった時点で一時停止します。`;
+    case 'paused': {
+      const next = step ? `（次の手順：${describeStep(step)}）` : '';
+      return `${number} の前で一時停止しています${next}。${run.note ?? ''}続ける場合は［再開］を押してください。`;
+    }
+    case 'done':
+      return '';
+    case 'stopped':
+      return `完了した手順は ${run.total} 件中 ${run.stepIndex} 件です。`;
+    case 'halted':
+      // 止まった理由（error）に手順の説明が含まれるため、手順の番号だけを示します。
+      return `${number} で止まりました。${run.error ?? ''}`;
+    default:
+      return `${where} で止まりました。${run.error ?? ''}`;
+  }
+}
+
+/**
  * 手順の種類の短い名前です。管理画面の手順の一覧で、説明の前に表示します。
  * @param {Step} step
  * @returns {string}

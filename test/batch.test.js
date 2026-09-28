@@ -11,6 +11,7 @@ import {
   batchConflicts,
   batchItemLabel,
   batchItemTone,
+  batchOverall,
   batchProblems,
   batchSummary,
   expireHeld,
@@ -213,17 +214,34 @@ test('フロー 1 件の状態の表示', () => {
   assert.equal(batchItemLabel(item('a', A, 'skipped'), undefined), '未実行');
 });
 
-test('一括実行全体の進み具合の文', () => {
+test('一括実行全体の進み具合の文と、全体の状態の印', () => {
   const items = [
     { ...item('a1', A, 'done') },
     { ...item('b1', B, 'running'), runId: 'r1' },
     item('a2', A),
     item('c1', C, 'skipped'),
   ];
-  const summary = batchSummary(items, [{ runId: 'r1', status: 'paused' }]);
+  const summary = batchSummary(items);
   assert.equal(summary.ended, 2);
   assert.equal(summary.total, 4);
-  assert.equal(summary.text, '4 件中 2 件が終了：完了 1・一時停止中 1・待機中 1・未実行 1');
+  assert.equal(summary.text, '4 件中 2 件が終了');
+
+  assert.deepEqual(batchOverall(items, [{ runId: 'r1', status: 'running' }]), {
+    label: '実行中',
+    tone: 'primary',
+  });
+  // 一時停止中のフローがあれば、操作待ちです。
+  assert.equal(batchOverall(items, [{ runId: 'r1', status: 'paused' }]).label, '操作待ち');
+  // 次のフローを待っている、確定の手前のフローがあれば、操作待ちです。
+  const held = [item('a1', A, 'held'), item('a2', A)];
+  assert.equal(batchOverall(held, []).label, '操作待ち');
+
+  assert.equal(batchOverall([item('a', A, 'done'), item('b', B, 'done')], []).label, '完了');
+  assert.deepEqual(batchOverall([item('a', A, 'done'), item('b', B, 'failed')], []), {
+    label: '失敗あり',
+    tone: 'danger',
+  });
+  assert.equal(batchOverall([item('a', A, 'done'), item('b', B, 'skipped')], []).label, '終了');
 });
 
 test('操作が必要な行（実行中・確定の手前・失敗）だけに、ボタンと進み具合の文を出す', () => {

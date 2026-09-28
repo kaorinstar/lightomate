@@ -804,7 +804,7 @@ async function renderBatches() {
 }
 
 /**
- * まとめフローの一覧の 1 行です。名前、実行する順のフロー、［実行］［開く］［削除］を並べます。
+ * まとめフローの一覧の 1 行です。名前、実行する順のフロー、［実行］［すべて開く］［削除］を並べます。
  * 削除されたフローを含む場合など、実行できない理由があれば、警告として表示し、［実行］を押せなくします。
  * @param {StoredBatch} batch
  * @param {StoredFlow[]} flows 保存したすべてのフロー
@@ -846,9 +846,11 @@ function batchRow(batch, flows) {
   const open = document.createElement('button');
   open.type = 'button';
   open.className = 'btn btn-sm';
-  open.textContent = '開く';
-  open.title = '含めた各フローの最初のページを開く';
-  open.setAttribute('aria-label', `まとめフロー「${batch.name}」の各フローの最初のページを開く`);
+  open.textContent = 'すべて開く';
+  open.setAttribute(
+    'aria-label',
+    `まとめフロー「${batch.name}」の各フローの最初のページをすべて開く`,
+  );
   open.disabled = problems.length > 0;
   const remove = document.createElement('button');
   remove.type = 'button';
@@ -950,7 +952,7 @@ async function onBatchRunClick(batch, flows, { row, buttons, notice }) {
 }
 
 /**
- * まとめフローの［開く］です。含めた各フローの最初のページを新しいタブで開きます。手順は実行しません。
+ * まとめフローの［すべて開く］です。含めた各フローの最初のページを新しいタブで開きます。手順は実行しません。
  * 最初のページの URL が実行時の値を使うフローがあれば、行の中にその値の入力欄を開きます。
  * @param {StoredBatch} batch
  * @param {StoredFlow[]} flows 保存したすべてのフロー
@@ -1019,8 +1021,8 @@ async function openBatchPages(batch, contained, inputs, notice) {
 }
 
 /**
- * まとめフローの行の中に、フローごとの値の入力欄を開きます（［実行］と［開く］で使います）。
- * 入力欄を開いている間は、行の［実行］［開く］［削除］を隠します。押すボタンを入力欄の送信のボタンに絞るためです。
+ * まとめフローの行の中に、フローごとの値の入力欄を開きます（［実行］と［すべて開く］で使います）。
+ * 入力欄を開いている間は、行の［実行］［すべて開く］［削除］を隠します。押すボタンを入力欄の送信のボタンに絞るためです。
  * @param {StoredBatch} batch
  * @param {{ row: HTMLElement, buttons: HTMLElement }} parts 行の要素
  * @param {{

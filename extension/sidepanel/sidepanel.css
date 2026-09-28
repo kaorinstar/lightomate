@@ -162,17 +162,6 @@ body {
   flex-basis: 100%;
 }
 
-/* 実行中の状態の文です。手順が進むたびに文の長さが変わっても、下のカードが動かないよう、
-   3 行分の高さに固定し、はみ出す分は省略します（#98）。 */
-.lm-run-progress {
-  display: -webkit-box;
-  height: 3lh;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
 /* まとめフローの一括実行の、フローごとの状態の一覧です（#7）。 */
 .lm-batch-items {
   display: flex;
@@ -196,11 +185,34 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* 一括実行全体の進み具合（件数の文と進行のバー）です。 */
-.lm-batch-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+/*
+ * 実行のカード（個別の実行とまとめフロー、#7）の 1 行目です。名前、状態の印、右端の操作を並べます。
+ * 2 行目以降の文は、フロー名を含めず、3 行までに省略します。
+ */
+.lm-head-line {
+  min-height: 1.75rem;
+}
+
+.lm-run-detail {
+  display: -webkit-box;
+  margin: 0.25rem 0 0;
+  overflow: hidden;
+  color: var(--tblr-secondary);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.lm-run-detail.lm-text-danger {
+  color: color-mix(in oklab, var(--tblr-danger) 85%, black);
+}
+
+[data-bs-theme='dark'] .lm-run-detail.lm-text-danger {
+  color: color-mix(in oklab, var(--tblr-danger) 55%, white);
+}
+
+.lm-batch-bar {
   margin: 0.5rem 0 0.75rem;
 }
 
@@ -249,4 +261,11 @@ body {
 
 .lm-status-danger {
   --lm-status-color: var(--tblr-danger);
+}
+
+/* 実行中の状態の文です。手順が進むたびに文の長さが変わっても、下のカードが動かないよう、
+   高さを固定し、はみ出す分は省略します（#98）。フロー名を含めない短い文にしたため、2 行分にします（#7）。 */
+.lm-run-progress {
+  height: 2lh;
+  -webkit-line-clamp: 2;
 }

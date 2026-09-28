@@ -27,8 +27,10 @@
     <main class="lm-stack">
       <section id="run-section" class="lm-stack" aria-labelledby="run-heading" hidden>
         <h2 id="run-heading" class="visually-hidden">実行の状態</h2>
-        <!-- まとめフローの一括実行（#7）の状態です。含まれる実行の進み具合と操作も、このカードに表示します。 -->
-        <div id="batch-runs" class="lm-stack"></div>
+        <!--
+          個別の実行と、まとめフローの一括実行（#7）のカードです。区別なく、始めた日時の新しい順に上から並べます。
+          まとめフローに含まれる実行は、まとめフローのカードの中に表示します。
+        -->
         <div id="runs" class="lm-stack"></div>
       </section>
 

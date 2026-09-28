@@ -18,6 +18,7 @@ import {
   BATCH_RUN_KEY_PREFIX,
   batchItemLabel,
   batchItemTone,
+  batchOverall,
   batchProblems,
   batchRunsFrom,
   batchSummary,
@@ -25,7 +26,13 @@ import {
   isBatchFinished,
   needsAttention,
 } from '../shared/batch.js';
-import { describeStep, formatDateTime, runStatusText } from '../shared/describe.js';
+import {
+  describeStep,
+  formatDateTime,
+  runDetailText,
+  runStatusLabel,
+  runStatusTone,
+} from '../shared/describe.js';
 import { flattenSteps, stepAt } from '../shared/control-flow.js';
 import { flowOrigins, orderFlow } from '../shared/flow.js';
 import {
@@ -71,7 +78,6 @@ const elements = {
   pageOrigin: byId('page-origin'),
   runSection: byId('run-section'),
   runs: byId('runs'),
-  batchRuns: byId('batch-runs'),
   batchEmpty: byId('batch-empty'),
   tabFlows: byId('tab-flows'),
   batchList: byId('batch-list'),
@@ -652,13 +658,7 @@ async function render() {
     elements.flowName.value = lastFlow.name;
   }
 
-  // 一括実行（#7）に含まれる実行は、一括実行のカードの中に表示します。
-  const batchRunIds = new Set(
-    batchRuns.flatMap((batchRun) => batchRun.items.flatMap((item) => item.runId ?? [])),
-  );
-  await renderRuns(runs.filter((run) => !batchRunIds.has(run.runId)));
-  await renderBatchRuns(batchRuns, runs);
-  elements.runSection.hidden = runs.length === 0 && batchRuns.length === 0;
+  await renderActivity(runs, batchRuns);
 
   // 記録中は、まとめフローも実行できないようにします（#7）。
   for (const item of elements.batchList.querySelectorAll('button[data-batch-run]')) {
@@ -724,94 +724,191 @@ function stepItems(steps, locked, errorNotice) {
 }
 
 /**
- * 実行の状態を、実行ごとに 1 枚ずつ表示します。止まった理由は、その実行の区画の中に表示します。
+ * 進行中の作業のうち、実行のカード（個別の実行と、まとめフローの一括実行、#7）を表示します。
+ * 個別とまとめフローの区別なく、始めた日時の新しい順に上から並べます。新しく始めた実行は一番上に入ります。
+ * まとめフローに含まれる実行は、個別のカードにはせず、まとめフローのカードの中に表示します。
  * @param {RunState[]} runs
+ * @param {BatchRun[]} batchRuns
  */
-async function renderRuns(runs) {
-  const cards = await Promise.all(
-    runs.map(async (run) => {
-      const stored = await getFlow(run.flowId);
-      const card = document.createElement('div');
-      card.className = 'card';
-      const body = document.createElement('div');
-      body.className = 'card-body';
-      card.append(body);
-
-      // 完了した実行は、操作が要らないため 1 行に畳みます（#7）。文の全体は、マウスを重ねると表示します。
-      if (run.status === 'done') {
-        const row = document.createElement('div');
-        row.className = 'lm-row';
-        const name = document.createElement('span');
-        name.className = 'lm-row-text';
-        name.textContent = `「${run.flowName}」`;
-        name.title = runStatusText(run, undefined);
-        row.append(
-          statusMark('完了', 'success'),
-          name,
-          button('閉じる', 'btn btn-sm ms-auto', () => {
-            chrome.storage.session.remove(RUN_KEY_PREFIX + run.runId).catch(console.error);
-          }),
-        );
-        body.append(row);
-        return card;
-      }
-
-      const status = document.createElement('p');
-      // stepIndex は、if と forEach の内側を展開した通し番号です（#6）。
-      const text = runStatusText(run, stored && stepAt(stored.flow.steps, run.stepIndex));
-      if (run.status === 'failed') {
-        card.classList.add('lm-card-failed');
-        showNotice(status, text, 'error');
-      } else if (run.status === 'halted' || run.status === 'paused') {
-        showNotice(status, text, 'warning');
-      } else {
-        // 実行中の文は手順ごとに長さが変わるため、高さを固定し、はみ出す分は省略します（#98）。
-        // 省略した部分は、マウスを重ねると表示します。
-        status.className = 'm-0 lm-run-progress';
-        status.setAttribute('role', 'status');
-        status.textContent = text;
-        status.title = text;
-      }
-
-      // ボタンは状態の文より上に置きます。文の行数が変わっても、ボタンの位置が動かないようにするためです（#98）。
-      const buttons = document.createElement('div');
-      buttons.className = 'lm-buttons mb-3';
-      if (isActiveRun(run)) {
-        // 一時停止中は［再開］、それ以外は［一時停止］を置きます（#37）。
-        const paused = run.status === 'paused';
-        const toggle = button(paused ? '再開' : '一時停止', 'btn btn-sm', () => {
-          chrome.runtime
-            .sendMessage({ kind: paused ? 'runner/resume' : 'runner/pause', runId: run.runId })
-            .then((response) => {
-              if (!response?.ok) {
-                showNotice(status, response?.error ?? '再開できませんでした。', 'error');
-              }
-            })
-            .catch((error) => showNotice(status, String(error), 'error'));
-        });
-        toggle.disabled = run.status !== 'running' && !paused;
-        const stop = button('実行停止', 'btn btn-sm btn-danger', () => {
-          chrome.runtime
-            .sendMessage({ kind: 'runner/stop', runId: run.runId })
-            .catch(console.error);
-        });
-        stop.disabled = run.status === 'stopping';
-        buttons.append(toggle, stop);
-      } else {
-        buttons.append(
-          button('閉じる', 'btn btn-sm', () => {
-            chrome.storage.session.remove(RUN_KEY_PREFIX + run.runId).catch(console.error);
-          }),
-        );
-        if (run.status === 'failed' && stored) {
-          buttons.append(editLink(stored, 'フローを編集'));
-        }
-      }
-      body.append(buttons, status);
-      return card;
-    }),
+async function renderActivity(runs, batchRuns) {
+  const inBatch = new Set(
+    batchRuns.flatMap((batchRun) => batchRun.items.flatMap((item) => item.runId ?? [])),
   );
+  const entries = [
+    ...runs
+      .filter((run) => !inBatch.has(run.runId))
+      .map((run) => ({ startedAt: run.startedAt, build: () => runCard(run) })),
+    ...batchRuns.map((batchRun) => ({
+      startedAt: batchRun.startedAt,
+      build: () => batchRunCard(batchRun, runs),
+    })),
+  ].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const cards = await Promise.all(entries.map((entry) => entry.build()));
   elements.runs.replaceChildren(...cards);
+  elements.runSection.hidden = cards.length === 0;
+}
+
+/**
+ * 個別の実行のカードです。まとめフローのカードと同じ形にします。
+ * 1 行目にフロー名、状態の印、右端に［実行停止］（実行中）か［閉じる］（終了後）。
+ * その下に操作のボタン、進み具合（止まった理由）の文の順です。完了した場合は 1 行目だけです。
+ * @param {RunState} run
+ * @returns {Promise<HTMLDivElement>}
+ */
+async function runCard(run) {
+  const stored = await getFlow(run.flowId);
+  const { card, body } = activityCard();
+  if (run.status === 'failed') {
+    card.classList.add('lm-card-failed');
+  }
+  const notice = document.createElement('p');
+  notice.hidden = true;
+  /** @param {string} text */
+  const showError = (text) => showNotice(notice, text, 'error');
+
+  const end = isActiveRun(run)
+    ? button('実行停止', 'btn btn-sm btn-danger', () => {
+        chrome.runtime.sendMessage({ kind: 'runner/stop', runId: run.runId }).catch(console.error);
+      })
+    : button('閉じる', 'btn btn-sm', () => {
+        chrome.storage.session.remove(RUN_KEY_PREFIX + run.runId).catch(console.error);
+      });
+  end.disabled = run.status === 'stopping';
+  body.append(
+    headLine(
+      run.flowName,
+      'lm-flow-name',
+      statusMark(runStatusLabel(run.status), runStatusTone(run.status)),
+      end,
+    ),
+  );
+
+  const actions = runActions(run, run.flowName, showError);
+  if (run.status === 'failed' && stored) {
+    actions.append(editLink(stored, 'フローを編集'));
+  }
+  if (actions.childElementCount > 0) {
+    body.append(actions);
+  }
+  const detail = detailLine(run, stored);
+  if (detail) {
+    body.append(detail);
+  }
+  body.append(notice);
+  return card;
+}
+
+/**
+ * 実行中のフローの［一時停止］または［再開］と、［タブを開く］です。個別の実行とまとめフローの行で使います。
+ * @param {RunState} run
+ * @param {string} flowName
+ * @param {(text: string) => void} showError 操作できなかったときに知らせを出す処理
+ * @returns {HTMLDivElement}
+ */
+function runActions(run, flowName, showError) {
+  const actions = document.createElement('div');
+  actions.className = 'lm-buttons mt-2';
+  if (isActiveRun(run)) {
+    // 一時停止中は［再開］、それ以外は［一時停止］を置きます（#37）。
+    const paused = run.status === 'paused';
+    const toggle = button(paused ? '再開' : '一時停止', 'btn btn-sm', () => {
+      clearNotices();
+      chrome.runtime
+        .sendMessage({ kind: paused ? 'runner/resume' : 'runner/pause', runId: run.runId })
+        .then((response) => {
+          if (!response?.ok) {
+            showError(response?.error ?? '再開できませんでした。');
+          }
+        })
+        .catch((error) => showError(String(error)));
+    });
+    toggle.disabled = run.status !== 'running' && !paused;
+    actions.append(toggle);
+  }
+  if (isActiveRun(run) || run.status === 'halted') {
+    actions.append(
+      button('タブを開く', 'btn btn-sm', () => {
+        focusTab(run.tabId).catch(() => showError(`「${flowName}」のタブは閉じられています。`));
+      }),
+    );
+  }
+  return actions;
+}
+
+/**
+ * 進み具合と止まった理由の 1 行です。フロー名は 1 行目にあるため含めません。
+ * 長い場合は 3 行までに省略し、マウスを重ねると全体を表示します。完了した場合は作りません。
+ * @param {RunState} run
+ * @param {StoredFlow | undefined} stored
+ * @returns {HTMLParagraphElement | null}
+ */
+function detailLine(run, stored) {
+  // stepIndex は、if と forEach の内側を展開した通し番号です（#6）。
+  const text = runDetailText(run, stored && stepAt(stored.flow.steps, run.stepIndex));
+  if (!text) {
+    return null;
+  }
+  const detail = document.createElement('p');
+  detail.className = 'lm-run-detail';
+  if (run.status === 'failed') {
+    detail.classList.add('lm-text-danger');
+  }
+  if (isActiveRun(run) && run.status !== 'paused') {
+    // 実行中の文は手順ごとに長さが変わるため、高さを固定し、下のカードが動かないようにします（#98）。
+    detail.classList.add('lm-run-progress');
+    detail.setAttribute('role', 'status');
+  }
+  detail.textContent = text;
+  detail.title = text;
+  return detail;
+}
+
+/**
+ * 実行のカードの枠です。
+ * @returns {{ card: HTMLDivElement, body: HTMLDivElement }}
+ */
+function activityCard() {
+  const card = document.createElement('div');
+  card.className = 'card';
+  const body = document.createElement('div');
+  body.className = 'card-body';
+  card.append(body);
+  return { card, body };
+}
+
+/**
+ * カードと行の 1 行目です。名前、状態の印、右端の操作の順に並べます。個別の実行とまとめフローで同じ形にします。
+ * @param {string} name
+ * @param {string} nameClass 名前の文字の段階（lm-flow-name など）
+ * @param {HTMLElement} mark 状態の印
+ * @param {HTMLButtonElement | null} action 右端の操作
+ * @returns {HTMLDivElement}
+ */
+function headLine(name, nameClass, mark, action) {
+  const line = document.createElement('div');
+  line.className = 'lm-row lm-head-line';
+  const text = document.createElement('span');
+  text.className = `${nameClass} lm-row-text`;
+  text.textContent = name;
+  line.append(text, mark);
+  if (action) {
+    action.classList.add('ms-auto');
+    line.append(action);
+  }
+  return line;
+}
+
+/**
+ * 状態の印です。色だけで伝えないよう、状態は文字で示します。
+ * @param {string} text
+ * @param {'success' | 'primary' | 'warning' | 'danger' | 'muted'} tone
+ * @returns {HTMLSpanElement}
+ */
+function statusMark(text, tone) {
+  const mark = document.createElement('span');
+  mark.className = `lm-status lm-status-${tone}`;
+  mark.textContent = text;
+  return mark;
 }
 
 /**
@@ -1349,40 +1446,22 @@ async function startBatch(batchId, inputs) {
 }
 
 /**
- * 一括実行の状態を、一括実行ごとに 1 枚ずつ表示します。フローごとに、状態、進み具合、操作を並べます。
- * 一括実行に含まれる実行は、個別の実行のカードには表示せず、このカードの中に表示します。
- * @param {BatchRun[]} batchRuns
- * @param {RunState[]} runs
- */
-async function renderBatchRuns(batchRuns, runs) {
-  const cards = await Promise.all(batchRuns.map((batchRun) => batchRunCard(batchRun, runs)));
-  elements.batchRuns.replaceChildren(...cards);
-}
-
-/**
- * 一括実行のカードです。見出しの下に全体の進み具合（件数の文と進行のバー）を置き、その下にフローごとの行を並べます。
- * 終わった一括実行は、見出しと進み具合の 1 行に畳み、フローごとの行は［詳細］の中に入れます（#7）。
+ * まとめフローの一括実行のカードです。個別の実行のカードと同じ形にします。
+ * 1 行目にまとめフローの名前、全体の状態の印、右端に［すべて中止］（実行中）か［閉じる］（終了後）。
+ * その下に「まとめフロー・3 件中 1 件が終了」と進行のバー、フローごとの行の順です。
+ * 終わった後は、フローごとの行を［各フローの結果］（details）の中に畳みます。自動では消しません。
  * @param {BatchRun} batchRun
  * @param {RunState[]} runs
  * @returns {Promise<HTMLDivElement>}
  */
 async function batchRunCard(batchRun, runs) {
-  const card = document.createElement('div');
-  card.className = 'card';
-  const body = document.createElement('div');
-  body.className = 'card-body';
-  card.append(body);
-
+  const { card, body } = activityCard();
   const finished = isBatchFinished(batchRun.items);
-  const summary = batchSummary(batchRun.items, runs);
+  const overall = batchOverall(batchRun.items, runs);
+  const summary = batchSummary(batchRun.items);
 
-  const header = document.createElement('div');
-  header.className = 'lm-row';
-  const title = document.createElement('h3');
-  title.className = 'card-title m-0 lm-row-text';
-  title.textContent = `まとめフロー「${batchRun.name}」`;
-  const action = finished
-    ? button('閉じる', 'btn btn-sm ms-auto', () => {
+  const end = finished
+    ? button('閉じる', 'btn btn-sm', () => {
         // 含まれる実行の状態も消します。個別の実行のカードとして残らないようにするためです。
         chrome.storage.session
           .remove([
@@ -1392,20 +1471,20 @@ async function batchRunCard(batchRun, runs) {
           .catch(console.error);
         expandedBatchRuns.delete(batchRun.batchRunId);
       })
-    : button('すべて中止', 'btn btn-sm btn-danger ms-auto', () => {
+    : button('すべて中止', 'btn btn-sm btn-danger', () => {
         abortAll(batchRun).catch((error) =>
           setBatchRunNotice(batchRun.batchRunId, String(error), 'error'),
         );
       });
-  header.append(title, action);
+  body.append(
+    headLine(batchRun.name, 'lm-flow-name', statusMark(overall.label, overall.tone), end),
+  );
 
-  const progress = document.createElement('div');
-  progress.className = 'lm-batch-progress';
   const text = document.createElement('p');
-  text.className = 'lm-sub m-0';
-  text.textContent = summary.text;
+  text.className = 'lm-run-detail';
+  text.textContent = `まとめフロー・${summary.text}`;
   const bar = document.createElement('div');
-  bar.className = 'progress progress-sm';
+  bar.className = 'progress progress-sm lm-batch-bar';
   const fill = document.createElement('div');
   fill.className = 'progress-bar';
   fill.style.width = `${Math.round((summary.ended / summary.total) * 100)}%`;
@@ -1415,8 +1494,7 @@ async function batchRunCard(batchRun, runs) {
   fill.setAttribute('aria-valuenow', String(summary.ended));
   fill.setAttribute('aria-label', '終了したフローの数');
   bar.append(fill);
-  progress.append(text, bar);
-  body.append(header, progress);
+  body.append(text, bar);
 
   const notice = batchRunNotices.get(batchRun.batchRunId);
   if (notice) {
@@ -1427,17 +1505,18 @@ async function batchRunCard(batchRun, runs) {
 
   const list = document.createElement('ol');
   list.className = 'lm-batch-items';
-  const rows = await Promise.all(
-    batchRun.items.map((item, index) => batchItemRow(batchRun, item, index, runs)),
+  list.append(
+    ...(await Promise.all(
+      batchRun.items.map((item, index) => batchItemRow(batchRun, item, index, runs)),
+    )),
   );
-  list.append(...rows);
   if (finished) {
     const details = document.createElement('details');
     details.className = 'lm-batch-details';
     details.open = expandedBatchRuns.has(batchRun.batchRunId);
     const toggle = document.createElement('summary');
     toggle.className = 'lm-sub';
-    toggle.textContent = '詳細';
+    toggle.textContent = '各フローの結果';
     details.append(toggle, list);
     details.addEventListener('toggle', () => {
       if (details.open) {
@@ -1454,9 +1533,10 @@ async function batchRunCard(batchRun, runs) {
 }
 
 /**
- * 一括実行の中のフロー 1 件の行です。フロー名と状態の印を 1 行に並べ、サイトはマウスを重ねると表示します。
+ * まとめフローの中のフロー 1 件の行です。1 行目は個別の実行のカードと同じく、フロー名、状態の印、右端の操作です。
+ * まだ始めていないフローの［中止］は、1 行に収まるよう、右端の「×」にします。
  * 操作が必要な行（実行中・確定の手前・失敗）だけ、その下に操作のボタンと、進み具合（止まった理由）の文を出します。
- * まだ始めていないフローの［中止］は、1 行に収まるよう、行の右端の「×」にします。
+ * サイトと、始めなかった理由は、フロー名にマウスを重ねると表示します。
  * @param {BatchRun} batchRun
  * @param {import('../shared/batch.js').BatchItem} item
  * @param {number} index
@@ -1466,71 +1546,43 @@ async function batchRunCard(batchRun, runs) {
 async function batchItemRow(batchRun, item, index, runs) {
   const run = runs.find((state) => state.runId === item.runId);
   const row = document.createElement('li');
-  const line = document.createElement('div');
-  line.className = 'lm-row';
-  const name = document.createElement('span');
-  name.className = 'lm-batch-item-name lm-row-text';
-  name.textContent = item.flowName;
-  // 始めなかった理由などは、マウスを重ねると表示します。
-  name.title = [item.origin, needsAttention(item) ? '' : (item.note ?? '')]
-    .filter(Boolean)
-    .join('\n');
-  line.append(name, statusMark(batchItemLabel(item, run), batchItemTone(item, run)));
+  /** @type {HTMLButtonElement | null} */
+  let end = null;
   if (item.status === 'waiting') {
-    const abort = button('×', 'btn btn-sm btn-ghost-secondary lm-step-remove ms-auto', () => {
+    end = button('×', 'btn btn-sm btn-ghost-secondary lm-step-remove', () => {
       sendBatchAction('batch/abort', batchRun.batchRunId, index);
     });
-    abort.title = '中止';
-    abort.setAttribute('aria-label', `「${item.flowName}」を中止`);
-    line.append(abort);
+    end.title = '中止';
+    end.setAttribute('aria-label', `「${item.flowName}」を中止`);
+  }
+  const line = headLine(
+    item.flowName,
+    'lm-batch-item-name',
+    statusMark(batchItemLabel(item, run), batchItemTone(item, run)),
+    end,
+  );
+  const name = line.querySelector('.lm-row-text');
+  if (name instanceof HTMLElement) {
+    name.title = [item.origin, needsAttention(item) ? '' : (item.note ?? '')]
+      .filter(Boolean)
+      .join('\n');
   }
   row.append(line);
   if (!needsAttention(item)) {
     return row;
   }
 
-  // 操作のボタンは、進み具合の文より上に置きます。文の行数が変わっても、ボタンの位置が動かないようにするためです（#98）。
-  const actions = document.createElement('div');
+  /** @param {string} text */
+  const showError = (text) =>
+    setBatchRunNotice(batchRun.batchRunId, `「${item.flowName}」：${text}`, 'error');
+  // 並びは、主な操作（［確認済み・次へ］）、そのほかの操作、元に戻せない操作（［中止］）の順です。
+  const actions = run ? runActions(run, item.flowName, showError) : document.createElement('div');
   actions.className = 'lm-buttons mt-1';
   const follower = hasWaitingFollower(batchRun.items, index);
   if (item.status === 'held' && follower) {
-    actions.append(
+    actions.prepend(
       button('確認済み・次へ', 'btn btn-sm btn-primary', () => {
         sendBatchAction('batch/acknowledge', batchRun.batchRunId, index);
-      }),
-    );
-  }
-  if (run && item.status === 'running') {
-    // 一時停止中は［再開］、それ以外は［一時停止］を置きます（#37）。
-    const paused = run.status === 'paused';
-    const toggle = button(paused ? '再開' : '一時停止', 'btn btn-sm', () => {
-      clearNotices();
-      chrome.runtime
-        .sendMessage({ kind: paused ? 'runner/resume' : 'runner/pause', runId: run.runId })
-        .then((response) => {
-          if (!response?.ok) {
-            setBatchRunNotice(
-              batchRun.batchRunId,
-              `「${item.flowName}」：${response?.error ?? '再開できませんでした。'}`,
-              'error',
-            );
-          }
-        })
-        .catch((error) => setBatchRunNotice(batchRun.batchRunId, String(error), 'error'));
-    });
-    toggle.disabled = run.status !== 'running' && !paused;
-    actions.append(toggle);
-  }
-  if (run && (item.status === 'running' || item.status === 'held')) {
-    actions.append(
-      button('タブを開く', 'btn btn-sm', () => {
-        focusTab(run.tabId).catch(() =>
-          setBatchRunNotice(
-            batchRun.batchRunId,
-            `「${item.flowName}」のタブは閉じられています。`,
-            'error',
-          ),
-        );
       }),
     );
   }
@@ -1545,41 +1597,19 @@ async function batchItemRow(batchRun, item, index, runs) {
     row.append(actions);
   }
 
-  // 進み具合と止まった理由です。実行を始められなかった場合は、その理由（note）を表示します。
   if (run) {
-    const stored = await getFlow(run.flowId);
-    const text = runStatusText(run, stored && stepAt(stored.flow.steps, run.stepIndex));
-    const status = document.createElement('p');
-    if (run.status === 'failed') {
-      showNotice(status, text, 'error');
-    } else if (run.status === 'halted' || run.status === 'paused') {
-      showNotice(status, text, 'warning');
-    } else {
-      status.className = 'lm-sub m-0 mt-1 lm-run-progress';
-      status.setAttribute('role', 'status');
-      status.textContent = text;
-      status.title = text;
+    const detail = detailLine(run, await getFlow(run.flowId));
+    if (detail) {
+      row.append(detail);
     }
-    row.append(status);
   } else if (item.note) {
-    const status = document.createElement('p');
-    showNotice(status, item.note, 'error');
-    row.append(status);
+    // 実行を始められなかった理由です。
+    const detail = document.createElement('p');
+    detail.className = 'lm-run-detail lm-text-danger';
+    detail.textContent = item.note;
+    row.append(detail);
   }
   return row;
-}
-
-/**
- * 状態の印です。色だけで伝えないよう、状態は文字で示します。
- * @param {string} text
- * @param {'success' | 'primary' | 'warning' | 'danger' | 'muted'} tone
- * @returns {HTMLSpanElement}
- */
-function statusMark(text, tone) {
-  const mark = document.createElement('span');
-  mark.className = `lm-status lm-status-${tone}`;
-  mark.textContent = text;
-  return mark;
 }
 
 /**
