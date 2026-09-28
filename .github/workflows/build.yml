@@ -1,4 +1,4 @@
-# 構文チェック、整形の確認、型検査、テストを実行します。
+# 構文チェック、整形の確認、型検査、テスト、自動の動作確認を実行します。
 #
 # ビルド工程はありません。拡張機能は extension/ をそのまま Chrome に読み込みます。
 # 検証は読み取り専用の権限で実行します。書き込み権限（issues: write）は、失敗を報告する
@@ -43,6 +43,14 @@ jobs:
 
       - name: main の確認処理のテスト
         run: sh .claude/hooks/check-main.test.sh
+
+      # 自動の動作確認（#21）です。拡張機能を読み込んだ Chromium で、記録と実行を確かめます。
+      # Chromium の版は、package.json で固定した Playwright の版に合わせて導入されます。
+      - name: Chromium の導入
+        run: npx playwright install --with-deps chromium
+
+      - name: 自動の動作確認（e2e）
+        run: npm run test:e2e
 
   report:
     needs: build

@@ -248,6 +248,10 @@ Service Worker へ送ります。条件を満たすかの判定にだけ使い�
   `test/vendor.test.js` で確かめ、手で書き換えたファイルや複写し忘れを CI で検出します。
 - ESLint、Prettier、TypeScript、型定義などのパッケージは、検査のためだけに使う開発用のもので、拡張機能には
   含まれません。
+- Playwright は、自動の動作確認（`e2e/`）でブラウザを操作するための開発用のパッケージで、拡張機能には
+  含まれません。版は `package.json` で固定します。自動の動作確認では、`extension/` を一時フォルダーへ複写し、
+  写しの `manifest.json` にだけテスト用のページ（`http://127.0.0.1/*`）を操作する許可を加えます。
+  リポジトリの `manifest.json` の権限は変えません。
 - npm のパッケージと、CI が使う GitHub Actions は、Dependabot が毎週確認し、新しい版があればプルリクエストを
   作成します（`.github/dependabot.yml`）。GitHub Actions はコミット SHA で固定しています。
 - デベロッパーモードで読み込んだ拡張機能は、自動では更新されません。利用者が新しい版を取得して再読み込み

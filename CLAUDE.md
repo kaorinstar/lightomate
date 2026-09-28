@@ -57,6 +57,30 @@ Prettier の対象はコードと設定ファイルだけです。Markdown と `
 
 警告は誤りとして扱います。警告が残っている間は、作業を完了としません。
 
+### 自動の動作確認（e2e）
+
+`e2e/` には、拡張機能を Chromium に読み込み、テスト用のページ（`e2e/pages/`）で記録と実行を確かめる
+自動テストがあります。ブラウザを起動するため、`npm test` と `npm run check` には含めず、次のコマンドで
+実行します。CI（`build.yml`）でも実行します。
+
+```
+npx playwright install chromium
+npm run test:e2e
+```
+
+Chromium がほかの場所にある環境では、環境変数 `LIGHTOMATE_CHROMIUM` でその場所を指定します。
+アシスタントの作業環境では、導入を行わずに次のコマンドで実行します。
+
+```
+LIGHTOMATE_CHROMIUM=/opt/pw-browsers/chromium npm run test:e2e
+```
+
+- テスト用のページは `http://127.0.0.1` で配信します。サイトの許可を求める確認画面は自動テストでは
+  押せないため、`extension/` を一時フォルダーへ複写し、写しの `manifest.json` にだけ許可を加えます。
+- 記録用のスクリプトは、利用者の操作（`isTrusted`）だけを記録します。Playwright の `selectOption` など、
+  スクリプトで起こした変化は記録されないため、キーボードやクリックで操作します。
+- 実際のサイトでの確認は、これまでどおりユーザーに依頼します（「動作確認」を参照）。
+
 ### 構成
 
 | 場所 | 役割 |
@@ -69,6 +93,7 @@ Prettier の対象はコードと設定ファイルだけです。Markdown と `
 | `extension/common/` | Service Worker と拡張機能の画面の両方で使う、`chrome.*` を使うモジュール：フローの保存など |
 | `extension/content/` | content script（ページ内で動くスクリプト）：操作の記録と実行 |
 | `test/` | 単体テスト |
+| `e2e/` | 自動の動作確認（Chromium に拡張機能を読み込むテスト）と、テスト用のページ（`e2e/pages/`） |
 | `scripts/` | 開発とリリース用のスクリプト（Node.js）。拡張機能には含めません |
 | `tools/` | 利用者に配るファイル。`lightomate-update.bat` はリリースに添付します |
 | `docs/flow-format.md` | フロー定義（JSON）の形式の説明。`extension/shared/flow.js` と同時に変更します |
@@ -234,7 +259,8 @@ https://github.com/kaorinstar/lightomate/issues
 ワークフローは次の 3 つです。
 
 - `.github/workflows/build.yml`：push（`main`）とプルリクエストで、`npm run check` と同じ検査と、
-  `.claude/hooks/check-main.test.sh` を実行します。権限は `contents: read` です。
+  `.claude/hooks/check-main.test.sh`、自動の動作確認（`npm run test:e2e`）を実行します。権限は
+  `contents: read` です。
 - `.github/workflows/release.yml`：リリースの公開時に動作します。タグ、`manifest.json` の `version`、
   `version.md` の節を確認し（`scripts/release-notes.js`）、検査を実行します。その後、リリースノートを
   記入し、`extension/` の中身だけをまとめた `lightomate-vX.Y.Z.zip` と `tools/lightomate-update.bat`
