@@ -7,8 +7,9 @@ Lightomate（ライトメイト）は、Web 上の操作を自動化する Chrom
 desktop より軽く動作します。Chrome ウェブストアでは公開せず、デベロッパーモードで読み込んで
 個人で使います。
 
-現在は開発の初期段階で、Chrome に読み込めますが、使える機能はまだありません。予定している機能と
-進捗は https://github.com/kaorinstar/lightomate/issues で管理しています。
+操作の記録と実行、実行時の値の入力、条件分岐と繰り返し、複数のフローの一括実行（まとめフロー）、
+ページの PDF 保存ができます。予定している機能と進捗は https://github.com/kaorinstar/lightomate/issues で
+管理しています。
 
 ## 利用上の注意
 
