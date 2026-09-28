@@ -70,6 +70,13 @@ const cases = [
     button: 'stop-delete',
     notices: ['stop-confirm', 'stop-notice'],
   },
+  // バックアップ（#17）の確認と知らせは、ボタンの並びの末尾の［バックアップから復元］の直後に出します。
+  {
+    page: '管理画面',
+    html: options,
+    button: 'backup-restore',
+    notices: ['backup-confirm', 'backup-notice'],
+  },
   {
     page: '管理画面',
     html: options,

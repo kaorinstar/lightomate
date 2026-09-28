@@ -19,6 +19,8 @@ import {
 import { deleteBatch, listBatches, onBatchesChanged, saveBatch } from '../common/batch-store.js';
 import { ALL_SITES, hasAllSites, requestPermission } from '../common/permissions.js';
 import { batchProblems } from '../shared/batch.js';
+import { exportBackup, previewRestore, restoreBackup } from '../common/backup-store.js';
+import { backupFileName, parseBackup } from '../shared/backup.js';
 import {
   getStopRule,
   listStopRules,
@@ -186,6 +188,12 @@ const elements = {
   historyNotice: byId('history-notice'),
   allSites: /** @type {HTMLInputElement} */ (byId('all-sites')),
   allSitesNotice: byId('all-sites-notice'),
+  backupFile: /** @type {HTMLInputElement} */ (byId('backup-file')),
+  backupButtons: byId('backup-buttons'),
+  backupExport: byId('backup-export'),
+  backupRestore: byId('backup-restore'),
+  backupConfirm: byId('backup-confirm'),
+  backupNotice: byId('backup-notice'),
 };
 
 /** 区画に置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
@@ -201,6 +209,7 @@ const notices = [
   elements.historyNotice,
   elements.speedNotice,
   elements.allSitesNotice,
+  elements.backupNotice,
 ];
 
 /**
@@ -1227,18 +1236,27 @@ renderBatches().catch(console.error);
  * @param {import('../shared/flow.js').Flow[]} flows
  */
 function downloadFlows(flows) {
-  const blob = new Blob([flowFileText(flows)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = flowFileName(flows, new Date());
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  downloadJson(flowFileText(flows), flowFileName(flows, new Date()));
   // パラメータの既定値に個人の情報を入れている場合に備え、ファイルに含まれることを知らせます。
   showToast(
     elements.toast,
     `${flows.length === 1 ? `「${flows[0].name}」` : `${flows.length} 件のフロー`}をファイルに書き出しました。実行時に入力する値の既定値も含まれます。`,
   );
+}
+
+/**
+ * JSON の文字列をファイルとして、Chrome のダウンロード先フォルダーに保存します。
+ * @param {string} text
+ * @param {string} fileName
+ */
+function downloadJson(text, fileName) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 elements.deleteFlow.addEventListener('click', async () => {
@@ -2099,3 +2117,106 @@ chrome.permissions.onRemoved.addListener(() => {
   renderAllSites().catch(console.error);
 });
 renderAllSites().catch(console.error);
+
+// ---- バックアップ（#17） ----
+// すべてのフロー、まとめフロー、必ず止まる場所を 1 つのファイルに書き出し、ファイルから追加します。
+// 復元は追加だけを行い、既存のデータを消しません。
+
+elements.backupExport.addEventListener('click', async () => {
+  clearNotices();
+  const backup = await exportBackup();
+  downloadJson(`${JSON.stringify(backup, null, 2)}\n`, backupFileName(new Date()));
+  // パラメータの既定値に個人の情報を入れている場合に備え、ファイルに含まれることを知らせます。
+  showToast(
+    elements.toast,
+    `フロー ${backup.flows.length} 件、まとめフロー ${backup.batches.length} 件、` +
+      `必ず止まる場所 ${Object.keys(backup.stopRules).length} サイトを書き出しました。` +
+      '実行時に入力する値の既定値も含まれます。',
+  );
+});
+
+elements.backupRestore.addEventListener('click', () => {
+  clearNotices();
+  elements.backupFile.click();
+});
+
+elements.backupFile.addEventListener('change', async () => {
+  const file = elements.backupFile.files?.[0];
+  if (!file) {
+    return;
+  }
+  // 同じファイルを続けて選んだ場合も change が起きるよう、読み取る前に選択を消します。
+  elements.backupFile.value = '';
+  clearNotices();
+  /** @type {unknown} */
+  let value;
+  try {
+    value = JSON.parse(await file.text());
+  } catch (error) {
+    showNotice(elements.backupNotice, `JSON として読み取れません。${String(error)}`, 'error');
+    return;
+  }
+  const parsed = parseBackup(value);
+  if (!parsed.ok) {
+    showNotice(
+      elements.backupNotice,
+      `形式に誤りがあるため、復元しませんでした。\n${parsed.errors.join('\n')}`,
+      'error',
+    );
+    return;
+  }
+  const plan = await previewRestore(parsed.backup);
+  const skipped = restoreSkippedText(plan);
+  const addedCount = plan.flows.length + plan.batches.length + Object.keys(plan.stopRules).length;
+  if (addedCount === 0) {
+    showNotice(
+      elements.backupNotice,
+      `このバックアップの内容はすべて保存済みです。何も追加しませんでした。\n${skipped}`,
+      'info',
+    );
+    return;
+  }
+  // 他人から受け取ったファイルは、ログイン中のサイトで意図しない操作を行う可能性があります（#14）。
+  const flowLines = plan.flows.map(
+    (stored) => `・${stored.flow.name}（${flowOrigins(stored.flow).join('、')}）`,
+  );
+  const confirmed = await confirmInline(elements.backupConfirm, {
+    message:
+      `フロー ${plan.flows.length} 件、まとめフロー ${plan.batches.length} 件、` +
+      `必ず止まる場所 ${Object.keys(plan.stopRules).length} サイトを追加します。` +
+      '今あるデータは消しません。' +
+      (flowLines.length > 0
+        ? '各フローは、括弧内のサイトを操作します。自分で書き出したファイルか、信頼できるファイルだけを復元してください。\n' +
+          flowLines.join('\n')
+        : '') +
+      (skipped ? `\n${skipped}` : ''),
+    confirmLabel: '復元する',
+    hide: [elements.backupButtons],
+  });
+  if (!confirmed) {
+    return;
+  }
+  const result = await restoreBackup(parsed.backup);
+  showToast(
+    elements.toast,
+    `フロー ${result.flows.length} 件、まとめフロー ${result.batches.length} 件、` +
+      `必ず止まる場所 ${Object.keys(result.stopRules).length} サイトを復元しました。` +
+      restoreSkippedText(result),
+  );
+});
+
+/**
+ * 復元で追加しないものの説明です。ない場合は空の文字列です。
+ * @param {import('../shared/backup.js').RestorePlan} plan
+ * @returns {string}
+ */
+function restoreSkippedText(plan) {
+  const parts = [
+    plan.duplicateFlows.length > 0 ? `同じ内容のフロー ${plan.duplicateFlows.length} 件` : '',
+    plan.skippedBatches.length > 0 ? `同じまとめフロー ${plan.skippedBatches.length} 件` : '',
+    plan.skippedStopOrigins.length > 0
+      ? `必ず止まる場所が指定済みのサイト（${plan.skippedStopOrigins.join('、')}）`
+      : '',
+  ].filter(Boolean);
+  return parts.length > 0 ? `保存済みのため追加しないもの：${parts.join('、')}。` : '';
+}

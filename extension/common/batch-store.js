@@ -15,7 +15,8 @@ import { BATCH_MAX_FLOWS, BATCH_NAME_MAX_LENGTH } from '../shared/batch.js';
  * @property {string} createdAt 作成した日時（ISO 8601）
  */
 
-const BATCHES_KEY = 'batches';
+/** chrome.storage.local にまとめフローを保存するキーです。一括の復元（backup-store.js）でも使います。 */
+export const BATCHES_KEY = 'batches';
 
 /** @returns {Promise<Record<string, StoredBatch>>} */
 async function readAll() {

@@ -471,6 +471,26 @@
           </div>
         </div>
 
+        <!-- すべてのフローと設定の一括バックアップです（#17）。復元は追加だけを行い、既存のデータを消しません。 -->
+        <div class="card lm-settings mt-3">
+          <div class="card-header lm-card-header">
+            <h2 class="card-title">バックアップ</h2>
+          </div>
+          <div class="card-body">
+            <p class="lm-sub mt-0 mb-2">
+              保存したフロー、まとめフロー、必ず止まる場所を、1 つのファイルに書き出します。<wbr />Chrome
+              の再インストールや PC の買い替えの前に書き出しておくと、復元で元に戻せます。<wbr />復元は追加だけを行い、今あるデータは消しません。同じ内容のフローと、同じサイトの必ず止まる場所は追加しません。
+            </p>
+            <input type="file" id="backup-file" accept=".json,application/json" hidden />
+            <div class="lm-buttons" id="backup-buttons">
+              <button type="button" class="btn" id="backup-export">すべて書き出し</button>
+              <button type="button" class="btn" id="backup-restore">バックアップから復元</button>
+            </div>
+            <div id="backup-confirm" hidden></div>
+            <p id="backup-notice" hidden></p>
+          </div>
+        </div>
+
         <!-- 無保証と利用上の注意の要約です（#109）。詳しい内容は README.md を正とし、画面は要約とリンクに限ります。 -->
         <div class="card lm-settings mt-3">
           <div class="card-header lm-card-header">
