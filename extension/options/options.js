@@ -64,6 +64,20 @@ import {
 } from '../shared/run-form.js';
 import { STATUS_LABELS, historyEntryText, historyToCsv, stepText } from '../shared/history.js';
 import { formatSeconds, readIntervalInput } from '../shared/speed.js';
+import {
+  SCHEDULES_KEY,
+  listSchedules,
+  removeSchedule,
+  saveSchedule,
+} from '../common/schedule-store.js';
+import {
+  WEEKDAY_NAMES,
+  describeSchedule,
+  formatRunAt,
+  nextRunAt,
+  readScheduleInput,
+  schedulingProblems,
+} from '../shared/schedule.js';
 import { parseLines, stopRuleFieldErrors } from '../shared/stop-rules.js';
 import {
   confirmInline,
@@ -116,6 +130,18 @@ const elements = {
   intervalMax: /** @type {HTMLInputElement} */ (byId('interval-max')),
   intervalFeedback: byId('interval-feedback'),
   speedNotice: byId('speed-notice'),
+  scheduleForm: /** @type {HTMLFormElement} */ (byId('schedule-form')),
+  scheduleStatus: byId('schedule-status'),
+  scheduleReason: byId('schedule-reason'),
+  scheduleFrequency: /** @type {HTMLSelectElement} */ (byId('schedule-frequency')),
+  scheduleWeekday: /** @type {HTMLSelectElement} */ (byId('schedule-weekday')),
+  scheduleDayField: byId('schedule-day-field'),
+  scheduleDay: /** @type {HTMLInputElement} */ (byId('schedule-day')),
+  scheduleTime: /** @type {HTMLInputElement} */ (byId('schedule-time')),
+  scheduleCatchUp: /** @type {HTMLInputElement} */ (byId('schedule-catch-up')),
+  scheduleFeedback: byId('schedule-feedback'),
+  scheduleSave: /** @type {HTMLButtonElement} */ (byId('schedule-save')),
+  scheduleNotice: byId('schedule-notice'),
   params: byId('params'),
   stepCount: byId('step-count'),
   steps: byId('steps'),
@@ -208,6 +234,7 @@ const notices = [
   elements.stopNotice,
   elements.historyNotice,
   elements.speedNotice,
+  elements.scheduleNotice,
   elements.allSitesNotice,
   elements.backupNotice,
 ];
@@ -221,6 +248,8 @@ const fieldFeedbacks = [
   [elements.batchName, elements.batchNameFeedback],
   [elements.intervalMin, elements.intervalFeedback],
   [elements.intervalMax, elements.intervalFeedback],
+  [elements.scheduleDay, elements.scheduleFeedback],
+  [elements.scheduleTime, elements.scheduleFeedback],
   [elements.importJson, elements.importJsonFeedback],
   [elements.stopOrigin, elements.stopOriginFeedback],
   [elements.stopSelectors, elements.stopSelectorsFeedback],
@@ -1408,6 +1437,130 @@ onFlowsChanged(() => {
 });
 render().catch(console.error);
 
+// ---- 定期実行（#22） ----
+
+elements.scheduleWeekday.replaceChildren(
+  ...WEEKDAY_NAMES.map((name, index) => new Option(`${name}曜日`, String(index))),
+);
+
+/** 周期に合わせて、曜日と日の欄を表示し、周期が「なし」の場合は時刻などの欄を使えなくします。 */
+function updateScheduleFields() {
+  const frequency = elements.scheduleFrequency.value;
+  elements.scheduleWeekday.hidden = frequency !== 'weekly';
+  elements.scheduleDayField.hidden = frequency !== 'monthly';
+  elements.scheduleTime.disabled = frequency === '';
+  elements.scheduleCatchUp.disabled = frequency === '';
+}
+
+/** 定期実行の誤りを消します。日と時刻の欄で、行の直下の表示欄を共有しています。 */
+function clearScheduleError() {
+  showFieldError(elements.scheduleDay, elements.scheduleFeedback, '');
+  showFieldError(elements.scheduleTime, elements.scheduleFeedback, '');
+}
+
+elements.scheduleFrequency.addEventListener('change', () => {
+  clearScheduleError();
+  updateScheduleFields();
+});
+elements.scheduleDay.addEventListener('input', clearScheduleError);
+elements.scheduleTime.addEventListener('input', clearScheduleError);
+
+/**
+ * 定期実行の欄に、フローの予約を入れます。予約がない場合は「なし」にします。
+ * @param {string} flowId
+ */
+async function fillScheduleFields(flowId) {
+  const schedule = (await listSchedules())[flowId];
+  elements.scheduleFrequency.value = schedule?.frequency ?? '';
+  elements.scheduleWeekday.value = String(schedule?.weekday ?? 1);
+  elements.scheduleDay.value = schedule?.day === undefined ? '' : String(schedule.day);
+  elements.scheduleTime.value = schedule?.time ?? '09:00';
+  elements.scheduleCatchUp.checked = schedule?.catchUp ?? true;
+  clearScheduleError();
+  updateScheduleFields();
+}
+
+/**
+ * 定期実行の今の設定と次の予約の日時、定期実行できない理由を表示します。
+ * 定期実行できないフローでは、予約がなければ欄を使えなくします。予約がある場合は、解除できるよう残します。
+ * @param {StoredFlow} stored
+ */
+async function renderSchedule(stored) {
+  const schedule = (await listSchedules())[stored.id];
+  elements.scheduleStatus.textContent = schedule
+    ? `${describeSchedule(schedule)}（次回：${formatRunAt(nextRunAt(schedule, new Date()))}）`
+    : '設定していません。';
+  const problems = schedulingProblems(stored.flow);
+  elements.scheduleReason.hidden = problems.length === 0;
+  elements.scheduleReason.textContent =
+    problems.length === 0
+      ? ''
+      : `このフローは、人がいないと値を決められないため、定期実行できません。${problems.join(' ')}`;
+  const locked = problems.length > 0 && !schedule;
+  elements.scheduleFrequency.disabled = locked;
+  elements.scheduleSave.disabled = locked;
+  if (locked) {
+    elements.scheduleTime.disabled = true;
+    elements.scheduleCatchUp.disabled = true;
+  }
+}
+
+elements.scheduleForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearNotices();
+  const stored = await getFlow(selectedId);
+  if (!stored) {
+    return;
+  }
+  const input = readScheduleInput({
+    frequency: elements.scheduleFrequency.value,
+    weekday: elements.scheduleWeekday.value,
+    day: elements.scheduleDay.value,
+    time: elements.scheduleTime.value,
+    catchUp: elements.scheduleCatchUp.checked,
+  });
+  if (!input.ok) {
+    const control = input.field === 'day' ? elements.scheduleDay : elements.scheduleTime;
+    showFieldError(control, elements.scheduleFeedback, input.error);
+    control.focus();
+    return;
+  }
+  if (input.setting === null) {
+    await removeSchedule(stored.id);
+    await renderSchedule(stored);
+    showToast(elements.toast, '定期実行を解除しました。');
+    return;
+  }
+  const problems = schedulingProblems(stored.flow);
+  if (problems.length > 0) {
+    showNotice(
+      elements.scheduleNotice,
+      `定期実行できないフローです。\n${problems.join('\n')}`,
+      'error',
+    );
+    return;
+  }
+  const result = await saveSchedule(stored.id, input.setting, new Date());
+  if (!result.ok) {
+    showNotice(elements.scheduleNotice, `保存できませんでした。\n${result.error}`, 'error');
+    return;
+  }
+  await renderSchedule(stored);
+  showToast(
+    elements.toast,
+    `定期実行を保存しました。次回は ${formatRunAt(nextRunAt(input.setting, new Date()))} です。`,
+  );
+});
+
+// 予約の処理済みの日時は Service Worker が書き換えます。次の予約の日時の表示を合わせます。
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && SCHEDULES_KEY in changes && selectedId) {
+    getFlow(selectedId)
+      .then((stored) => (stored ? renderSchedule(stored) : undefined))
+      .catch(console.error);
+  }
+});
+
 // ---- 実行の速度（#15） ----
 
 /**
@@ -1564,6 +1717,12 @@ async function renderHistory() {
       const status = document.createElement('td');
       status.className = `lm-nowrap lm-status-${entry.status}`;
       status.textContent = STATUS_LABELS[entry.status];
+      if (entry.trigger === 'schedule') {
+        const trigger = document.createElement('div');
+        trigger.className = 'lm-sub';
+        trigger.textContent = '定期実行';
+        status.append(trigger);
+      }
 
       const reason = document.createElement('td');
       if (entry.stepNumber !== undefined) {
@@ -1895,9 +2054,11 @@ async function render() {
     elements.editor.dataset.id = stored.id;
     elements.json.value = JSON.stringify(orderFlow(stored.flow), null, 2);
     fillSpeedFields(stored.flow);
+    await fillScheduleFields(stored.id);
   }
   if (stored) {
     renderDetail(stored);
+    await renderSchedule(stored);
     await renderRunButtons(stored.flow);
   } else {
     delete elements.editor.dataset.id;

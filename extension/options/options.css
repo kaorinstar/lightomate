@@ -408,6 +408,19 @@ body {
   display: block;
 }
 
+/* 定期実行（#22）の周期と曜日の選択欄です。 */
+.lm-schedule-select {
+  width: auto;
+}
+
+.lm-time {
+  width: 9rem;
+}
+
+.lm-schedule-status {
+  margin-bottom: 0.5rem;
+}
+
 .lm-speed-feedback:empty {
   display: none;
 }

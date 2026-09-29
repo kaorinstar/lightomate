@@ -362,3 +362,22 @@ test('while の中で止まった実行は、何回目かを持ち、止まっ�
   assert.deepEqual(result.loops, ['item', 'round']);
   assert.equal(stepText(result), `2 / ${run.total}（2 件目の 4 回目）`);
 });
+
+test('定期実行で始めた実行は、履歴と報告の文に定期実行と記録する（#22）', () => {
+  const scheduled = historyEntryFromRun(
+    { ...run, status: 'done', trigger: 'schedule' },
+    '2026-09-25T00:01:00.000Z',
+    [],
+  );
+  assert.equal(scheduled?.trigger, 'schedule');
+  assert.match(
+    historyEntryText(/** @type {NonNullable<typeof scheduled>} */ (scheduled)),
+    /^開始の方法：定期実行$/m,
+  );
+  const manual = historyEntryFromRun({ ...run, status: 'done' }, '2026-09-25T00:01:00.000Z', []);
+  assert.equal(manual?.trigger, undefined);
+  assert.doesNotMatch(
+    historyEntryText(/** @type {NonNullable<typeof manual>} */ (manual)),
+    /定期実行/,
+  );
+});

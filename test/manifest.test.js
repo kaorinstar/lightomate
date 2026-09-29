@@ -45,6 +45,8 @@ test('要求する権限は、SECURITY.md に記載したものだけである',
     'webNavigation',
     'debugger',
     'downloads',
+    'alarms',
+    'notifications',
   ]);
   assert.equal(manifest.optional_permissions, undefined);
 });
