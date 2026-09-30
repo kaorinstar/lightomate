@@ -20,7 +20,7 @@
         <h1 class="lm-screen-title">フローの管理</h1>
       </header>
 
-      <div class="nav nav-tabs lm-tabs" role="tablist" aria-label="管理する内容">
+      <div class="nav nav-tabs lm-tabs" role="tablist" aria-label="管理する内容" id="main-tabs">
         <button
           type="button"
           class="nav-link"
@@ -195,134 +195,204 @@
                 <p id="run-notice" hidden></p>
               </form>
 
-              <section id="params-section" class="lm-block" aria-labelledby="params-heading">
-                <h3 id="params-heading" class="lm-block-title">実行時に入力する値</h3>
-                <dl id="params" class="lm-params"></dl>
-              </section>
-
-              <form id="speed-form" class="lm-block" novalidate aria-labelledby="speed-heading">
-                <h3 id="speed-heading" class="lm-block-title">実行の速度</h3>
-                <p class="lm-sub">
-                  手順と手順の間に、最短と最長の間で毎回変わる時間だけ待ちます。<wbr />1 秒以上、60
-                  秒以下で入力します。<wbr />片方だけ入力すると、両方に同じ値を入れます。<wbr />両方を空欄にすると、既定の
-                  1 秒です。
-                </p>
-                <div class="lm-speed-row">
-                  <label for="interval-min">最短</label>
-                  <input
-                    type="text"
-                    class="form-control lm-seconds"
-                    id="interval-min"
-                    inputmode="decimal"
-                    placeholder="1"
-                  />
-                  <span>秒</span>
-                  <span aria-hidden="true">〜</span>
-                  <label for="interval-max">最長</label>
-                  <input
-                    type="text"
-                    class="form-control lm-seconds"
-                    id="interval-max"
-                    inputmode="decimal"
-                    placeholder="1"
-                  />
-                  <span>秒</span>
-                  <button type="submit" class="btn" id="speed-save">速度を保存</button>
-                </div>
-                <div class="invalid-feedback lm-speed-feedback" id="interval-feedback"></div>
-                <p id="speed-notice" hidden></p>
-              </form>
-
-              <form
-                id="schedule-form"
-                class="lm-block"
-                novalidate
-                aria-labelledby="schedule-heading"
+              <div
+                class="nav nav-tabs lm-tabs lm-detail-tabs"
+                role="tablist"
+                aria-label="フローの内容"
               >
-                <h3 id="schedule-heading" class="lm-block-title">定期実行</h3>
-                <p class="lm-sub">
-                  設定した日時に、背景のタブで実行します。<wbr />開始・完了・一時停止は、Windows
-                  の通知で知らせます。<wbr />Chrome を起動している間だけ実行します。
-                </p>
-                <div class="lm-schedule-status">
-                  <span id="schedule-state" class="lm-status"></span>
-                  <span id="schedule-summary"></span>
-                </div>
-                <div id="schedule-reason" class="alert alert-info lm-guide" hidden>
-                  <p class="lm-guide-title">このフローは定期実行できません</p>
-                  <div id="schedule-reason-body"></div>
-                </div>
-                <div class="lm-speed-row" id="schedule-fields">
-                  <label for="schedule-frequency">周期</label>
-                  <select class="form-select lm-schedule-select" id="schedule-frequency">
-                    <option value="">なし</option>
-                    <option value="daily">毎日</option>
-                    <option value="weekly">毎週</option>
-                    <option value="monthly">毎月</option>
-                  </select>
-                  <select
-                    class="form-select lm-schedule-select"
-                    id="schedule-weekday"
-                    aria-label="曜日"
-                    hidden
-                  ></select>
-                  <span class="lm-speed-row" id="schedule-day-field" hidden>
+                <button
+                  type="button"
+                  class="nav-link"
+                  role="tab"
+                  id="detail-tab-steps"
+                  data-detail-tab="steps"
+                  aria-controls="detail-panel-steps"
+                >
+                  手順
+                </button>
+                <button
+                  type="button"
+                  class="nav-link"
+                  role="tab"
+                  id="detail-tab-speed"
+                  data-detail-tab="speed"
+                  aria-controls="detail-panel-speed"
+                >
+                  実行の速度
+                </button>
+                <button
+                  type="button"
+                  class="nav-link"
+                  role="tab"
+                  id="detail-tab-schedule"
+                  data-detail-tab="schedule"
+                  aria-controls="detail-panel-schedule"
+                >
+                  定期実行
+                </button>
+                <button
+                  type="button"
+                  class="nav-link"
+                  role="tab"
+                  id="detail-tab-json"
+                  data-detail-tab="json"
+                  aria-controls="detail-panel-json"
+                >
+                  JSON
+                </button>
+              </div>
+
+              <div
+                id="detail-panel-steps"
+                role="tabpanel"
+                aria-labelledby="detail-tab-steps"
+                hidden
+              >
+                <section id="params-section" class="lm-block" aria-labelledby="params-heading">
+                  <h3 id="params-heading" class="lm-block-title">実行時に入力する値</h3>
+                  <dl id="params" class="lm-params"></dl>
+                </section>
+
+                <section class="lm-block" aria-labelledby="steps-heading">
+                  <h3 id="steps-heading" class="lm-block-title">
+                    手順<span class="lm-count" id="step-count"></span>
+                  </h3>
+                  <ol id="steps" class="lm-step-list"></ol>
+                </section>
+              </div>
+
+              <div
+                id="detail-panel-speed"
+                role="tabpanel"
+                aria-labelledby="detail-tab-speed"
+                hidden
+              >
+                <form id="speed-form" class="lm-block" novalidate aria-labelledby="speed-heading">
+                  <h3 id="speed-heading" class="lm-block-title">実行の速度</h3>
+                  <p class="lm-sub">
+                    手順と手順の間に、最短と最長の間で毎回変わる時間だけ待ちます。<wbr />1
+                    秒以上、60 秒以下で入力します。<wbr />片方だけ入力すると、両方に同じ値を入れます。<wbr />両方を空欄にすると、既定の
+                    1 秒です。
+                  </p>
+                  <div class="lm-speed-row">
+                    <label for="interval-min">最短</label>
                     <input
                       type="text"
                       class="form-control lm-seconds"
-                      id="schedule-day"
-                      inputmode="numeric"
-                      aria-label="日"
+                      id="interval-min"
+                      inputmode="decimal"
                       placeholder="1"
                     />
-                    <span>日</span>
-                  </span>
-                  <label for="schedule-time" id="schedule-time-label">時刻</label>
-                  <input
-                    type="time"
-                    class="form-control lm-time"
-                    id="schedule-time"
-                    value="09:00"
-                  />
-                </div>
-                <label class="lm-setting mt-2" id="schedule-catch-up-field">
-                  <input type="checkbox" class="lm-check" id="schedule-catch-up" checked />
-                  Chrome を起動していない間に過ぎた予約を、次に起動したときに 1 回実行する
-                </label>
-                <div class="invalid-feedback lm-speed-feedback" id="schedule-feedback"></div>
-                <div class="lm-buttons mt-2">
-                  <button type="submit" class="btn" id="schedule-save">定期実行を保存</button>
-                </div>
-                <p id="schedule-notice" hidden></p>
-              </form>
+                    <span>秒</span>
+                    <span aria-hidden="true">〜</span>
+                    <label for="interval-max">最長</label>
+                    <input
+                      type="text"
+                      class="form-control lm-seconds"
+                      id="interval-max"
+                      inputmode="decimal"
+                      placeholder="1"
+                    />
+                    <span>秒</span>
+                    <button type="submit" class="btn" id="speed-save">速度を保存</button>
+                  </div>
+                  <div class="invalid-feedback lm-speed-feedback" id="interval-feedback"></div>
+                  <p id="speed-notice" hidden></p>
+                </form>
+              </div>
 
-              <section class="lm-block" aria-labelledby="steps-heading">
-                <h3 id="steps-heading" class="lm-block-title">
-                  手順<span class="lm-count" id="step-count"></span>
-                </h3>
-                <ol id="steps" class="lm-step-list"></ol>
-              </section>
+              <div
+                id="detail-panel-schedule"
+                role="tabpanel"
+                aria-labelledby="detail-tab-schedule"
+                hidden
+              >
+                <form
+                  id="schedule-form"
+                  class="lm-block"
+                  novalidate
+                  aria-labelledby="schedule-heading"
+                >
+                  <h3 id="schedule-heading" class="lm-block-title">定期実行</h3>
+                  <p class="lm-sub">
+                    設定した日時に、背景のタブで実行します。<wbr />開始・完了・一時停止は、Windows
+                    の通知で知らせます。<wbr />Chrome を起動している間だけ実行します。
+                  </p>
+                  <div class="lm-schedule-status">
+                    <span id="schedule-state" class="lm-status"></span>
+                    <span id="schedule-summary"></span>
+                  </div>
+                  <div id="schedule-reason" class="alert alert-info lm-guide" hidden>
+                    <p class="lm-guide-title">このフローは定期実行できません</p>
+                    <div id="schedule-reason-body"></div>
+                  </div>
+                  <div class="lm-speed-row" id="schedule-fields">
+                    <label for="schedule-frequency">周期</label>
+                    <select class="form-select lm-schedule-select" id="schedule-frequency">
+                      <option value="">なし</option>
+                      <option value="daily">毎日</option>
+                      <option value="weekly">毎週</option>
+                      <option value="monthly">毎月</option>
+                    </select>
+                    <select
+                      class="form-select lm-schedule-select"
+                      id="schedule-weekday"
+                      aria-label="曜日"
+                      hidden
+                    ></select>
+                    <span class="lm-speed-row" id="schedule-day-field" hidden>
+                      <input
+                        type="text"
+                        class="form-control lm-seconds"
+                        id="schedule-day"
+                        inputmode="numeric"
+                        aria-label="日"
+                        placeholder="1"
+                      />
+                      <span>日</span>
+                    </span>
+                    <label for="schedule-time" id="schedule-time-label">時刻</label>
+                    <input
+                      type="time"
+                      class="form-control lm-time"
+                      id="schedule-time"
+                      value="09:00"
+                    />
+                  </div>
+                  <label class="lm-setting mt-2" id="schedule-catch-up-field">
+                    <input type="checkbox" class="lm-check" id="schedule-catch-up" checked />
+                    Chrome を起動していない間に過ぎた予約を、次に起動したときに 1 回実行する
+                  </label>
+                  <div class="invalid-feedback lm-speed-feedback" id="schedule-feedback"></div>
+                  <div class="lm-buttons mt-2">
+                    <button type="submit" class="btn" id="schedule-save">定期実行を保存</button>
+                  </div>
+                  <p id="schedule-notice" hidden></p>
+                </form>
+              </div>
 
-              <details id="json-details" class="lm-block lm-advanced">
-                <summary class="lm-block-title">JSON を直接編集（上級者向け）</summary>
-                <p class="lm-sub mt-2">
-                  形式は、リポジトリの docs/flow-format.md
-                  に記載しています。保存する前に形式を検証し、誤りがあれば保存しません。
-                </p>
-                <textarea
-                  id="json"
-                  class="form-control lm-code"
-                  rows="20"
-                  spellcheck="false"
-                  aria-label="フロー定義の JSON"
-                ></textarea>
-                <div class="invalid-feedback" id="json-feedback"></div>
-                <div class="lm-buttons mt-3">
-                  <button type="button" class="btn btn-primary" id="save">JSON を保存</button>
-                  <button type="button" class="btn" id="format">整形</button>
-                </div>
-                <p id="json-notice" hidden></p>
-              </details>
+              <div id="detail-panel-json" role="tabpanel" aria-labelledby="detail-tab-json" hidden>
+                <section class="lm-block" aria-labelledby="json-heading">
+                  <h3 id="json-heading" class="lm-block-title">JSON を直接編集（上級者向け）</h3>
+                  <p class="lm-sub">
+                    形式は、リポジトリの docs/flow-format.md
+                    に記載しています。保存する前に形式を検証し、誤りがあれば保存しません。
+                  </p>
+                  <textarea
+                    id="json"
+                    class="form-control lm-code"
+                    rows="20"
+                    spellcheck="false"
+                    aria-label="フロー定義の JSON"
+                  ></textarea>
+                  <div class="invalid-feedback" id="json-feedback"></div>
+                  <div class="lm-buttons mt-3">
+                    <button type="button" class="btn btn-primary" id="save">JSON を保存</button>
+                    <button type="button" class="btn" id="format">整形</button>
+                  </div>
+                  <p id="json-notice" hidden></p>
+                </section>
+              </div>
             </div>
           </section>
 
