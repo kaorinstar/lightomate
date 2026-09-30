@@ -50,6 +50,21 @@
 }
 
 /*
+ * セレクトボックスと時刻の欄の高さを、同じ大きさの入力欄にそろえます（#137）。
+ * Chrome は、標準の見た目（appearance: auto）のセレクトボックスで行の高さの指定を使わず、書体の標準の
+ * 行の高さで表示します。そのため、並べた入力欄（検索欄と一致方法、定期実行の周期と時刻など）と高さが
+ * ずれます。高さを、Tabler の入力欄と同じ値で指定します。
+ */
+.form-select,
+.form-control[type='time'] {
+  height: calc(1.25rem + 1.125rem + calc(var(--tblr-border-width) * 2));
+}
+
+.form-select-sm {
+  height: calc(1rem + 0.625rem + calc(var(--tblr-border-width) * 2));
+}
+
+/*
  * 知らせと誤りの文字を、背景に対して読める濃さ（コントラスト比 4.5:1 以上。WCAG 2.2 の 1.4.3）にします。
  * Tabler の標準の色では、明るい表示の黄色の知らせが約 2:1 と読みにくいためです。
  * 明るい表示では役割の色に黒を、暗い表示では白を混ぜます。測定の方法は docs/design-guidelines.md にあります。

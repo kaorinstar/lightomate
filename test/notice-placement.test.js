@@ -105,7 +105,7 @@ for (const { page, html, button, notices } of cases) {
   });
 }
 
-test('管理画面：実行の速度の誤りは、最短・最長・［速度を保存］の行の直下の #interval-feedback に出す', () => {
+test('管理画面：実行速度の誤りは、最短・最長・［速度を保存］の行の直下の #interval-feedback に出す', () => {
   const button = options.indexOf('id="speed-save"');
   const rowEnd = options.indexOf('</div>', options.indexOf('</button>', button));
   const next = options.slice(rowEnd + '</div>'.length).trimStart();

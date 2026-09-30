@@ -1691,10 +1691,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// ---- 実行の速度（#15） ----
+// ---- 実行速度（#15） ----
 
 /**
- * 実行の速度の欄に、フローの手順の間隔を入れます。指定がない場合は空欄にします（既定の 1 秒）。
+ * 実行速度の欄に、フローの手順の間隔を入れます。指定がない場合は空欄にします（既定の 1 秒）。
  * @param {import('../shared/flow.js').Flow} flow
  */
 function fillSpeedFields(flow) {
@@ -1703,7 +1703,7 @@ function fillSpeedFields(flow) {
   clearSpeedError();
 }
 
-/** 実行の速度の誤りを消します。2 つの欄で、行の直下の表示欄を共有しています。 */
+/** 実行速度の誤りを消します。2 つの欄で、行の直下の表示欄を共有しています。 */
 function clearSpeedError() {
   showFieldError(elements.intervalMin, elements.intervalFeedback, '');
   showFieldError(elements.intervalMax, elements.intervalFeedback, '');
@@ -1739,7 +1739,7 @@ elements.speedForm.addEventListener('submit', async (event) => {
     interval: result.flow.interval,
   });
   if (replaced === null) {
-    // JSON の編集欄は別のタブにあるため、押したボタンのある［実行の速度］のタブに出します（#132）。
+    // JSON の編集欄は別のタブにあるため、押したボタンのある［実行速度］のタブに出します（#132）。
     showNotice(
       elements.speedNotice,
       'JSON の編集欄を読み取れないため、編集欄の速度は書き換えていません。［JSON を保存］を押すと、速度は編集欄の内容に戻ります。',
