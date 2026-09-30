@@ -512,7 +512,18 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
       }),
     flow,
   );
+  // 選択モードは、サイトのタブのうち最後に使ったタブで始めます。前のテストのタブが残っていると、そのタブで
+  // 始まるため、サイトのタブを閉じてから、テスト用のページを開いておきます。
+  for (const other of browser.context.pages()) {
+    if (other.url().startsWith(server.origin)) {
+      await other.close();
+    }
+  }
+  const site = await browser.context.newPage();
+  await site.goto(`${server.origin}/picker.html`);
+
   const id = new URL(page.url()).host;
+  await page.bringToFront();
   await page.goto(`chrome-extension://${id}/options/options.html#picker`);
   await page.reload();
   await page.waitForFunction(
@@ -543,7 +554,7 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
   await page.locator('#blocks-notice').getByText('要素をまだ選んでいないブロック').waitFor();
 
   /**
-   * ブロックを選び、［ページで選ぶ］を押して、開いたページを返します。
+   * ブロックを選び、［ページで選ぶ］を押して、テスト用のページで選択モードが始まるのを待ちます。
    * @param {string} blockId
    */
   const startPick = async (blockId) => {
@@ -554,18 +565,13 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
       Blockly.getFocusManager().focusNode(Blockly.getMainWorkspace().getBlockById(blockId));
     }, blockId);
     await page.locator('#blocks-pick').click();
-    const picked = await waitUntil(
-      async () => pagesAt('/picker.html')[0],
-      (found) => found !== undefined,
-    );
-    await picked.waitForFunction(
+    await site.waitForFunction(
       () => globalThis.document.querySelector('lightomate-picker') !== null,
     );
-    return picked;
   };
 
   // 1. 繰り返しの行：2 行目のセルを押し、行の確認で Enter を押して「はい」を選びます。
-  const site = await startPick(ids.loop);
+  await startPick(ids.loop);
   await site.locator('tbody tr:nth-child(2) .no').click();
   await site.keyboard.press('Enter');
   const loopState = await waitUntil(
