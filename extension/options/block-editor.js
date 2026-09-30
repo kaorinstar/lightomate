@@ -93,7 +93,7 @@ function register() {
       id: `lm_pick_${field}`,
       scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
       weight: -1,
-      displayText: field === 'NEXT' ? '［次へ］のボタンをページで選ぶ' : 'ページで選ぶ',
+      displayText: field === 'NEXT' ? '次のページへ進むボタンをページで選ぶ' : 'ページで選ぶ',
       /** @param {any} scope */
       preconditionFn(scope) {
         const block = scope.block;

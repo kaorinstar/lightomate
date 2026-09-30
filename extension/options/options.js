@@ -459,10 +459,12 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   } else {
     const label = (result.items ?? result.target)?.label ?? '';
     const rows = result.items ? `（${result.count} 件の行）` : '';
-    showToast(
-      elements.toast,
-      `「${label}」${rows}を選びました。保存するには［手順を保存］を押してください。`,
-    );
+    // ページ送りのある繰り返しでは、行の次に［次へ］のボタンを選ぶ必要があるため、続けて押すボタンを示します。
+    const next =
+      field === 'TARGET' && blockEditor.pickInfo(blockId)?.blockType === 'lm_forEach_pages'
+        ? '続けて、上の［次のページへ進むボタンをページで選ぶ］を押してください。'
+        : '保存するには［手順を保存］を押してください。';
+    showToast(elements.toast, `「${label}」${rows}を選びました。${next}`);
   }
 });
 
