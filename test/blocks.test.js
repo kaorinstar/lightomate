@@ -5,7 +5,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   BLOCK_COLOURS,
-  WAIT_TOOLTIP,
   blockDefinitions,
   conditionUsesValues,
   stepsToWorkspace,
@@ -232,10 +231,20 @@ test('ブロックの色は、どれも白い文字に対して 4.5:1 以上の�
   }
 });
 
-test('「秒待つ」のブロックには、実行速度の間隔に加えて待つことを示す説明がある', () => {
+test('「秒待つ」と実行速度の関係の説明は、［実行速度］タブだけに置く（#142）', () => {
+  const html = readFileSync(new URL('../extension/options/options.html', import.meta.url), 'utf8');
+  const steps = html.slice(
+    html.indexOf('id="detail-panel-steps"'),
+    html.indexOf('id="detail-panel-speed"'),
+  );
+  const speed = html.slice(
+    html.indexOf('id="detail-panel-speed"'),
+    html.indexOf('id="detail-panel-schedule"'),
+  );
+  assert.match(speed, /「秒待つ」ブロックを使います。その場所では、この間隔に加えて待ちます。/);
+  assert.doesNotMatch(steps, /加えて待ちます/);
   const wait = blockDefinitions().find(
     (definition) => /** @type {any} */ (definition).type === 'lm_wait',
   );
-  assert.equal(/** @type {any} */ (wait).tooltip, WAIT_TOOLTIP);
-  assert.match(WAIT_TOOLTIP, /実行速度の間隔.*に加えて待ちます/);
+  assert.equal(/** @type {any} */ (wait).tooltip, undefined);
 });
