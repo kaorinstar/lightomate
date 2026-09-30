@@ -1859,7 +1859,9 @@ async function renderHistory() {
         status.append(trigger);
       }
 
+      // 幅が狭い画面では、表を行ごとの縦の並びにし、列の見出しの代わりにこの名前を表示します（#137）。
       const reason = document.createElement('td');
+      reason.dataset.label = '止まった手順と理由';
       if (entry.stepNumber !== undefined) {
         const step = document.createElement('div');
         // 止まった手順の内容は、サイドパネルの実行の表示と同じく、番号の後に括弧で添えます（#93）。
@@ -1875,6 +1877,7 @@ async function renderHistory() {
 
       const files = document.createElement('td');
       files.className = 'lm-sub';
+      files.dataset.label = '保存したファイル';
       files.textContent = entry.files.join('\n');
 
       // 行ごとに同じ「×」が並ぶため、読み上げでは対象の日時とフロー名を示します。1 件ずつの削除は確認しません。
@@ -1895,7 +1898,7 @@ async function renderHistory() {
       });
       const actions = document.createElement('td');
       // ［コピー］は成功以外の行にだけ置くため、右に寄せて「×」の位置を行の間でそろえます。
-      actions.className = 'lm-nowrap text-end';
+      actions.className = 'lm-nowrap text-end lm-history-actions';
       // 成功以外の履歴は、原因の調査を依頼するときに貼り付けられるよう、1 件ずつコピーできます（#93）。
       if (entry.status !== 'done') {
         const copy = document.createElement('button');

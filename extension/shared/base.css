@@ -313,6 +313,27 @@
   color: var(--tblr-secondary);
 }
 
+div.lm-hint {
+  margin-bottom: 1rem;
+}
+
+/*
+ * 3 文以上になる説明は、要点の 1 文と箇条書きにします（#137）。1 つの段落に文が続くと、どこに何が
+ * 書いてあるかを探しにくいためです。管理画面の各タブの先頭の説明（lm-panel-note）も同じ形です。
+ */
+:is(.lm-hint, .lm-panel-note) > p {
+  margin: 0 0 0.25rem;
+}
+
+:is(.lm-hint, .lm-panel-note) > ul {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
+
+:is(.lm-hint, .lm-panel-note) > ul > li + li {
+  margin-top: 0.125rem;
+}
+
 /* 補足の文字です。見出し・本文・補足の 3 段階のうち、最も小さいものです。 */
 .lm-sub {
   color: var(--tblr-secondary);

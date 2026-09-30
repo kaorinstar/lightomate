@@ -232,12 +232,18 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* 詳細の見出しの操作です。「…」で開くその他の操作は、よく使う操作の下の行に、右端をそろえて並べます。 */
+/*
+ * 詳細の見出しの操作です。囲みの要素は並びに加わらず（display: contents）、よく使う操作はフロー名の右に、
+ * 「…」で開くその他の操作は見出しの帯の幅いっぱいの次の行に、右端をそろえて並べます。
+ * 開いたときに、よく使う操作とフロー名の位置が動かないようにするためです（#137）。
+ */
 .lm-detail-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  align-items: flex-end;
+  display: contents;
+}
+
+#editor-more {
+  flex-basis: 100%;
+  justify-content: flex-end;
 }
 
 .lm-detail-actions[hidden] {
@@ -395,14 +401,72 @@ body {
 }
 
 /*
- * 実行履歴の表です（#19）。止まった理由と保存したファイルは長いため、折り返します。
- * サイトやファイル名の途中では、列の幅に収まらない場合だけ折り返します（#137）。
- * anywhere にすると、列の幅を決めるときに 1 文字ずつ折り返せる前提で計算され、サイトの名前が
- * 短い幅で途中から折り返されるためです。
+ * 実行履歴の表です（#19）。止まった理由、保存したファイル、サイトは長いため、途中でも折り返します。
+ * 途中で折り返さない指定（break-word）にすると、ファイル名などの長い語の分だけ表が広がり、横に
+ * スクロールしないと右端の［コピー］と「×」が見えなくなるためです（#137）。
  */
 .lm-history td {
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   white-space: pre-line;
+}
+
+/*
+ * 開始日時、結果、行の操作（［コピー］と「×」）は折り返しません。
+ * .lm-history td の white-space より優先させるため、表の中に限って指定します。
+ */
+.lm-history .lm-nowrap {
+  white-space: nowrap;
+}
+
+/*
+ * 幅が狭い画面では、6 列の表が収まらず、横にスクロールしないと右端の［コピー］と「×」が見えなくなります。
+ * そのため、表を 1 件ずつの縦の並びにし、［コピー］と「×」を各行の右上に置きます（#137）。
+ * 列の見出しの代わりに、止まった理由と保存したファイルには項目名（data-label）を添えます。
+ */
+@media (width <= 900px) {
+  .lm-history thead {
+    display: none;
+  }
+
+  .lm-history,
+  .lm-history tbody,
+  .lm-history td {
+    display: block;
+  }
+
+  .lm-history tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem 1rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--tblr-border-color);
+  }
+
+  /* Tabler の card-table は先頭と末尾の列に左右の余白を付けるため、同じ詳しさの指定で外します。 */
+  .lm-history td,
+  .lm-history tr td:first-child,
+  .lm-history tr td:last-child {
+    grid-column: 1;
+    padding: 0;
+    border: 0;
+  }
+
+  .lm-history td:empty {
+    display: none;
+  }
+
+  .lm-history tr td.lm-history-actions {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .lm-history td[data-label]::before {
+    display: block;
+    color: var(--tblr-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    content: attr(data-label);
+  }
 }
 
 /* 見出しの帯の直下に出す、すべて削除の確認と、削除できなかった知らせです（#75）。 */

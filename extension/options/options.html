@@ -295,11 +295,14 @@
               >
                 <form id="speed-form" class="lm-block" novalidate aria-labelledby="speed-heading">
                   <h3 id="speed-heading" class="lm-block-title">実行の速度</h3>
-                  <p class="lm-hint">
-                    手順と手順の間に、最短と最長の間で毎回変わる時間だけ待ちます。<wbr />1
-                    秒以上、60 秒以下で入力します。<wbr />片方だけ入力すると、両方に同じ値を入れます。<wbr />両方を空欄にすると、既定の
-                    1 秒です。
-                  </p>
+                  <div class="lm-hint">
+                    <p>手順と手順の間に、最短と最長の間で毎回変わる時間だけ待ちます。</p>
+                    <ul>
+                      <li>1 秒以上、60 秒以下で入力します。</li>
+                      <li>片方だけ入力すると、両方に同じ値を入れます。</li>
+                      <li>両方を空欄にすると、既定の 1 秒です。</li>
+                    </ul>
+                  </div>
                   <div class="lm-speed-row">
                     <label for="interval-min">最短</label>
                     <input
@@ -340,10 +343,13 @@
                   aria-labelledby="schedule-heading"
                 >
                   <h3 id="schedule-heading" class="lm-block-title">定期実行</h3>
-                  <p class="lm-hint">
-                    設定した日時に、背景のタブで実行します。<wbr />開始・完了・一時停止は、Windows
-                    の通知で知らせます。<wbr />Chrome を起動している間だけ実行します。
-                  </p>
+                  <div class="lm-hint">
+                    <p>設定した日時に、背景のタブで実行します。</p>
+                    <ul>
+                      <li>開始・完了・一時停止は、Windows の通知で知らせます。</li>
+                      <li>Chrome を起動している間だけ実行します。</li>
+                    </ul>
+                  </div>
                   <div class="lm-schedule-status">
                     <span id="schedule-state" class="lm-status"></span>
                     <span id="schedule-summary"></span>
@@ -428,9 +434,13 @@
               <h2 id="import-heading" class="card-title">JSON からフローを追加</h2>
             </div>
             <div class="card-body">
-              <p class="lm-hint">
-                フロー定義の JSON を貼り付けるか、ファイルを選んでください。<wbr />一覧で複数のフローを選んで書き出したファイルも読み込めます。<wbr />追加する前に、フローが操作するサイトを確認します。
-              </p>
+              <div class="lm-hint">
+                <p>フロー定義の JSON を貼り付けるか、ファイルを選んでください。</p>
+                <ul>
+                  <li>一覧で複数のフローを選んで書き出したファイルも読み込めます。</li>
+                  <li>追加する前に、フローが操作するサイトを確認します。</li>
+                </ul>
+              </div>
               <div class="mb-3">
                 <label class="form-label" for="file">ファイル</label>
                 <input type="file" class="form-control" id="file" accept="application/json,.json" />
@@ -457,11 +467,22 @@
       </section>
 
       <section id="panel-batches" role="tabpanel" aria-labelledby="tab-batches" hidden>
-        <p class="lm-panel-note">
-          複数のフローを 1
-          つにまとめ、まとめて実行します。実行の状態はサイドパネルに表示します。<wbr />登録は［保存したフロー］の一覧でフローを選び、［まとめフローとして保存］を押します。<wbr />別のサイトのフローは背景のタブで並行して（同時に
-          3 件まで）、同じサイトのフローは登録した順に 1 件ずつ実行します。<wbr />確定ボタンの手前で止まったフローの後は、サイドパネルで［確認済み・次へ］を押すまで、同じサイトの次のフローを始めません。
-        </p>
+        <div class="lm-panel-note">
+          <p>複数のフローを 1 つにまとめ、まとめて実行します。</p>
+          <ul>
+            <li>
+              登録：［保存したフロー］の一覧でフローを選び、［まとめフローとして保存］を押します。
+            </li>
+            <li>
+              実行の順：別のサイトのフローは、背景のタブで並行して実行します（同時に 3
+              件まで）。同じサイトのフローは、登録した順に 1 件ずつ実行します。
+            </li>
+            <li>
+              確定ボタンの手前で止まった場合：サイドパネルで［確認済み・次へ］を押すまで、同じサイトの次のフローを始めません。
+            </li>
+            <li>実行の状態：サイドパネルに表示します。</li>
+          </ul>
+        </div>
         <div class="card">
           <div class="card-header lm-card-header">
             <h2 class="card-title">まとめフロー<span class="lm-count" id="batch-count"></span></h2>
@@ -495,9 +516,13 @@
       </section>
 
       <section id="panel-stop-rules" role="tabpanel" aria-labelledby="tab-stop-rules" hidden>
-        <p class="lm-panel-note">
-          確定ボタンの文言で判定できないボタンや画面を、サイトごとに指定します。<wbr />指定したサイトのすべてのフローで、実行はその手前で止まります。<wbr />記録中にクリックした場合は、一時停止として記録します。
-        </p>
+        <div class="lm-panel-note">
+          <p>確定ボタンの文言で判定できないボタンや画面を、サイトごとに指定します。</p>
+          <ul>
+            <li>実行：指定したサイトのすべてのフローで、その手前で止まります。</li>
+            <li>記録：記録中にクリックした場合は、一時停止として記録します。</li>
+          </ul>
+        </div>
 
         <div class="lm-layout">
           <div class="card lm-list">
@@ -580,10 +605,14 @@
       </section>
 
       <section id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
-        <p class="lm-panel-note">
-          フローを実行した結果を、新しい順に最大 200 件まで残します。<wbr />実行するときに入力した値は記録しません。止まった理由、手順、ページの
-          URL の中の入力した値は「＊＊＊」に置き換えます。<wbr />履歴を削除しても、保存したファイルは削除しません。
-        </p>
+        <div class="lm-panel-note">
+          <p>フローを実行した結果を、新しい順に最大 200 件まで残します。</p>
+          <ul>
+            <li>実行するときに入力した値は記録しません。</li>
+            <li>止まった理由、手順、ページの URL の中の入力した値は「＊＊＊」に置き換えます。</li>
+            <li>履歴を削除しても、保存したファイルは削除しません。</li>
+          </ul>
+        </div>
         <div class="card">
           <div class="card-header lm-card-header">
             <h2 class="card-title">実行履歴<span class="lm-count" id="history-count"></span></h2>
@@ -628,12 +657,18 @@
               すべてのサイトを許可
             </label>
             <p id="all-sites-notice" hidden></p>
-            <p class="lm-hint mt-2 mb-0">
-              オンにすると、記録と実行で、サイトごとに許可を求める確認を出しません。記録中に別のサイトへ移動した場合も、確認なしで記録を続けます。<wbr />オンにするときに
-              Chrome
-              が表示する確認には「すべてのサイト上にある自分のデータの読み取りと変更」と書かれますが、Lightomate
-              がページを操作するのは、記録中のタブと実行中のタブだけです。実行時は、手順を記録したサイトのページでだけ入力とクリックを行います。<wbr />オフにすると、個別に許可したサイトだけに戻ります。
-            </p>
+            <div class="lm-hint mt-2 mb-0">
+              <p>オンにすると、記録と実行で、サイトごとに許可を求める確認を出しません。</p>
+              <ul>
+                <li>記録中に別のサイトへ移動した場合も、確認なしで記録を続けます。</li>
+                <li>
+                  オンにするときに Chrome
+                  が表示する確認には「すべてのサイト上にある自分のデータの読み取りと変更」と書かれます。Lightomate
+                  がページを操作するのは、記録中のタブと実行中のタブだけです。実行時は、手順を記録したサイトのページでだけ入力とクリックを行います。
+                </li>
+                <li>オフにすると、個別に許可したサイトだけに戻ります。</li>
+              </ul>
+            </div>
           </div>
         </div>
 
@@ -643,10 +678,17 @@
             <h2 class="card-title">バックアップ</h2>
           </div>
           <div class="card-body">
-            <p class="lm-hint mt-0 mb-2">
-              保存したフロー、まとめフロー、必ず止まる場所を、1 つのファイルに書き出します。<wbr />Chrome
-              の再インストールや PC の買い替えの前に書き出しておくと、復元で元に戻せます。<wbr />復元は追加だけを行い、今あるデータは消しません。同じ内容のフローと、同じサイトの必ず止まる場所は追加しません。
-            </p>
+            <div class="lm-hint mt-0 mb-2">
+              <p>保存したフロー、まとめフロー、必ず止まる場所を、1 つのファイルに書き出します。</p>
+              <ul>
+                <li>
+                  Chrome の再インストールや PC
+                  の買い替えの前に書き出しておくと、復元で元に戻せます。
+                </li>
+                <li>復元は追加だけを行い、今あるデータは消しません。</li>
+                <li>同じ内容のフローと、同じサイトの必ず止まる場所は追加しません。</li>
+              </ul>
+            </div>
             <input type="file" id="backup-file" accept=".json,application/json" hidden />
             <div class="lm-buttons" id="backup-buttons">
               <button type="button" class="btn" id="backup-export">すべて書き出し</button>
