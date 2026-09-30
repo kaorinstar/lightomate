@@ -37,7 +37,7 @@
       <section id="form-section" class="card" aria-labelledby="form-heading" hidden>
         <div class="card-body">
           <h2 id="form-heading" class="card-title">実行する値の入力</h2>
-          <p class="lm-sub mb-3" id="form-description"></p>
+          <p class="lm-hint mb-3" id="form-description"></p>
           <form id="run-form" novalidate>
             <div id="form-fields" class="lm-stack mb-3"></div>
             <div class="lm-buttons">
@@ -173,7 +173,7 @@
               aria-label="一致方法"
             ></select>
           </div>
-          <p id="flows-empty" class="lm-sub m-3"></p>
+          <p id="flows-empty" class="lm-empty"></p>
           <div id="flows" class="list-group list-group-flush lm-flows"></div>
         </section>
         <p class="lm-sub lm-aside">
@@ -212,8 +212,8 @@
               aria-label="一致方法"
             ></select>
           </div>
-          <p id="batch-no-match" class="lm-sub m-3" hidden>該当するまとめフローはありません。</p>
-          <p id="batch-empty" class="lm-sub m-3">
+          <p id="batch-no-match" class="lm-empty" hidden>該当するまとめフローはありません。</p>
+          <p id="batch-empty" class="lm-empty">
             まとめフローはまだありません。「フローの管理」の［保存したフロー］でフローを選び、［まとめフローとして保存］を押すと登録できます。
           </p>
           <div id="batch-list" class="list-group list-group-flush lm-flows"></div>

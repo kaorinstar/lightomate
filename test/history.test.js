@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   HISTORY_LIMIT,
   REDACTED,
+  STATUS_LABELS,
+  STATUS_TONES,
   appendHistory,
   historyEntryFromRun,
   historyEntryText,
@@ -14,6 +16,7 @@ import {
   stepText,
   withoutHistoryEntries,
 } from '../extension/shared/history.js';
+import { runStatusLabel, runStatusTone } from '../extension/shared/describe.js';
 
 /**
  * @param {string} runId
@@ -380,4 +383,11 @@ test('定期実行で始めた実行は、履歴と報告の文に定期実行�
     historyEntryText(/** @type {NonNullable<typeof manual>} */ (manual)),
     /定期実行/,
   );
+});
+
+test('実行履歴の結果は、サイドパネルの実行の状態と同じ言葉と色で示す（#133）', () => {
+  for (const status of /** @type {const} */ (['done', 'failed', 'stopped', 'halted'])) {
+    assert.equal(STATUS_LABELS[status], runStatusLabel(status));
+    assert.equal(STATUS_TONES[status], runStatusTone(status));
+  }
 });

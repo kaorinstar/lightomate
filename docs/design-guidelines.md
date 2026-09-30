@@ -34,6 +34,23 @@ content script がページの中に出す表示（`extension/content/overlay.js
 | [WCAG 2.2：1.4.3 Contrast (Minimum)](https://www.w3.org/TR/WCAG22/#contrast-minimum) | 文字と背景のコントラスト比を 4.5:1 以上にする | 文字色の基準 |
 | [Microsoft：Dialog Boxes（Windows のデザインガイドライン）](https://learn.microsoft.com/en-us/windows/win32/uxguide/win-dialog-box) | ボタンは「OK・実行する操作 → 実行しない操作 → Cancel → Apply → Help」の順に並べる | ボタンの並び（「3. 部品の使い方」） |
 | [NN/g：OK–Cancel or Cancel–OK?](https://www.nngroup.com/articles/ok-cancel-or-cancel-ok/) | プラットフォームの慣習に従う。Windows は OK が先。Web でも「OK first, Cancel last」 | 利用者は Windows で使うため、確定を先、キャンセルを最後にする |
+| [Carbon Design System：Status indicator pattern](https://carbondesignsystem.com/patterns/status-indicator-pattern/) | 状態を色だけで伝えない。色・形・記号のうち 2 つ以上を使い、文字の名前を添える | 状態の印（「要素ごとの見た目」） |
+| [GOV.UK Design System：Tag](https://design-system.service.gov.uk/components/tag/) | 状態は短い形容の言葉で示し、動詞を使わない。押せる部品にしない。同じ状態は同じ色にし、色の数を増やさない | 状態の印の言葉と色 |
+| [Fluent 2：Badge](https://fluent2.microsoft.design/components/web/react/core/badge/usage) | 状態を示す印の文字は 1〜2 語。フォーカスを受けない | 状態の印の長さ |
+| [Carbon Design System：Notification（Callout）](https://carbondesignsystem.com/components/notification/usage/) | 操作の結果ではなく画面と一緒に表示する重要な案内は、閉じられない callout にする。情報と注意だけに使い、関係する要素の近くに置き、重ねない | 常に表示する案内（コールアウト） |
+| [Fluent 2：MessageBar](https://fluent2.microsoft.design/components/web/react/core/messagebar/usage) | 記号、見出し（任意）、本文、操作で構成し、関係する区画・タブ・フォームの先頭に置く | 案内の構成と置き場所 |
+| [GOV.UK Design System：Inset text](https://design-system.service.gov.uk/components/inset-text/) | 補足には使えるが、必ず読ませたい内容には使わない。見落とされやすい | 備考（ⓘ）と案内の使い分け |
+| [Carbon Design System：Empty states pattern](https://carbondesignsystem.com/patterns/empty-states-pattern/) | 空の状態では、ここに何が表示されるかと、次に行う操作を示す。本来の要素の位置に置く | 空の状態の文 |
+| [NN/g：Designing Empty States in Complex Applications](https://www.nngroup.com/articles/empty-state-interface-design/) | 空の状態で、状態の説明、使い方の手がかり、始めるための道筋を示す | 空の状態の文 |
+| [GOV.UK Design System：Fieldset](https://design-system.service.gov.uk/components/fieldset/) | 関係する入力欄は、見出し（legend）を持つまとまりにする | 入力欄のまとまり |
+| [Fluent 2：Typography](https://fluent2.microsoft.design/typography) | 大きさと太さで階層を作り、役割ごとに決めた少数の段階だけを使う | 文字の階層（「4. 色・余白・文字」）の裏付け |
+| [Material Design 3：M3 Expressive](https://m3.material.io/blog/building-with-m3-expressive) | 大きさ、形、色、文字、囲みで、主な操作と重要な情報を強調する。強調は目的を持って使う | 強調の使い方（「要素ごとの見た目」） |
+| [GOV.UK Design System：Text input](https://design-system.service.gov.uk/components/text-input/) | 項目名は入力欄の上に常に表示する。説明（hint）は項目名と入力欄の間に置き、`aria-describedby` で結び付ける。placeholder を項目名・説明・例の代わりに使わない | 項目名と説明の置き方（「配置と余白」） |
+| [NN/g：Placeholders in Form Fields Are Harmful](https://www.nngroup.com/articles/form-design-placeholders/) | placeholder は入力を始めると消え、入力済みの値と見分けにくく、薄い文字で読みにくい | 例は説明文に書く |
+| [NN/g：Proximity Principle in Visual Design](https://www.nngroup.com/articles/gestalt-proximity/) | 近くに置いたものは関係があると受け取られる。関係するものを近づけ、別のまとまりを離す | 余白の大きさの使い分け |
+| [GOV.UK Design System：Layout](https://design-system.service.gov.uk/styles/layout/) | 本文の幅を読みやすい長さに制限する。内容は左に寄せる | 説明文の幅と左寄せ |
+| [WCAG 2.2：1.4.8 Visual Presentation](https://www.w3.org/WAI/WCAG22/Understanding/visual-presentation.html) | 文の 1 行の幅は 80 字以内（日本語・中国語・韓国語は 40 字以内）にする | 説明文の幅を 40em にする |
+| [WCAG 2.2：2.5.8 Target Size (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html) | 押せる部品は 24×24px 以上にする。文の中のリンクと、周りに十分な間隔がある部品は例外 | 押せる範囲の大きさ |
 
 ## 2. 画面の構成
 
@@ -113,7 +130,7 @@ content script がページの中に出す表示（`extension/content/overlay.js
      押すと詳細を開きます。見出しはホスト名の順、見出しの中はフロー名の順です。
    - 詳細の見出し：フロー名（最も大きい文字）、サイト、手順数・実行時に入力する値の数・作成日時・更新日時。
      右に［実行］［最初のページを開く］［名前の変更］［ファイルに書き出し］［削除］。押せない場合は、理由を
-     詳細の内容の先頭に表示します。値の入力が必要な場合は、同じ位置に枠で囲んだ入力フォームを出します。
+     詳細の内容の先頭に案内（コールアウト）で表示します。値の入力が必要な場合は、同じ位置に枠で囲んだ入力フォームを出します。
    - 詳細の内容は、見出しと入力フォームの下のタブ（#132）に分けます。同時に見比べない内容を分け、下の区画を
      見るための長いスクロールをなくすためです。見出しの操作と入力フォームは、どのタブでも見えるようタブの上に置きます。
      - ［手順］（最初に選ぶタブ）：「実行時に入力する値」（ある場合だけ）と「手順」（番号、種類、説明。一時停止は
@@ -155,19 +172,26 @@ content script がページの中に出す表示（`extension/content/overlay.js
 | 区画 | `card`、`card-header`、`card-body` |
 | 一覧 | `list-group`、`list-group-flush`、`list-group-item` |
 | 主な操作（1 区画に 1 つ） | `btn btn-primary` |
+| 一覧の行ごとに繰り返す主な操作（サイドパネルとまとめフローの行の［実行］） | `btn btn-sm btn-outline-primary` |
 | そのほかの操作 | `btn` |
 | 元に戻せない操作（削除など） | 最初のボタンは `btn btn-ghost-danger`、確認の中の確定のボタンは `btn btn-danger` |
 | 一覧の行の中の操作 | `btn-sm` を付ける |
 | 入力欄 | `form-label`、`form-control`、`form-select` |
+| 区画と入力欄の説明文 | `lm-hint`（`base.css`）。本文と同じ大きさで、色だけを薄くします |
+| 途中で折り返さない文字（日時） | `lm-nowrap`（`base.css`） |
 | 知らせ（誤り・警告） | `extension/shared/ui.js` の `showNotice`（`alert` を使います） |
 | 成功の知らせ | `extension/shared/ui.js` の `showToast`。表示欄は `<div id="toast" class="lm-toast-region" role="status" aria-live="polite">` |
 | 入力欄の誤り | `extension/shared/ui.js` の `showFieldError`（`is-invalid` と `invalid-feedback` を使います） |
 | 確認 | `extension/shared/ui.js` の `confirmInline` |
 | 備考（区画の外の補足、#108） | 枠と背景のない `lm-sub lm-aside`。先頭に `aria-hidden` の「ⓘ」を置きます。操作の結果ではなく常に表示する案内のため、「5. 知らせと誤りの表示場所」の知らせには含めません |
-| 設定の状態（#22） | 状態の印（`base.css` の `lm-status`）で「設定済み」「未設定」を示し、続けて内容を太字、補足を `lm-sub` で書きます |
-| 操作できない理由と対処の案内（区画の中で常に表示する案内、#22） | `alert alert-info lm-guide`。先頭に「i」の印を付けた見出しを置き、「理由」「〜するには」の小見出しの下に箇条書きで書きます。操作の結果ではないため、「5. 知らせと誤りの表示場所」の知らせには含めません |
+| 状態（実行の状態、実行履歴の結果、設定の状態） | 状態の印（`base.css` の `lm-status`）。設定の状態では、続けて内容を太字、補足を `lm-sub` で書きます（「要素ごとの見た目」） |
+| 常に表示する案内（操作できない理由と対処など、#22） | `alert alert-info lm-guide`（`base.css`）。操作の結果ではないため、「5. 知らせと誤りの表示場所」の知らせには含めません（「要素ごとの見た目」） |
 
 - 1 つの区画に `btn-primary` は 1 つだけ置きます。どれを押せばよいかを、色で示すためです。
+  区画は、カードと、カードの中の入力フォーム（実行の速度、定期実行、JSON の編集など）です。入力フォームの
+  確定のボタン（［速度を保存］［定期実行を保存］［JSON を保存］など）は `btn-primary` にします。
+- 一覧の行ごとに同じ主な操作を繰り返す場合は、塗りつぶしではなく枠の `btn-outline-primary` にします。
+  塗りつぶしのボタンが縦に並ぶと、区画の中で最も重要な操作がどれかを色で示せなくなるためです。
 
 ### ボタンの並び（#112）
 
@@ -187,6 +211,71 @@ HTML に書いた並び（`lm-buttons`）は、`test/button-order.test.js` で 1
 - 独自のクラスには `lm-` を付けます（例：`lm-notice`、`lm-sub`）。Tabler のクラスと区別するためです。
   両画面で使うものは `extension/shared/base.css`、片方だけのものは各画面の CSS に置きます。
 
+### 要素ごとの見た目（#133）
+
+公開されているデザインシステム（Carbon、Fluent 2、GOV.UK、Material Design 3）と NN/g の記事に基づく、
+要素ごとの規則です。出典は「根拠とした一次情報」にあります。
+
+- **状態の印**（`base.css` の `lm-status`）
+  - 状態は、色だけでなく文字の名前でも示します。色は補助です。
+  - 名前は 1〜2 語の状態を表す言葉（「実行中」「完了」「設定済み」）にし、「実行する」のような動詞にしません。
+  - 押せる部品にしません。押せる見た目のボタンと区別するためです。
+  - **同じ状態は、どの画面でも同じ名前と同じ色にします。** 実行の状態と実行履歴の結果は、
+    `describe.js` の `runStatusLabel`・`runStatusTone` と `history.js` の `STATUS_LABELS`・`STATUS_TONES` を
+    そろえます（`test/history.test.js` で確かめます）。
+  - 色は次の 5 種類だけを使います。
+
+    | 色 | 意味 | 例 |
+    |---|---|---|
+    | 緑（`success`） | 終わった、使える | 完了、設定済み |
+    | 青（`primary`） | 進行中 | 実行中 |
+    | 黄（`warning`） | 人の操作を待っている | 一時停止中、確定の手前で停止 |
+    | 赤（`danger`） | 失敗した | 失敗 |
+    | 灰（指定なし） | 止めた、まだない | 中止、未設定、待機中 |
+
+- **常に表示する案内（コールアウト）**（`alert alert-info lm-guide`、注意は `alert-warning`）
+  - 操作の結果ではなく、画面と一緒に表示する重要な案内に使います。例は、操作できない理由と、その対処です。
+    操作の結果の知らせ（`showNotice`）とは使い分けます。
+  - 先頭に「i」の印を付けた見出しを置きます。短い案内は見出しだけで構いません。長い案内は、見出しの下に
+    本文と、「理由」「〜するには」などの小見出し付きの箇条書きを置きます。
+  - 関係する区画・タブ・フォームの先頭に置き、1 つの区画に 1 つまでとします。閉じるボタンは付けません。
+  - 情報（青）と注意（黄）だけに使います。誤り（赤）と成功（緑）は操作の結果のため、`showNotice` と `showToast` を使います。
+  - 一覧の行の中の理由（サイドパネルの［実行］を押せない理由など）は、場所が狭いため、行の中の小さい文字（`lm-sub`）で示します。
+- **備考（ⓘ、`lm-aside`）**：読まなくても操作に困らない補足だけに使います。必ず読んでほしい内容には、案内（コールアウト）を使います。枠と背景のない備考は、見落とされやすいためです。
+- **空の状態**（`lm-empty`）
+  - 一覧が空のときは、何もない枠を見せず、一覧の位置に文を置きます。
+  - 文は「〜はまだありません。」に続けて、どうすれば作れるか（押すボタンの名前）を書きます。
+  - 検索で該当しない場合は、「該当する〜はありません。」だけで構いません。利用者が自分の操作の結果だと分かるためです。
+- **入力欄のまとまり**
+  - 1 つの設定を作る入力欄の組（実行の速度の最短と最長、定期実行の周期と時刻など）は、見出しを持つ
+    フォーム（`aria-labelledby` で見出しを指す `form`）か、`fieldset` と `legend` でまとめます。
+  - 読み上げで、どの設定の欄かが分かるようにするためです。
+- **強調**
+  - 強調（色、太さ、囲み）は、1 つの区画で最も重要な 1 つの操作か情報だけに使います。主な操作は `btn-primary`、
+    重要な案内はコールアウトです。
+  - M3 Expressive のうち、形の変化や動きによる強調は採り入れません。業務の道具として、落ち着いた見た目を保つためです。
+
+### 配置と余白（#133）
+
+- **項目名は入力欄の上に置き、常に表示します。** 書き方の説明は、項目名と入力欄の間に `lm-hint` で置き、
+  入力欄の `aria-describedby` で結び付けます。項目名の中に括弧書きで説明を足しません。項目名が長くなり、
+  入力欄を探しにくくなるためです。
+- **例は説明文に「例：」を付けて書き、placeholder に書きません。** placeholder は入力を始めると消え、
+  入力済みの値と見分けにくいためです。既定値も placeholder で示さず、説明文に書きます（例：実行の速度）。
+  検索欄だけは、画面の上で項目名を省き（`visually-hidden` の項目名は置きます）、placeholder に同じ文を書きます。
+  検索欄であることが、形と位置から分かるためです。
+- **余白は、関係の近さで使い分けます。** 項目名と説明の間は 4px、説明と入力欄の間は 8px、入力欄のまとまりどうしの
+  間は 16px、区画どうしの間は管理画面で 16px、サイドパネルで 12px です。入力フォームと、その下のタブや区画の
+  間も 16px 空けます。関係するものが近く、別のまとまりが離れて見えるようにするためです。
+- **説明文の 1 行は、全角 40 字前後までにします。** `lm-hint`、`lm-panel-note`、案内（コールアウト）の文、
+  免責事項の箇条書きに `max-width: 40em` を指定します。画面の幅が広くても、行が長くなりすぎないようにするためです。
+  1 行で終わる補足（詳細の日時の行など）は対象外です。
+- **文と部品は左に寄せます。** 中央寄せは使いません。行の始まりがそろい、目で追いやすいためです。
+  見出しの帯の操作と、カードの 1 行目の操作は右端に置きます（「ボタンの並び」の 6）。
+- **押せる部品は 24×24px 以上にします。** 小さい文字の開閉の見出し（`summary`）には上下の余白を足します。
+  文の中のリンクと、項目名を含む `label` で押せる範囲を広げたチェックボックスは例外です。
+- **日時は途中で折り返しません**（`lm-nowrap`）。幅が狭いサイドパネルで、日付と時刻が別の行に分かれないようにするためです。
+
 ## 4. 色・余白・文字
 
 - **色**：Tabler の CSS 変数（`--tblr-primary`、`--tblr-danger`、`--tblr-secondary` など）だけを使い、
@@ -194,6 +283,9 @@ HTML に書いた並び（`lm-buttons`）は、`test/button-order.test.js` で 1
 - **コントラスト**：文字と背景のコントラスト比を 4.5:1 以上にします。Tabler の標準の知らせの色は、
   明るい表示で基準に届かないもの（黄色で約 2:1）があるため、`base.css` で文字色を調整しています。
   色を変えたときは、作業環境の Chromium で両方の表示の文字色と背景色を取得し、比を計算して確認します。
+  見出しの帯、選んだ一覧の行、マウスを重ねた一覧の行は背景が一段濃いため、補足の文字（`lm-sub`、件数）を
+  本文の色に寄せて濃くしています。赤いボタン、赤い文字のボタン、暗い表示の青い枠のボタン、灰色の枠なしボタンを
+  押したときの色も、Tabler の標準では基準に届かないため、`base.css` で調整しています。
 - **余白**：4px の倍数（4、8、12、16、24px。rem では 0.25、0.5、0.75、1、1.5）だけを使います。
   区画どうしの間は、サイドパネルで 12px、管理画面で 16px です。
   カードの本文と一覧の 1 行の上下の余白は、両画面で 12px です（Tabler の標準の 20px を `base.css` で上書き）。
@@ -205,7 +297,7 @@ HTML に書いた並び（`lm-buttons`）は、`test/button-order.test.js` で 1
   | 詳細の見出し | 管理画面の詳細のフロー名 | 20px | （なし） | 700 | `lm-detail-name` |
   | 区画見出し | カードの見出し、タブ、詳細の中の節（「手順」など） | 16px（タブは 15px） | 14px | 700（タブは 600） | `card-title`、`lm-tabs`、`lm-block-title` |
   | 項目名 | 一覧のフロー名、入力欄の項目名 | 15px（項目名は 14px） | 14px | 600 | `lm-item-name`、`lm-flow-name`、`form-label` |
-  | 本文 | 説明、手順の説明、ボタン、入力欄 | 14px | 13px | 400 | （指定なし） |
+  | 本文 | 説明、手順の説明、ボタン、入力欄 | 14px | 13px | 400 | （指定なし）。説明文は `lm-hint` |
   | 補足 | 日時、件数、サイト、注記、小さいボタン | 12px | 12px | 400 | `lm-sub`、`btn-sm` |
 
   サイドパネルは幅が狭く、大きい文字では 1 行に入る文字数が減り、フロー名の折り返しが増えるため、

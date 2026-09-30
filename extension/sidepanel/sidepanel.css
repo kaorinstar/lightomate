@@ -239,6 +239,15 @@ body {
   cursor: pointer;
 }
 
+/*
+ * 開閉の見出し（［記録した手順］［記録した内容（JSON）］）は、補足の小さい文字のため、上下に余白を足して
+ * 押せる範囲の高さを 24px 以上にします（WCAG 2.2 の 2.5.8）。
+ */
+details > summary.lm-sub {
+  padding-block: 0.25rem;
+  cursor: pointer;
+}
+
 .lm-batch-details > .lm-batch-items {
   margin-top: 0.5rem;
 }

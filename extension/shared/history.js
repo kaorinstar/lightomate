@@ -56,10 +56,22 @@ export const REDACTED = '＊＊＊';
 
 /** 結果の表示名です。 */
 export const STATUS_LABELS = {
-  done: '成功',
+  done: '完了',
   failed: '失敗',
   stopped: '中止',
-  halted: '一時停止',
+  halted: '確定の手前で停止',
+};
+
+/**
+ * 結果ごとの状態の印の色の種類です（base.css の lm-status-<種類>）。サイドパネルの実行の状態
+ * （describe.js の runStatusLabel と runStatusTone）と同じ言葉と色にそろえます（#133）。
+ * @type {Record<HistoryEntry['status'], 'success' | 'danger' | 'muted' | 'warning'>}
+ */
+export const STATUS_TONES = {
+  done: 'success',
+  failed: 'danger',
+  stopped: 'muted',
+  halted: 'warning',
 };
 
 /**

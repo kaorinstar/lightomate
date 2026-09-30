@@ -18,7 +18,7 @@ body {
 }
 
 .lm-panel-note {
-  max-width: 60rem;
+  max-width: 40em;
   margin: 0 0 1rem;
   color: var(--tblr-secondary);
 }
@@ -164,6 +164,7 @@ body {
 /* まとめフローの行の中に開く、実行する値の入力欄です（#7）。フローごとの欄の間と、ボタンの上に余白を置きます。 */
 .lm-batch-row .lm-run-form {
   margin-top: 0.5rem;
+  margin-bottom: 0;
 }
 
 .lm-batch-row .lm-run-fields + .lm-run-fields {
@@ -338,6 +339,7 @@ body {
 
 /* 選んだフローを開く・実行するときの、値の入力欄です（#43）。手順の一覧と区別するため、枠で囲みます。 */
 .lm-run-form {
+  margin-bottom: 1rem;
   padding: 1rem;
   border: 1px solid var(--tblr-primary);
   border-radius: var(--tblr-border-radius);
@@ -368,20 +370,6 @@ body {
 
 .lm-history .lm-nowrap {
   white-space: nowrap;
-}
-
-/*
-  結果は文字で示し、失敗と一時停止には色も付けます。色だけで伝えないためです。
-  文字色は、明るい表示と暗い表示の両方でコントラスト比が 4.5:1 以上になる *-text-emphasis を使います。
-*/
-.lm-history td.lm-status-failed {
-  color: var(--tblr-danger-text-emphasis, var(--tblr-danger));
-  font-weight: 600;
-}
-
-.lm-history td.lm-status-halted {
-  color: var(--tblr-warning-text-emphasis, var(--tblr-warning));
-  font-weight: 600;
 }
 
 /*
@@ -421,49 +409,6 @@ body {
   margin-bottom: 0.75rem;
 }
 
-/* 常に表示する案内です。操作できない理由と、その対処を見出し付きで示します（#22）。 */
-.lm-guide {
-  margin-bottom: 0.75rem;
-  padding: 0.75rem 1rem;
-}
-
-.lm-guide p,
-.lm-guide ul {
-  margin: 0;
-}
-
-.lm-guide ul {
-  padding-inline-start: 1.25rem;
-}
-
-.lm-guide-title {
-  display: flex;
-  align-items: center;
-  gap: 0.4em;
-  margin-bottom: 0.25rem !important;
-  font-weight: 600;
-}
-
-/* 色だけで伝えないよう、知らせ（.lm-notice）と同じ記号を見出しの先頭に付けます。 */
-.lm-guide-title::before {
-  content: 'i';
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  width: 1.1em;
-  height: 1.1em;
-  border: 1.5px solid currentcolor;
-  border-radius: 50%;
-  font-size: 0.85em;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.lm-guide-label {
-  margin-top: 0.5rem !important;
-  font-weight: 600;
-}
-
 .lm-speed-feedback:empty {
   display: none;
 }
@@ -500,6 +445,7 @@ body {
 
 /* 免責事項（#109）です。項目の間を空け、1 項目ずつ読めるようにします。 */
 .lm-disclaimer {
+  max-width: 40em;
   margin: 0;
   padding-left: 1.25rem;
 }

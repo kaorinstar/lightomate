@@ -62,7 +62,13 @@ import {
   secretStepIndexes,
   showRunFieldErrors,
 } from '../shared/run-form.js';
-import { STATUS_LABELS, historyEntryText, historyToCsv, stepText } from '../shared/history.js';
+import {
+  STATUS_LABELS,
+  STATUS_TONES,
+  historyEntryText,
+  historyToCsv,
+  stepText,
+} from '../shared/history.js';
 import { formatSeconds, readIntervalInput } from '../shared/speed.js';
 import {
   SCHEDULES_KEY,
@@ -114,6 +120,7 @@ const elements = {
   openFirst: /** @type {HTMLButtonElement} */ (byId('open-first')),
   run: /** @type {HTMLButtonElement} */ (byId('run')),
   runReason: byId('run-reason'),
+  runReasonText: byId('run-reason-text'),
   runForm: /** @type {HTMLFormElement} */ (byId('run-form')),
   runFormHeading: byId('run-form-heading'),
   runFields: byId('run-fields'),
@@ -628,7 +635,7 @@ async function renderRunButtons(flow) {
         : '';
   elements.openFirst.disabled = noFirstPage;
   elements.run.disabled = Boolean(reason);
-  elements.runReason.textContent = reason;
+  elements.runReasonText.textContent = reason;
   elements.runReason.hidden = !reason;
 }
 
@@ -1010,7 +1017,7 @@ function batchRow(batch, flows) {
 
   const run = document.createElement('button');
   run.type = 'button';
-  run.className = 'btn btn-sm btn-primary';
+  run.className = 'btn btn-sm btn-outline-primary';
   run.textContent = '実行';
   run.setAttribute('aria-label', `まとめフロー「${batch.name}」を実行`);
   run.disabled = problems.length > 0;
@@ -1817,8 +1824,12 @@ async function renderHistory() {
       flow.append(name, origin);
 
       const status = document.createElement('td');
-      status.className = `lm-nowrap lm-status-${entry.status}`;
-      status.textContent = STATUS_LABELS[entry.status];
+      status.className = 'lm-nowrap';
+      // 結果は、サイドパネルの実行の状態と同じ状態の印で示します（#133）。
+      const mark = document.createElement('span');
+      mark.className = `lm-status lm-status-${STATUS_TONES[entry.status]}`;
+      mark.textContent = STATUS_LABELS[entry.status];
+      status.append(mark);
       if (entry.trigger === 'schedule') {
         const trigger = document.createElement('div');
         trigger.className = 'lm-sub';

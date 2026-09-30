@@ -42,6 +42,10 @@ function fakeElement(id = '') {
       attributes.set(name, value);
     },
     /** @param {string} name */
+    getAttribute(name) {
+      return attributes.get(name) ?? null;
+    },
+    /** @param {string} name */
     removeAttribute(name) {
       attributes.delete(name);
     },
@@ -90,6 +94,17 @@ test('入力欄の誤りを入力欄に結び付け、空の文字列で解除�
   assert.equal(control.attributes.has('aria-invalid'), false);
   assert.equal(control.attributes.has('aria-describedby'), false);
   assert.equal(feedback.textContent, '');
+});
+
+test('入力欄の説明文の結び付けは、誤りを表示しても解除しても残す', () => {
+  const control = fakeElement();
+  control.setAttribute('aria-describedby', 'name-hint');
+  const feedback = fakeElement('name-feedback');
+  showFieldError(/** @type {any} */ (control), /** @type {any} */ (feedback), '誤りです。');
+  assert.equal(control.attributes.get('aria-describedby'), 'name-hint name-feedback');
+
+  showFieldError(/** @type {any} */ (control), /** @type {any} */ (feedback), '');
+  assert.equal(control.attributes.get('aria-describedby'), 'name-hint');
 });
 
 test('OS の設定に合わせて data-bs-theme を切り替える', () => {

@@ -34,8 +34,16 @@
 }
 
 .invalid-feedback,
-.lm-text-danger {
+.lm-text-danger,
+.btn-ghost-danger:not(:hover, :active, :focus) {
   color: color-mix(in oklab, var(--tblr-danger) 85%, black);
+}
+
+/*
+ * 赤いボタンの白い文字も 4.5:1 以上にします。Tabler の標準の赤では約 4.5:1 にわずかに届かないためです。
+ */
+.btn-danger {
+  --tblr-btn-variant: color-mix(in oklab, var(--tblr-danger) 90%, black);
 }
 
 /* 入力欄の誤りは、JSON の形式の誤りのように複数になることがあるため、改行で並べます。 */
@@ -52,6 +60,11 @@
 [data-bs-theme='dark'] .lm-text-danger,
 [data-bs-theme='dark'] .btn-ghost-danger:not(:hover, :active, :focus) {
   color: color-mix(in oklab, var(--tblr-danger) 55%, white);
+}
+
+/* 暗い表示では、青い枠のボタン（一覧の行の［実行］）の文字も、白を混ぜて読める濃さにします。 */
+[data-bs-theme='dark'] .btn-outline-primary:not(:hover, :active, :focus, :disabled) {
+  color: color-mix(in oklab, var(--tblr-primary) 55%, white);
 }
 
 /*
@@ -97,6 +110,34 @@
 /* 区画の見出しの帯は、内容より一段濃い背景にし、境目を色でも示します。 */
 .card-header {
   background: color-mix(in oklab, var(--tblr-bg-surface) 95%, var(--tblr-body-color));
+}
+
+/*
+ * 灰色の枠なしボタン（「…」「×」［フローの管理］）は、Tabler の標準では、マウスを重ねたときと押したときに
+ * 背景を灰色で塗り、暗い表示で文字との比が約 2.4:1 になります。背景を薄い灰色にし、文字を本文の色にします。
+ * 「…」のように開閉するボタンは、開いている間（aria-expanded="true"）も押したときと同じ見た目にします。
+ */
+.btn-ghost-secondary {
+  --tblr-btn-hover-color: var(--tblr-body-color);
+  --tblr-btn-hover-bg: color-mix(in oklab, var(--tblr-secondary) 18%, transparent);
+  --tblr-btn-hover-border-color: transparent;
+  --tblr-btn-active-color: var(--tblr-body-color);
+  --tblr-btn-active-bg: color-mix(in oklab, var(--tblr-secondary) 28%, transparent);
+}
+
+.btn-ghost-secondary[aria-expanded='true'] {
+  background: var(--tblr-btn-active-bg);
+  color: var(--tblr-btn-active-color);
+}
+
+/*
+ * 見出しの帯の中と、選んでいる一覧の行・マウスを重ねた一覧の行の補足（サイト、日時、件数）は、
+ * 背景が一段濃いため、補足の色では 4.5:1 に届きません。本文の色を混ぜて濃くします。
+ */
+.card-header .lm-sub,
+.card-header .lm-count:not(:empty),
+:is(.list-group-item, .list-group-item-action):is(.active, :hover, :focus-visible) .lm-sub {
+  color: color-mix(in oklab, var(--tblr-secondary) 80%, var(--tblr-body-color));
 }
 
 /* 見出しの後ろに付ける件数です。 */
@@ -235,11 +276,25 @@
   align-items: center;
 }
 
+/*
+ * 区画や入力欄の説明文です（#133）。本文と同じ大きさにし、色だけを薄くします。説明は読んでもらう文のため、
+ * 補足（lm-sub）の小さい文字にしません。1 行を全角 40 字前後までにし、長い行で目が次の行を見失わないようにします。
+ */
+.lm-hint {
+  max-width: 40em;
+  color: var(--tblr-secondary);
+}
+
 /* 補足の文字です。見出し・本文・補足の 3 段階のうち、最も小さいものです。 */
 .lm-sub {
   color: var(--tblr-secondary);
   font-size: 0.75rem;
   overflow-wrap: anywhere;
+}
+
+/* 途中で折り返さない文字です（日時など）。 */
+.lm-nowrap {
+  white-space: nowrap;
 }
 
 .lm-code {
@@ -418,4 +473,56 @@
 
 .lm-status-danger {
   --lm-status-color: var(--tblr-danger);
+}
+
+/*
+ * 常に表示する案内（コールアウト）です。操作できない理由と、その対処を示します（#22、#133）。
+ * 操作の結果の知らせ（.lm-notice）と異なり、閉じるボタンを持たず、関係する区画の先頭に置きます。
+ */
+.lm-guide {
+  margin-bottom: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+
+.lm-guide p,
+.lm-guide ul {
+  max-width: 40em;
+  margin: 0;
+}
+
+.lm-guide ul {
+  padding-inline-start: 1.25rem;
+}
+
+.lm-guide-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin-bottom: 0.25rem !important;
+  font-weight: 600;
+}
+
+/* 色だけで伝えないよう、知らせ（.lm-notice）と同じ記号を見出しの先頭に付けます。 */
+.lm-guide-title::before {
+  content: 'i';
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.1em;
+  height: 1.1em;
+  border: 1.5px solid currentcolor;
+  border-radius: 50%;
+  font-size: 0.85em;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.lm-guide-title:only-child {
+  margin-bottom: 0 !important;
+  font-weight: 400;
+}
+
+.lm-guide-label {
+  margin-top: 0.5rem !important;
+  font-weight: 600;
 }
