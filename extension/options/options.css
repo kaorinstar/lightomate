@@ -555,3 +555,54 @@ body {
 #all-sites-notice {
   margin: 0.5rem 0 0;
 }
+
+/*
+ * 手順のブロック（#9）を表示する欄です。Blockly は欄の大きさに合わせて描くため、高さを決めます。
+ * 左にブロックの一覧、右に手順のブロックを置きます。
+ */
+.lm-blocks {
+  height: 34rem;
+  overflow: hidden;
+  border: 1px solid var(--tblr-border-color);
+  border-radius: var(--tblr-border-radius);
+  background: var(--tblr-bg-surface);
+}
+
+/*
+ * 実行時に入力する値の定義の入力欄です（#9）。1 つの値を 1 つの枠にし、名前・表示名・種類を 1 行に、
+ * 選択肢と既定値をその下に並べます。狭い幅では 1 列にします。
+ */
+.lm-param-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.lm-param-row {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--tblr-border-color);
+  border-radius: var(--tblr-border-radius);
+}
+
+.lm-param-legend {
+  float: none;
+  width: auto;
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.lm-param-main,
+.lm-param-extras {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.5rem 1rem;
+}
+
+.lm-param-extras {
+  margin-top: 0.5rem;
+}
+
+.lm-param-field .form-label {
+  margin-bottom: 0.25rem;
+}

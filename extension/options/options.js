@@ -28,8 +28,11 @@ import {
   saveStopRule,
 } from '../common/stop-rules-store.js';
 import { listHistory, onHistoryChanged } from '../common/history-store.js';
-import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
-import { flattenSteps, outlineSteps } from '../shared/control-flow.js';
+import { describeParam, formatDateTime } from '../shared/describe.js';
+import { flattenSteps } from '../shared/control-flow.js';
+import { createBlockEditor } from './block-editor.js';
+import { paramFieldset, readParamRows } from './param-form.js';
+import { paramsFromRows, renameParamReferences, rowsFromParams } from '../shared/param-edit.js';
 import {
   flowOrigins,
   formatFlowJson,
@@ -134,7 +137,6 @@ const elements = {
   renameInput: /** @type {HTMLInputElement} */ (byId('rename-input')),
   renameFeedback: byId('rename-feedback'),
   renameCancel: byId('rename-cancel'),
-  paramsSection: byId('params-section'),
   speedForm: /** @type {HTMLFormElement} */ (byId('speed-form')),
   intervalMin: /** @type {HTMLInputElement} */ (byId('interval-min')),
   intervalMax: /** @type {HTMLInputElement} */ (byId('interval-max')),
@@ -155,8 +157,20 @@ const elements = {
   scheduleSave: /** @type {HTMLButtonElement} */ (byId('schedule-save')),
   scheduleNotice: byId('schedule-notice'),
   params: byId('params'),
+  paramsEmpty: byId('params-empty'),
+  paramsButtons: byId('params-buttons'),
+  paramsEdit: /** @type {HTMLButtonElement} */ (byId('params-edit')),
+  paramsEditNotice: byId('params-edit-notice'),
+  paramsForm: /** @type {HTMLFormElement} */ (byId('params-form')),
+  paramsRows: byId('params-rows'),
+  paramsAdd: /** @type {HTMLButtonElement} */ (byId('params-add')),
+  paramsCancel: /** @type {HTMLButtonElement} */ (byId('params-cancel')),
+  paramsNotice: byId('params-notice'),
   stepCount: byId('step-count'),
-  steps: byId('steps'),
+  blocks: byId('blocks'),
+  blocksSave: /** @type {HTMLButtonElement} */ (byId('blocks-save')),
+  blocksRevert: /** @type {HTMLButtonElement} */ (byId('blocks-revert')),
+  blocksNotice: byId('blocks-notice'),
   jsonNotice: byId('json-notice'),
   jsonFeedback: byId('json-feedback'),
   json: /** @type {HTMLTextAreaElement} */ (byId('json')),
@@ -248,6 +262,9 @@ const notices = [
   elements.scheduleNotice,
   elements.allSitesNotice,
   elements.backupNotice,
+  elements.blocksNotice,
+  elements.paramsEditNotice,
+  elements.paramsNotice,
 ];
 
 /**
@@ -269,6 +286,199 @@ const fieldFeedbacks = [
 
 /** 編集中のフローの id です。URL の # 以降にも書き、再読み込みしても同じフローを開きます。 */
 let selectedId = decodeURIComponent(location.hash.slice(1));
+
+// ---- 手順のブロック（#9） ----
+
+/** ［手順］タブのブロックの編集画面です。 */
+const blockEditor = createBlockEditor(elements.blocks, { onChange: updateBlockButtons });
+
+/**
+ * ブロックに表示している手順（保存済みの内容）です。JSON の文字列で持ち、保存済みのフローと比べて、
+ * ほかの場所（［JSON］タブなど）で手順が変わったかを判定します。
+ */
+let loadedSteps = '';
+
+/** ［JSON］タブの編集欄に、保存していない変更があるかです。 */
+let jsonDirty = false;
+
+elements.json.addEventListener('input', () => {
+  jsonDirty = true;
+});
+
+/**
+ * 保存していない変更の有無に合わせて、［手順を保存］［変更を取り消す］を押せるようにします。
+ * @param {boolean} dirty
+ */
+function updateBlockButtons(dirty) {
+  elements.blocksSave.disabled = !dirty;
+  elements.blocksRevert.disabled = !dirty;
+}
+
+/**
+ * ブロックに、保存済みのフローの手順を表示し直します。
+ * @param {import('../shared/flow.js').Step[]} steps
+ */
+function loadBlocks(steps) {
+  loadedSteps = JSON.stringify(steps);
+  blockEditor.load(steps);
+}
+
+elements.blocksSave.addEventListener('click', async () => {
+  clearNotices();
+  const stored = await getFlow(selectedId);
+  if (!stored) {
+    return;
+  }
+  const { steps, error } = blockEditor.steps();
+  if (error) {
+    showNotice(elements.blocksNotice, error, 'error');
+    return;
+  }
+  const flow = { ...stored.flow, steps };
+  const result = await saveFlow(flow, selectedId);
+  if (!result.ok) {
+    showNotice(
+      elements.blocksNotice,
+      `形式に誤りがあるため、保存しませんでした。\n${result.errors.join('\n')}`,
+      'error',
+    );
+    return;
+  }
+  loadedSteps = JSON.stringify(steps);
+  blockEditor.markSaved();
+  showSavedJson({ ...flow, name: result.name });
+  showToast(elements.toast, '手順を保存しました。');
+});
+
+/**
+ * ［手順］タブで保存したフローを、［JSON］タブの編集欄にも表示します。
+ * ［JSON］タブに保存していない編集がある場合は、その編集を消さないよう入れ替えません。
+ * @param {import('../shared/flow.js').Flow} flow
+ */
+function showSavedJson(flow) {
+  if (!jsonDirty) {
+    elements.json.value = JSON.stringify(orderFlow(flow), null, 2);
+  }
+}
+
+// ---- 実行時に入力する値の定義（#9） ----
+
+/**
+ * 値の定義の入力欄を開くか閉じます。開いている間は［値の定義を編集］を隠します（#112）。
+ * @param {import('../shared/params.js').Param[] | null} params 開く場合は、入力欄に入れる定義
+ */
+function showParamsForm(params) {
+  elements.paramsForm.hidden = params === null;
+  elements.paramsButtons.hidden = params !== null;
+  // 入力欄と同じ内容の一覧は、編集している間は隠します。
+  elements.params.classList.toggle('d-none', params !== null);
+  elements.paramsEmpty.classList.toggle('d-none', params !== null);
+  elements.paramsRows.replaceChildren(
+    ...(params ? rowsFromParams(params).map((row, index) => paramFieldset(row, index)) : []),
+  );
+}
+
+elements.paramsEdit.addEventListener('click', async () => {
+  clearNotices();
+  // 値の定義を保存すると、手順の中の参照も書き換えるため、ブロックの保存していない変更と両立しません。
+  if (blockEditor.dirty) {
+    showNotice(
+      elements.paramsEditNotice,
+      '手順のブロックに保存していない変更があります。先に［手順を保存］か［変更を取り消す］を押してください。',
+      'warning',
+    );
+    return;
+  }
+  const stored = await getFlow(selectedId);
+  if (stored) {
+    showParamsForm(stored.flow.params ?? []);
+    elements.paramsRows.querySelector('input')?.focus();
+  }
+});
+
+elements.paramsAdd.addEventListener('click', () => {
+  const index = elements.paramsRows.querySelectorAll('fieldset').length;
+  const row = { originalName: '', name: '', label: '', type: 'text', options: '', default: '' };
+  const fieldset = paramFieldset(row, index);
+  elements.paramsRows.append(fieldset);
+  fieldset.querySelector('input')?.focus();
+});
+
+elements.paramsCancel.addEventListener('click', () => {
+  clearNotices();
+  showParamsForm(null);
+  elements.paramsEdit.focus();
+});
+
+elements.paramsForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearNotices();
+  const stored = await getFlow(selectedId);
+  if (!stored) {
+    return;
+  }
+  const { params, renames } = paramsFromRows(readParamRows(elements.paramsRows));
+  let steps = stored.flow.steps;
+  for (const { from, to } of renames) {
+    steps = renameParamReferences(steps, from, to);
+  }
+  /** @type {import('../shared/flow.js').Flow} */
+  const flow = { ...stored.flow, steps };
+  if (params.length > 0) {
+    flow.params = params;
+  } else {
+    delete flow.params;
+  }
+  const result = await saveFlow(flow, selectedId);
+  if (!result.ok) {
+    showNotice(
+      elements.paramsNotice,
+      `誤りがあるため、保存しませんでした。\n${result.errors.join('\n')}`,
+      'error',
+    );
+    return;
+  }
+  showParamsForm(null);
+  showSavedJson({ ...flow, name: result.name });
+  showToast(elements.toast, '値の定義を保存しました。');
+});
+
+elements.blocksRevert.addEventListener('click', async () => {
+  clearNotices();
+  const stored = await getFlow(selectedId);
+  if (stored) {
+    loadBlocks(stored.flow.steps);
+  }
+});
+
+/**
+ * ブロックに保存していない変更がある場合に、破棄してよいかを、押したボタンの直下で確かめます。
+ * 変更がない場合と、破棄してよい場合は true を返します。
+ * @param {Element} anchor 押したボタン（確認は、その直後に出します）
+ * @param {string} action 破棄した後に行う操作の名前（例：「別のフローを開く」）
+ * @returns {Promise<boolean>}
+ */
+async function confirmDiscardBlocks(anchor, action) {
+  if (!blockEditor.dirty) {
+    return true;
+  }
+  const holder = document.createElement('div');
+  anchor.after(holder);
+  const ok = await confirmInline(holder, {
+    message: `手順のブロックに保存していない変更があります。変更を破棄して${action}と、元に戻せません。`,
+    confirmLabel: `破棄して${action}`,
+    danger: true,
+  });
+  holder.remove();
+  return ok;
+}
+
+// 保存していない変更がある状態で管理画面を閉じる場合は、Chrome の確認を出します。
+window.addEventListener('beforeunload', (event) => {
+  if (blockEditor.dirty) {
+    event.preventDefault();
+  }
+});
 
 elements.version.textContent = chrome.runtime.getManifest().version;
 followColorScheme(document.documentElement, matchMedia('(prefers-color-scheme: dark)'));
@@ -365,6 +575,24 @@ function selectDetailTab(name, focus = false) {
     tab.tabIndex = selected ? 0 : -1;
     byId(tab.getAttribute('aria-controls') ?? '').hidden = !selected;
   }
+  if (detailTab === 'steps') {
+    // 隠していた間は大きさを測れないため、表示したときに合わせ直します。
+    blockEditor.resize();
+    if (jsonDirty) {
+      showNotice(
+        elements.blocksNotice,
+        '［JSON］タブに保存していない編集があります。ここで［手順を保存］を押すと、その編集は保存されません。',
+        'warning',
+      );
+    }
+  }
+  if (detailTab === 'json' && blockEditor.dirty) {
+    showNotice(
+      elements.jsonNotice,
+      '［手順］タブのブロックに保存していない変更があります。ここで［JSON を保存］を押すと、その変更は破棄されます。',
+      'warning',
+    );
+  }
   if (focus) {
     current.focus();
   }
@@ -438,6 +666,9 @@ elements.save.addEventListener('click', async () => {
     );
     return;
   }
+  jsonDirty = false;
+  // JSON で保存した手順を、ブロックにも表示します。ブロックの保存していない変更は破棄します（切り替えたときに知らせています）。
+  loadBlocks(/** @type {import('../shared/flow.js').Flow} */ (flow).steps);
   const { name } = /** @type {{ name: string }} */ (flow);
   if (result.name === name) {
     showToast(elements.toast, '保存しました。');
@@ -2130,6 +2361,7 @@ function select(id) {
   clearNotices();
   showRenameForm(false);
   hideRunForm();
+  showParamsForm(null);
   // 別のフローを選んだら、JSON の編集欄ではなく内容の表示から見せます。ほかのタブは選んだままにし、
   // フローを見比べられるようにします（#132）。
   if (detailTab === 'json') {
@@ -2195,10 +2427,17 @@ async function render() {
     elements.editor.dataset.id = stored.id;
     setMoreOpen(false);
     elements.json.value = JSON.stringify(orderFlow(stored.flow), null, 2);
+    jsonDirty = false;
+    loadBlocks(stored.flow.steps);
     fillSpeedFields(stored.flow);
     await fillScheduleFields(stored.id);
   }
   if (stored) {
+    // ほかの場所（［JSON］タブ、別の画面）で手順が変わった場合は、ブロックを保存済みの内容に合わせます。
+    // ブロックに保存していない変更がある間は、その変更を消さないよう入れ替えません。
+    if (!blockEditor.dirty && JSON.stringify(stored.flow.steps) !== loadedSteps) {
+      loadBlocks(stored.flow.steps);
+    }
     renderDetail(stored);
     await renderSchedule(stored);
     await renderRunButtons(stored.flow);
@@ -2241,7 +2480,8 @@ function renderDetail({ flow, createdAt, updatedAt }) {
     }),
   );
 
-  elements.paramsSection.hidden = inputs === 0;
+  elements.params.hidden = inputs === 0;
+  elements.paramsEmpty.hidden = inputs > 0;
   elements.params.replaceChildren(
     ...params.flatMap((param) => definition(param.label, describeParam(param))),
     ...secrets.flatMap(({ step, index }) =>
@@ -2253,36 +2493,6 @@ function renderDetail({ flow, createdAt, updatedAt }) {
   );
 
   elements.stepCount.textContent = String(flattened.length);
-  elements.steps.replaceChildren(
-    ...outlineSteps(flow.steps).map((row) => {
-      const kind = document.createElement('span');
-      kind.className = 'lm-kind';
-      const text = document.createElement('span');
-      text.className = 'lm-step-text';
-      const item = document.createElement('li');
-      item.className = 'lm-step';
-      item.style.setProperty('--lm-depth', String(row.depth));
-      if (row.kind === 'else') {
-        // if の条件を満たさない場合の手順の始まりです。番号は付けません。
-        kind.textContent = 'それ以外';
-        text.textContent = '条件を満たさない場合';
-      } else {
-        const { step } = row;
-        item.dataset.number = String(row.number + 1);
-        kind.textContent = stepKindLabel(step);
-        // 種類は前に表示しているため、説明の先頭の「クリック：」などは省きます。
-        const description = describeStep(step);
-        text.textContent = description.includes('：')
-          ? description.replace(/^[^：]+：/, '')
-          : 'ここで止まります。続きは人が操作します。';
-        if (step.type === 'pause') {
-          item.classList.add('lm-step-pause');
-        }
-      }
-      item.append(kind, text);
-      return item;
-    }),
-  );
 }
 
 /**
@@ -2327,7 +2537,12 @@ function flowListItem(stored) {
   detail.textContent = `手順 ${flattenSteps(stored.flow.steps).length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
   const button = listButton(stored.flow.name, detail);
   button.className = 'list-group-item-action lm-flow-open';
-  button.addEventListener('click', () => select(stored.id));
+  button.addEventListener('click', async () => {
+    if (stored.id !== selectedId && !(await confirmDiscardBlocks(row, '別のフローを開く'))) {
+      return;
+    }
+    select(stored.id);
+  });
 
   const row = document.createElement('div');
   row.className = 'list-group-item lm-flow-row';

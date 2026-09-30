@@ -47,7 +47,7 @@ test('各タブの aria-controls が、そのタブを見出しとする tabpane
 test('区画はそれぞれのタブの中にある', () => {
   /** @type {Record<string, string[]>} */
   const expected = {
-    'detail-panel-steps': ['params-section', 'steps'],
+    'detail-panel-steps': ['params-section', 'blocks', 'blocks-save'],
     'detail-panel-speed': ['speed-form'],
     'detail-panel-schedule': ['schedule-form'],
     'detail-panel-json': ['json', 'save'],

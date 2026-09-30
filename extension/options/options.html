@@ -7,6 +7,10 @@
     <link rel="stylesheet" href="../vendor/noto-sans-jp/wght.css" />
     <link rel="stylesheet" href="../shared/base.css" />
     <link rel="stylesheet" href="options.css" />
+    <!-- ブロックの編集画面（#9）の Blockly です。見た目の指定を CSP の範囲で適用するため、先に blockly-styles.js を読み込みます。 -->
+    <script src="blockly-styles.js"></script>
+    <script src="../vendor/blockly/blockly_compressed.js"></script>
+    <script src="../vendor/blockly/msg/ja.js"></script>
     <script type="module" src="options.js"></script>
   </head>
   <!--
@@ -277,13 +281,75 @@
                 <section id="params-section" class="lm-block" aria-labelledby="params-heading">
                   <h3 id="params-heading" class="lm-block-title">実行時に入力する値</h3>
                   <dl id="params" class="lm-params"></dl>
+                  <p id="params-empty" class="lm-hint mb-2" hidden>
+                    実行時に入力する値はありません。
+                  </p>
+                  <div class="lm-buttons" id="params-buttons">
+                    <button type="button" class="btn btn-sm" id="params-edit">
+                      値の定義を編集
+                    </button>
+                  </div>
+                  <p id="params-edit-notice" hidden></p>
+                  <form id="params-form" class="lm-params-form" novalidate hidden>
+                    <div class="lm-hint">
+                      <p>
+                        実行するたびに入力する値を定めます。手順の中では {{名前}}
+                        と書くと、入力した値に置き換わります。
+                      </p>
+                      <ul>
+                        <li>名前を変えると、手順の中の {{名前}} も合わせて変わります。</li>
+                        <li>既定値を決めておくと、入力を空にしたときにその値を使います。</li>
+                      </ul>
+                    </div>
+                    <div id="params-rows" class="lm-param-rows"></div>
+                    <button type="button" class="btn btn-sm mt-2" id="params-add">値を追加</button>
+                    <div class="lm-buttons mt-3">
+                      <button type="submit" class="btn btn-primary" id="params-save">
+                        値の定義を保存
+                      </button>
+                      <button type="button" class="btn" id="params-cancel">キャンセル</button>
+                    </div>
+                    <p id="params-notice" hidden></p>
+                  </form>
                 </section>
 
                 <section class="lm-block" aria-labelledby="steps-heading">
                   <h3 id="steps-heading" class="lm-block-title">
                     手順<span class="lm-count" id="step-count"></span>
                   </h3>
-                  <ol id="steps" class="lm-step-list"></ol>
+                  <div class="lm-hint">
+                    <p>
+                      ブロックを並べ替えて、手順を変えます。［手順を保存］を押すまで保存しません。
+                    </p>
+                    <ul>
+                      <li>
+                        追加：左の一覧から、ページを開く・待つ・一時停止・PDF
+                        の保存・タブを閉じる、を足せます。
+                      </li>
+                      <li>
+                        クリックや入力：記録するか、既存のブロックを右クリックして［複製］し、置きたい場所へ動かします。
+                      </li>
+                      <li>
+                        キーボード：ブロックを選んで M キーで動かし始め、矢印キーで動かし、Enter
+                        キーで決めます。
+                      </li>
+                    </ul>
+                  </div>
+                  <div
+                    id="blocks"
+                    class="lm-blocks"
+                    role="region"
+                    aria-label="手順のブロック"
+                  ></div>
+                  <div class="lm-buttons mt-3" id="blocks-buttons">
+                    <button type="button" class="btn btn-primary" id="blocks-save" disabled>
+                      手順を保存
+                    </button>
+                    <button type="button" class="btn" id="blocks-revert" disabled>
+                      変更を取り消す
+                    </button>
+                  </div>
+                  <p id="blocks-notice" hidden></p>
                 </section>
               </div>
 

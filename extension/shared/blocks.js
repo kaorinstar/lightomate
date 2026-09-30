@@ -71,6 +71,7 @@ const CONDITION_ARGS = [
     options: CONDITION_KINDS.map((kind) => [CONDITION_LABELS[kind], kind]),
   },
   { type: 'field_input', name: 'VALUE', text: '' },
+  { type: 'field_label', name: 'TILDE', text: '〜' },
   { type: 'field_input', name: 'VALUE2', text: '' },
 ];
 
@@ -171,7 +172,7 @@ export function blockDefinitions() {
     },
     {
       type: 'lm_if',
-      message0: 'もし %1 %2 %3 〜 %4 なら',
+      message0: 'もし %1 %2 %3 %4 %5 なら',
       args0: CONDITION_ARGS,
       message1: '%1',
       args1: [{ type: 'input_statement', name: 'THEN' }],
@@ -184,7 +185,7 @@ export function blockDefinitions() {
     },
     {
       type: 'lm_while',
-      message0: '%1 %2 %3 〜 %4 の間、繰り返す（上限 %5 回）',
+      message0: '%1 %2 %3 %4 %5 の間、繰り返す（上限 %6 回）',
       args0: [
         ...CONDITION_ARGS,
         {
