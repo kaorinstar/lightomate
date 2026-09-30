@@ -564,12 +564,28 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
    */
   const startPick = async (blockId) => {
     await page.bringToFront();
-    // Blockly 13 では、ブロックを選ぶことはフォーカスを移すことです。利用者がブロックを押したときと同じです。
-    await page.evaluate((blockId) => {
+    // 利用者と同じく、マウスでブロックを押して選びます。
+    // ［ページで選ぶ］とブロックの両方が画面に入るよう、ボタンの並びを画面の上端に合わせます。
+    await page.locator('#blocks-pick-buttons').evaluate((element) => element.scrollIntoView());
+    const point = await page.evaluate((blockId) => {
       const Blockly = /** @type {any} */ (globalThis).Blockly;
-      Blockly.getFocusManager().focusNode(Blockly.getMainWorkspace().getBlockById(blockId));
+      const rect = Blockly.getMainWorkspace()
+        .getBlockById(blockId)
+        .getSvgRoot()
+        .getBoundingClientRect();
+      return { x: rect.x + 12, y: rect.y + 10 };
     }, blockId);
-    await page.locator('#blocks-pick').click();
+    await page.mouse.click(point.x, point.y);
+    // ブロックにフォーカスが移ると、ページが動く場合があります。ボタンを画面に戻してから押します。
+    await page.locator('#blocks-pick').scrollIntoViewIfNeeded();
+    // ［ページで選ぶ］は、押し下げてから離すまで間を置きます。押し下げた時点でブロックの編集画面から
+    // フォーカスが外れ、ブロックの選択が外れても、押せるままであることを確かめるためです（#139）。
+    const button = await page.locator('#blocks-pick').boundingBox();
+    assert.ok(button);
+    await page.mouse.move(button.x + button.width / 2, button.y + button.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(150);
+    await page.mouse.up();
     await site.waitForFunction(
       () => globalThis.document.querySelector('lightomate-picker') !== null,
     );

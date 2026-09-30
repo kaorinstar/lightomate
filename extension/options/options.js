@@ -355,16 +355,22 @@ let pendingPick = null;
 
 /**
  * 選んだブロックに合わせて、［ページで選ぶ］を押せるようにします。
- * @param {import('./block-editor.js').PickInfo | null} info
+ * ブロックの選択が外れただけの場合は、最後に選んだブロックを対象のまま残します。［ページで選ぶ］を押すと、
+ * マウスのボタンを押し下げた時点でブロックの編集画面からフォーカスが外れ、選択が外れるためです（#139）。
+ * 対象を変えるのは、別のブロックを選んだときと、対象のブロックを削除したときです。
+ * @param {import('./block-editor.js').PickInfo | null} info 選んでいるブロックの情報
+ * @param {boolean} [selected] ブロックを選んでいるか
  */
-function updatePickButtons(info) {
+function updatePickButtons(info, selected = true) {
+  if (!selected && pickTarget) {
+    // 選択が外れただけなら、対象のブロックがまだあるかだけを確かめます。
+    info = blockEditor.pickInfo(pickTarget.blockId);
+  }
   pickTarget = info;
   elements.blocksPick.disabled = !info;
   elements.blocksPickNext.hidden = !info?.fields.includes('NEXT');
   elements.blocksPickHint.textContent = info
-    ? info.blockType.startsWith('lm_forEach')
-      ? '選んだ繰り返しのブロックの、繰り返す行をページで選べます。'
-      : '選んだブロックの要素をページで選べます。'
+    ? `対象：${info.label}`
     : '要素を使うブロックを選ぶと押せます。';
 }
 

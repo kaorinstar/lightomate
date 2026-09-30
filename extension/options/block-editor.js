@@ -136,6 +136,7 @@ function theme(container) {
  * @typedef {object} PickInfo
  * @property {string} blockId
  * @property {string} blockType
+ * @property {string} label ブロックの表示の文字（［ページで選ぶ］の横に、対象のブロックとして示します）
  * @property {('TARGET' | 'NEXT')[]} fields 選べる欄
  * @property {object[]} chain ブロックを囲む繰り返しの行の指定（外側から順）
  * @property {string} [error] 選べない理由。囲む繰り返しの行をまだ選んでいない場合です
@@ -146,10 +147,11 @@ function theme(container) {
  * @param {HTMLElement} container ブロックを表示する要素
  * @param {{
  *   onChange: (dirty: boolean) => void,
- *   onSelect?: (info: PickInfo | null) => void,
+ *   onSelect?: (info: PickInfo | null, selected: boolean) => void,
  *   onPick?: (blockId: string, field: 'TARGET' | 'NEXT') => void,
  * }} options
- *   onChange：保存していない変更の有無が変わったとき。onSelect：選んだブロックが変わったとき（#139）。
+ *   onChange：保存していない変更の有無が変わったとき。onSelect：選んだブロックが変わったとき、ブロックを動かした
+ *   とき、ブロックを削除したとき（#139）。selected はブロックを選んでいるかで、選択が外れた場合は false です
  *   onPick：右クリックのメニューの［ページで選ぶ］を押したとき（#139）
  */
 export function createBlockEditor(container, { onChange, onSelect, onPick }) {
@@ -182,8 +184,13 @@ export function createBlockEditor(container, { onChange, onSelect, onPick }) {
       setDirty(true);
     }
     // 選んだブロックが変わったとき、または選んだブロックの位置が変わったときに、選べる要素を知らせます。
-    if (event.type === Blockly.Events.SELECTED || event.type === Blockly.Events.BLOCK_MOVE) {
-      onSelect?.(pickInfo(Blockly.getSelected()));
+    if (
+      event.type === Blockly.Events.SELECTED ||
+      event.type === Blockly.Events.BLOCK_MOVE ||
+      event.type === Blockly.Events.BLOCK_DELETE
+    ) {
+      const selected = Blockly.getSelected();
+      onSelect?.(pickInfo(selected), Boolean(selected));
     }
   });
 
@@ -212,7 +219,16 @@ export function createBlockEditor(container, { onChange, onSelect, onPick }) {
         }
       }
     }
-    return { blockId: block.id, blockType: block.type, fields, chain, ...(error ? { error } : {}) };
+    const text = String(block.toString());
+    const label = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+    return {
+      blockId: block.id,
+      blockType: block.type,
+      label,
+      fields,
+      chain,
+      ...(error ? { error } : {}),
+    };
   };
 
   // 画面の色が変わったら（OS の設定の切り替え）、Blockly の配色も合わせます。
