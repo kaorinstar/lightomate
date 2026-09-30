@@ -971,6 +971,10 @@ async function renderRunButtons(flow) {
   elements.run.disabled = Boolean(reason);
   elements.runReasonText.textContent = reason;
   elements.runReason.hidden = !reason;
+  // 最初のページが決まらない場合は、フローを直す必要があるため注意（黄）にします。サイドパネルと同じです（#141）。
+  // 記録中と実行中は待てば実行できるため、情報（青）のままにします。
+  elements.runReason.classList.toggle('alert-warning', noFirstPage);
+  elements.runReason.classList.toggle('alert-info', !noFirstPage);
 }
 
 // 記録と実行の状態は Service Worker が chrome.storage.session に書き込みます。
