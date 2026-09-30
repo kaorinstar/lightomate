@@ -13,6 +13,7 @@ import {
   previousRunAt,
   readScheduleInput,
   schedulingProblems,
+  schedulingRemedies,
   shouldRun,
   validateScheduleSetting,
 } from '../extension/shared/schedule.js';
@@ -289,4 +290,26 @@ test('画面の入力欄の値を、予約の設定にする', () => {
     field: 'time',
     error: '時刻を入力してください。',
   });
+});
+
+test('定期実行できないフローに、定期実行できるようにする方法を理由の種類ごとに示す', () => {
+  const target = { selectors: ['#password'], tag: 'input', label: 'パスワード' };
+  assert.deepEqual(schedulingRemedies(baseFlow), []);
+  const secret = schedulingRemedies({
+    ...baseFlow,
+    steps: [
+      ...baseFlow.steps,
+      { type: 'input', target, secret: true },
+      { type: 'input', target: { ...target, label: '確認コード' }, secret: true },
+    ],
+  });
+  assert.equal(secret.length, 1);
+  assert.match(secret[0], /ログイン/);
+  const both = schedulingRemedies({
+    ...baseFlow,
+    params: [{ name: 'code', label: '注文番号', type: 'text' }],
+    steps: [...baseFlow.steps, { type: 'input', target, secret: true }],
+  });
+  assert.equal(both.length, 2);
+  assert.match(both[0], /既定値/);
 });

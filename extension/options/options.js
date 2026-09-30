@@ -77,6 +77,7 @@ import {
   nextRunAt,
   readScheduleInput,
   schedulingProblems,
+  schedulingRemedies,
 } from '../shared/schedule.js';
 import { parseLines, stopRuleFieldErrors } from '../shared/stop-rules.js';
 import {
@@ -133,6 +134,7 @@ const elements = {
   scheduleForm: /** @type {HTMLFormElement} */ (byId('schedule-form')),
   scheduleStatus: byId('schedule-status'),
   scheduleReason: byId('schedule-reason'),
+  scheduleReasonBody: byId('schedule-reason-body'),
   scheduleFrequency: /** @type {HTMLSelectElement} */ (byId('schedule-frequency')),
   scheduleWeekday: /** @type {HTMLSelectElement} */ (byId('schedule-weekday')),
   scheduleDayField: byId('schedule-day-field'),
@@ -1492,10 +1494,19 @@ async function renderSchedule(stored) {
     : '設定していません。';
   const problems = schedulingProblems(stored.flow);
   elements.scheduleReason.hidden = problems.length === 0;
-  elements.scheduleReason.textContent =
-    problems.length === 0
-      ? ''
-      : `このフローは、人がいないと値を決められないため、定期実行できません。${problems.join(' ')}`;
+  elements.scheduleReasonBody.replaceChildren(
+    ...(problems.length === 0
+      ? []
+      : [
+          paragraph(
+            'このフローは定期実行できません。定期実行は人がいない間に動くため、実行のたびに入力する値を使えません。',
+          ),
+          paragraph('理由'),
+          list(problems),
+          paragraph('定期実行するには'),
+          list(schedulingRemedies(stored.flow)),
+        ]),
+  );
   const locked = problems.length > 0 && !schedule;
   elements.scheduleFrequency.disabled = locked;
   elements.scheduleSave.disabled = locked;
@@ -1503,6 +1514,32 @@ async function renderSchedule(stored) {
     elements.scheduleTime.disabled = true;
     elements.scheduleCatchUp.disabled = true;
   }
+}
+
+/**
+ * @param {string} text
+ * @returns {HTMLParagraphElement}
+ */
+function paragraph(text) {
+  const element = document.createElement('p');
+  element.textContent = text;
+  return element;
+}
+
+/**
+ * @param {string[]} items
+ * @returns {HTMLUListElement}
+ */
+function list(items) {
+  const element = document.createElement('ul');
+  element.append(
+    ...items.map((text) => {
+      const item = document.createElement('li');
+      item.textContent = text;
+      return item;
+    }),
+  );
+  return element;
 }
 
 elements.scheduleForm.addEventListener('submit', async (event) => {

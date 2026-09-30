@@ -122,6 +122,27 @@ export function schedulingProblems(flow) {
 }
 
 /**
+ * 定期実行できないフローを、定期実行できるようにする方法です。schedulingProblems の理由の種類ごとに 1 つ返します。
+ * @param {Flow} flow
+ * @returns {string[]} 方法。定期実行できる場合は空の配列
+ */
+export function schedulingRemedies(flow) {
+  /** @type {string[]} */
+  const remedies = [];
+  if ((flow.params ?? []).some((param) => param.default === undefined || param.default === '')) {
+    remedies.push(
+      'パラメータに既定値を設定します（「JSON を直接編集」で params の default を指定します）。年月の場合は「@previous-month」（前月）なども使えます。',
+    );
+  }
+  if (flattenSteps(flow.steps).some(({ step }) => step.type === 'input' && step.secret)) {
+    remedies.push(
+      '先にサイトにログインしておき、パスワードなどを入力する手順をフローから削除します。実行の時点でログインが切れていた場合は、一時停止して通知で知らせます。',
+    );
+  }
+  return remedies;
+}
+
+/**
  * 予約の時刻の時と分です。
  * @param {ScheduleSetting} setting
  * @returns {[number, number]}

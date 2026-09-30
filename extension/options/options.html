@@ -245,7 +245,10 @@
                   の通知で知らせます。<wbr />Chrome を起動している間だけ実行します。
                 </p>
                 <p id="schedule-status" class="lm-schedule-status"></p>
-                <p id="schedule-reason" class="lm-sub" hidden></p>
+                <div id="schedule-reason" class="lm-sub lm-aside" hidden>
+                  <span class="lm-aside-mark" aria-hidden="true">ⓘ</span>
+                  <div id="schedule-reason-body"></div>
+                </div>
                 <div class="lm-speed-row" id="schedule-fields">
                   <label for="schedule-frequency">周期</label>
                   <select class="form-select lm-schedule-select" id="schedule-frequency">

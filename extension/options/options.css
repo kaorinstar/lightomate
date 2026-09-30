@@ -421,6 +421,26 @@ body {
   margin-bottom: 0.5rem;
 }
 
+/* 定期実行できない理由と、定期実行できるようにする方法の案内です（サイドパネルの備考と同じ形）。 */
+.lm-aside {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0 0 0.75rem;
+}
+
+.lm-aside-mark {
+  flex: none;
+}
+
+.lm-aside p,
+.lm-aside ul {
+  margin-bottom: 0.25rem;
+}
+
+.lm-aside ul {
+  padding-inline-start: 1.25rem;
+}
+
 .lm-speed-feedback:empty {
   display: none;
 }
