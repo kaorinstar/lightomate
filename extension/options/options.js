@@ -2554,9 +2554,32 @@ function paramTableRow(cells) {
   for (const [index, text] of cells.entries()) {
     const cell = document.createElement('td');
     if (index === 1 && text.startsWith('{{')) {
+      // 押すとコピーします。ブロックの欄に貼り付けて使うためです。ダブルクリックでも同じく動きます。
       const code = document.createElement('code');
       code.textContent = text;
-      cell.append(code);
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'btn btn-sm btn-ghost-secondary lm-copy-ref';
+      copy.title = '押すとコピーします';
+      copy.setAttribute('aria-label', `${text} をコピー`);
+      copy.append(code);
+      copy.addEventListener('click', async () => {
+        clearNotices();
+        try {
+          await navigator.clipboard.writeText(text);
+          showToast(
+            elements.toast,
+            `${text} をコピーしました。手順のブロックの欄に貼り付けて使えます。`,
+          );
+        } catch (error) {
+          showNotice(
+            elements.paramsEditNotice,
+            `コピーできませんでした。${String(error)}`,
+            'error',
+          );
+        }
+      });
+      cell.append(copy);
     } else {
       cell.textContent = text;
     }

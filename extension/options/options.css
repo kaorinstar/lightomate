@@ -303,6 +303,12 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* 手順での書き方（{{名前}}）は、押すとコピーするボタンです。文字の色は周りのコードの表示と合わせます。 */
+.lm-copy-ref code {
+  padding: 0;
+  background: none;
+}
+
 .lm-params th:first-child,
 .lm-params td:first-child {
   font-weight: 600;
