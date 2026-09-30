@@ -37,7 +37,16 @@
       "description": "実行中のフローをすべて停止する"
     }
   },
-  "permissions": ["sidePanel", "storage", "scripting", "webNavigation", "debugger", "downloads"],
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "scripting",
+    "webNavigation",
+    "debugger",
+    "downloads",
+    "alarms",
+    "notifications"
+  ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "content_security_policy": {
     "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"

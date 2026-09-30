@@ -4,6 +4,8 @@
 // 配置と、知らせを出す場所は docs/design-guidelines.md に従います。成功は画面の上部のトーストに出し、
 // 誤り・警告・確認は押したボタンの直下（行の中の操作は、その行の中）に出します。
 
+import { SCHEDULES_KEY, listSchedules } from '../common/schedule-store.js';
+import { formatRunAt, nextRunAt } from '../shared/schedule.js';
 import {
   deleteFlow,
   getFlow,
@@ -586,6 +588,12 @@ onFlowsChanged(() => {
 onBatchesChanged(() => {
   renderFlows().catch(console.error);
 });
+// 定期実行（#22）の予約を変えたとき、または予約の日時を処理したときに、次の予約の日時を表示し直します。
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && SCHEDULES_KEY in changes) {
+    renderFlows().catch(console.error);
+  }
+});
 
 // 表示中のタブや、そのタブのページが変わったときに、記録するページとフローの一覧を更新します。
 chrome.tabs.onActivated.addListener(() => {
@@ -943,6 +951,7 @@ function statusMark(text, tone) {
 async function renderFlows() {
   const origin = currentPage?.origin;
   const all = await listFlows();
+  schedules = await listSchedules();
   const shown = flowsToShow(all, origin);
   const everything = shown.scope === 'all';
   allScope = everything;
@@ -990,6 +999,12 @@ async function renderFlows() {
   renderBatches(all, await listBatches());
   await render();
 }
+
+/**
+ * 定期実行（#22）の予約です。キーはフローの ID です。一覧の行に次の予約の日時を表示するために使います。
+ * @type {Record<string, import('../shared/schedule.js').Schedule>}
+ */
+let schedules = {};
 
 // ---- すべてのフローの検索（#44） ----
 // 検索欄の入力と一致方法は保存しません。サイドパネルを開き直すと、空欄と「部分一致」に戻ります。
@@ -1059,6 +1074,13 @@ function flowItem(stored) {
   const text = document.createElement('div');
   text.className = 'lm-flow-text';
   text.append(name, detail);
+  const schedule = schedules[stored.id];
+  if (schedule) {
+    const next = document.createElement('div');
+    next.className = 'lm-sub';
+    next.textContent = `定期実行・次回 ${formatRunAt(nextRunAt(schedule, new Date()))}`;
+    text.append(next);
+  }
 
   const main = document.createElement('div');
   main.className = 'lm-flow-main';

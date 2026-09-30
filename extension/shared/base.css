@@ -379,3 +379,43 @@
 .lm-tabs .nav-link:not(.active) {
   color: var(--tblr-secondary);
 }
+
+/*
+ * 状態の印です。背景は役割の色を薄く、文字は背景に対して読める濃さ（4.5:1 以上）にします。
+ * 文字の色の作り方は、知らせ（.alert）と同じです。
+ * サイドパネルの実行の状態と、管理画面の定期実行の状態（#22）で使います。
+ */
+.lm-status {
+  --lm-status-color: var(--tblr-secondary);
+
+  flex: none;
+  padding: 0 0.5rem;
+  border-radius: var(--tblr-border-radius);
+  background: color-mix(in oklab, var(--lm-status-color) 14%, transparent);
+  color: color-mix(in oklab, var(--lm-status-color) 55%, black);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+[data-bs-theme='dark'] .lm-status {
+  background: color-mix(in oklab, var(--lm-status-color) 24%, transparent);
+  color: color-mix(in oklab, var(--lm-status-color) 45%, white);
+}
+
+.lm-status-success {
+  --lm-status-color: var(--tblr-success);
+}
+
+.lm-status-primary {
+  --lm-status-color: var(--tblr-primary);
+}
+
+.lm-status-warning {
+  --lm-status-color: var(--tblr-warning);
+}
+
+.lm-status-danger {
+  --lm-status-color: var(--tblr-danger);
+}

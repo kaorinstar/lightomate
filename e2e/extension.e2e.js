@@ -187,3 +187,93 @@ test('download を付けたクリックで、ファイルが指定した名前�
     await page.close();
   }
 });
+
+test('定期実行：同じサイトの手動の実行が終わるまで待ち、終わった後に背景のタブで実行する（#22）', async () => {
+  const { extensionPage } = browser;
+  /**
+   * @param {string} name
+   * @param {Step[]} [extra]
+   * @returns {Flow}
+   */
+  const flow = (name, extra = []) => ({
+    schemaVersion: 12,
+    name,
+    origin: server.origin,
+    interval: { min: 1000, max: 1000 },
+    steps: [{ type: 'navigate', cause: 'user', url: `${server.origin}/done.html` }, ...extra],
+  });
+  const manual = flow('手動', [{ type: 'wait', ms: 5000 }]);
+  const scheduled = flow('定期');
+  const started = await extensionPage.evaluate(
+    async ([manual, scheduled]) => {
+      await chrome.storage.local.remove(['history', 'schedules']);
+      await chrome.storage.local.set({
+        flows: {
+          manual: { id: 'manual', createdAt: '', updatedAt: '', flow: manual },
+          scheduled: { id: 'scheduled', createdAt: '', updatedAt: '', flow: scheduled },
+        },
+      });
+      return chrome.runtime.sendMessage({
+        kind: 'runner/start',
+        flowId: 'manual',
+        params: {},
+        secrets: {},
+      });
+    },
+    [manual, scheduled],
+  );
+  assert.equal(started.ok, true);
+
+  // 1 分前の時刻を毎日の予約として設定すると、その予約の日時を過ぎているため、すぐに実行の対象になります。
+  const previous = new Date(Date.now() - 60_000);
+  const time = [previous.getHours(), previous.getMinutes()]
+    .map((value) => String(value).padStart(2, '0'))
+    .join(':');
+  await extensionPage.evaluate(
+    (schedule) => chrome.storage.local.set({ schedules: { scheduled: schedule } }),
+    {
+      frequency: 'daily',
+      time,
+      catchUp: true,
+      createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+    },
+  );
+  const waiting = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { scheduleWaiting } = await chrome.storage.session.get('scheduleWaiting');
+        return /** @type {{ flowId: string }[]} */ (scheduleWaiting ?? []).map(
+          (entry) => entry.flowId,
+        );
+      }),
+    (ids) => ids.length > 0,
+  );
+  assert.deepEqual(waiting, ['scheduled']);
+
+  const history = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { history } = await chrome.storage.local.get('history');
+        return /** @type {import('../extension/shared/history.js').HistoryEntry[]} */ (
+          history ?? []
+        );
+      }),
+    (entries) => entries.length >= 2,
+    60_000,
+  );
+  // 新しい順です。手動の実行が先に終わり、その後に定期実行が始まります。
+  assert.deepEqual(
+    history.map((entry) => [entry.flowName, entry.status, entry.trigger]),
+    [
+      ['定期', 'done', 'schedule'],
+      ['手動', 'done', undefined],
+    ],
+  );
+  assert.ok(
+    history[0].startedAt >= history[1].endedAt,
+    '手動の実行の終了前に定期実行が始まりました。',
+  );
+  for (const page of pagesAt('/done.html')) {
+    await page.close();
+  }
+});

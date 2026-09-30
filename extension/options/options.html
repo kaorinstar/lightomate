@@ -233,6 +233,69 @@
                 <p id="speed-notice" hidden></p>
               </form>
 
+              <form
+                id="schedule-form"
+                class="lm-block"
+                novalidate
+                aria-labelledby="schedule-heading"
+              >
+                <h3 id="schedule-heading" class="lm-block-title">定期実行</h3>
+                <p class="lm-sub">
+                  設定した日時に、背景のタブで実行します。<wbr />開始・完了・一時停止は、Windows
+                  の通知で知らせます。<wbr />Chrome を起動している間だけ実行します。
+                </p>
+                <div class="lm-schedule-status">
+                  <span id="schedule-state" class="lm-status"></span>
+                  <span id="schedule-summary"></span>
+                </div>
+                <div id="schedule-reason" class="alert alert-info lm-guide" hidden>
+                  <p class="lm-guide-title">このフローは定期実行できません</p>
+                  <div id="schedule-reason-body"></div>
+                </div>
+                <div class="lm-speed-row" id="schedule-fields">
+                  <label for="schedule-frequency">周期</label>
+                  <select class="form-select lm-schedule-select" id="schedule-frequency">
+                    <option value="">なし</option>
+                    <option value="daily">毎日</option>
+                    <option value="weekly">毎週</option>
+                    <option value="monthly">毎月</option>
+                  </select>
+                  <select
+                    class="form-select lm-schedule-select"
+                    id="schedule-weekday"
+                    aria-label="曜日"
+                    hidden
+                  ></select>
+                  <span class="lm-speed-row" id="schedule-day-field" hidden>
+                    <input
+                      type="text"
+                      class="form-control lm-seconds"
+                      id="schedule-day"
+                      inputmode="numeric"
+                      aria-label="日"
+                      placeholder="1"
+                    />
+                    <span>日</span>
+                  </span>
+                  <label for="schedule-time" id="schedule-time-label">時刻</label>
+                  <input
+                    type="time"
+                    class="form-control lm-time"
+                    id="schedule-time"
+                    value="09:00"
+                  />
+                </div>
+                <label class="lm-setting mt-2" id="schedule-catch-up-field">
+                  <input type="checkbox" class="lm-check" id="schedule-catch-up" checked />
+                  Chrome を起動していない間に過ぎた予約を、次に起動したときに 1 回実行する
+                </label>
+                <div class="invalid-feedback lm-speed-feedback" id="schedule-feedback"></div>
+                <div class="lm-buttons mt-2">
+                  <button type="submit" class="btn" id="schedule-save">定期実行を保存</button>
+                </div>
+                <p id="schedule-notice" hidden></p>
+              </form>
+
               <section class="lm-block" aria-labelledby="steps-heading">
                 <h3 id="steps-heading" class="lm-block-title">
                   手順<span class="lm-count" id="step-count"></span>

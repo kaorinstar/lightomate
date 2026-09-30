@@ -99,6 +99,7 @@ import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../sh
  * @property {string} [error] 失敗した理由。halted の場合は、止まった理由の説明です。
  * @property {string} [note] 一時停止の手順で止まった場合の、その手順の説明（note）です。
  * @property {number} [schemaVersion] 実行しているフローの形式の版。実行履歴に記録します（#93）
+ * @property {'schedule'} [trigger] 定期実行（#22）で始めた場合に 'schedule' です。通知と実行履歴に使います
  * @property {string} startedAt
  */
 
@@ -570,9 +571,10 @@ export async function markInterruptedRuns() {
  * @param {string} flowId
  * @param {Record<string, string>} paramInput 入力フォームの値
  * @param {Record<string, string>} secretInput 値を記録していない入力欄の値（手順の番号ごと）
- * @param {{ active?: boolean, onEnd?: (runId: string) => void }} [options]
- *   active は、最初のページを前面のタブで開くかです。まとめフローの一括実行（#7）では、作業中の画面を
- *   妨げないよう背景のタブで開きます。onEnd は、実行が終わったとき（状態を保存した後）に呼び出す処理です
+ * @param {{ active?: boolean, onEnd?: (runId: string) => void, trigger?: 'schedule' }} [options]
+ *   active は、最初のページを前面のタブで開くかです。まとめフローの一括実行（#7）と定期実行（#22）では、
+ *   作業中の画面を妨げないよう背景のタブで開きます。onEnd は、実行が終わったとき（状態を保存した後）に
+ *   呼び出す処理です。trigger は、定期実行で始めた場合に 'schedule' を渡します
  * @returns {Promise<{ ok: true, runId: string } | { ok: false, error: string }>}
  */
 export async function startRun(flowId, paramInput, secretInput, options = {}) {
@@ -641,6 +643,7 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
       total: flattenSteps(resolved.steps).length,
       status: 'running',
       schemaVersion: flow.schemaVersion,
+      ...(options.trigger ? { trigger: options.trigger } : {}),
       startedAt: new Date().toISOString(),
     });
     runSteps(flow, resolved.steps, tabId, runId, pathValues).finally(() => {
@@ -866,8 +869,14 @@ function resolveCondition(condition, values) {
 async function openTab(flow, steps, active) {
   const first = steps[0];
   if (first?.type === 'navigate') {
-    const tab = await chrome.tabs.create({ url: first.url, active });
-    if (tab.id === undefined) {
+    // Chrome のウィンドウがすべて閉じている場合（定期実行、#22）は、タブを開けないため、
+    // 最小化した新しいウィンドウを開いて実行します。
+    const tab =
+      (await chrome.windows.getAll({ windowTypes: ['normal'] })).length > 0
+        ? await chrome.tabs.create({ url: first.url, active })
+        : (await chrome.windows.create({ url: first.url, focused: false, state: 'minimized' }))
+            ?.tabs?.[0];
+    if (tab?.id === undefined) {
       throw new Error('タブを開けませんでした。');
     }
     return tab.id;

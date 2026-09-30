@@ -33,6 +33,7 @@ import { describeStep } from './describe.js';
  * @property {number} [retries] 止まった手順で、要素が見つからずにやり直した回数（#93）
  * @property {string} [extensionVersion] 実行した拡張機能の版（manifest.json の version、#93）
  * @property {number} [schemaVersion] 実行したフローの形式の版（#93）
+ * @property {'schedule'} [trigger] 定期実行（#22）で始めた場合に 'schedule' です
  *
  * step 以降の項目は #93 で加えました。それより前に記録した履歴にはありません。
  */
@@ -91,7 +92,7 @@ export function withoutHistoryEntries(history, runIds) {
  *   runId: string, flowId: string, flowName: string, origin: string, startedAt: string,
  *   status: string, stepIndex: number, total: number, error?: string, items?: number[],
  *   loops?: ('item' | 'round')[], page?: number,
- *   schemaVersion?: number,
+ *   schemaVersion?: number, trigger?: 'schedule',
  * }} run 実行の状態（background/runner.js の RunState）
  * @param {string} endedAt 終了した日時（ISO 8601）
  * @param {Iterable<string>} values 伏せる値
@@ -114,6 +115,7 @@ export function historyEntryFromRun(run, endedAt, values, extra = {}) {
     status,
     total: run.total,
     files: [...(extra.files ?? [])],
+    ...(run.trigger ? { trigger: run.trigger } : {}),
   };
   if (status === 'done') {
     return entry;
@@ -272,6 +274,9 @@ export function historyEntryText(entry) {
     `終了：${reportDateTime(entry.endedAt)}`,
     `結果：${STATUS_LABELS[entry.status]}`,
   ];
+  if (entry.trigger === 'schedule') {
+    lines.push('開始の方法：定期実行');
+  }
   if (entry.stepNumber !== undefined) {
     lines.push(`止まった手順：${stepText(entry)}${entry.step ? `（${entry.step}）` : ''}`);
   }

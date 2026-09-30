@@ -408,6 +408,66 @@ body {
   display: block;
 }
 
+/* 定期実行（#22）の周期と曜日の選択欄です。 */
+.lm-schedule-select {
+  width: auto;
+}
+
+.lm-time {
+  width: 9rem;
+}
+
+.lm-schedule-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* 常に表示する案内です。操作できない理由と、その対処を見出し付きで示します（#22）。 */
+.lm-guide {
+  margin-bottom: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+
+.lm-guide p,
+.lm-guide ul {
+  margin: 0;
+}
+
+.lm-guide ul {
+  padding-inline-start: 1.25rem;
+}
+
+.lm-guide-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin-bottom: 0.25rem !important;
+  font-weight: 600;
+}
+
+/* 色だけで伝えないよう、知らせ（.lm-notice）と同じ記号を見出しの先頭に付けます。 */
+.lm-guide-title::before {
+  content: 'i';
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.1em;
+  height: 1.1em;
+  border: 1.5px solid currentcolor;
+  border-radius: 50%;
+  font-size: 0.85em;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.lm-guide-label {
+  margin-top: 0.5rem !important;
+  font-weight: 600;
+}
+
 .lm-speed-feedback:empty {
   display: none;
 }
