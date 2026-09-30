@@ -7,7 +7,24 @@
 // 行の見分けには、タグと class だけを使います。表示の文字は、翻訳で置き換わるため使いません（CLAUDE.md）。
 
 /* global buildTarget, looksGenerated, visibleText */
-/* exported buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, resolveRows */
+/* exported buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, originalElement, resolveRows */
+
+/**
+ * 押した要素が、Chrome の翻訳がページに差し込んだ要素であれば、その外側の本来の要素を返します。
+ * 翻訳は、置き換えた文字を `<font style="vertical-align: inherit;">` の入れ子で包みます。この要素は翻訳していない
+ * ページにはないため、指定に使うと、翻訳を無効にして実行したときに見つかりません（CLAUDE.md の翻訳の規則）。
+ * 本来の font 要素（古い書き方のページ）も外側の要素にしますが、指す範囲が少し広がるだけで、別の要素にはなりません。
+ * @param {Element} element
+ * @returns {Element}
+ */
+function originalElement(element) {
+  /** @type {Element} */
+  let current = element;
+  while (current.tagName === 'FONT' && current.parentElement) {
+    current = current.parentElement;
+  }
+  return current;
+}
 
 /**
  * 要素の形（タグと class の組）を、CSS セレクターとして返します。例：`tr.order-row`

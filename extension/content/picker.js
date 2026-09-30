@@ -7,7 +7,7 @@
 // 選択モードの間は、押す操作をページに伝えません。リンクの移動やボタンの動作を起こさないためです。
 // 操作は window の捕獲段階で受け取り、ページのスクリプトより先に止めます。利用者の操作（isTrusted）だけを扱います。
 
-/* global buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, resolveRows */
+/* global buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, originalElement, resolveRows */
 
 (() => {
   const scope = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
@@ -151,7 +151,11 @@
    * @param {Element} element
    * @returns {Element}
    */
-  const pickable = (element) => element.closest(clickable) ?? element;
+  const pickable = (element) => {
+    // Chrome の翻訳が差し込んだ要素（font）は、翻訳していないページにないため、外側の本来の要素にします。
+    const original = originalElement(element);
+    return original.closest(clickable) ?? original;
+  };
 
   /** @param {Event} event */
   const block = (event) => {
@@ -205,7 +209,7 @@
       return;
     }
     hover.hidden = false;
-    place(hover, config.mode === 'rows' ? event.target : pickable(event.target));
+    place(hover, config.mode === 'rows' ? originalElement(event.target) : pickable(event.target));
   };
 
   /**
@@ -224,7 +228,7 @@
         ]);
         return;
       }
-      const result = buildRowsTarget(target, root);
+      const result = buildRowsTarget(originalElement(target), root);
       if (!result) {
         showBar(
           'Lightomate：同じ形の行が見つかりません。一覧の別の行か、行の中の別の場所を押してください。（Esc キーで取り消し）',

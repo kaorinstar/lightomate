@@ -159,3 +159,32 @@ test('ページ全体を基準にした指定では、class を使う候補を�
   const found = second.document.querySelector(target.selectors[0]);
   assert.equal(found?.getAttribute('href'), '/page/3/');
 });
+
+test('Chrome の翻訳が差し込んだ font 要素を押した場合は、外側の本来の要素の指定にする（翻訳を無効にしても見つかる）', () => {
+  // quotes.toscrape.com を日本語に翻訳した状態と同じ形です。翻訳は文字を font の入れ子で包みます。
+  const translated = page(`
+    <div class="quote"><span class="text">a</span><span>by <small class="author"><font style="vertical-align: inherit;"><font style="vertical-align: inherit;">アルバート・アインシュタイン</font></font></small></span></div>
+    <div class="quote"><span class="text">b</span><span>by <small class="author"><font style="vertical-align: inherit;"><font style="vertical-align: inherit;">J・K・ローリング</font></font></small></span></div>`);
+  const row = translated.$('.quote');
+  const pressed = /** @type {Element} */ (row.querySelector('font font'));
+  const target = translated.window.buildInnerTarget(
+    translated.window.originalElement(pressed),
+    row,
+  );
+  assert.equal(target.tag, 'small');
+  assert.equal(target.selectors[0], 'small.author');
+  assert.ok(
+    plain(target.selectors).every((/** @type {string} */ selector) => !selector.includes('font')),
+  );
+
+  // 翻訳していないページでも、同じ指定で著者名を指します。
+  const original = page(`
+    <div class="quote"><span class="text">a</span><span>by <small class="author">Albert Einstein</small></span></div>`);
+  for (const selector of target.selectors) {
+    assert.equal(
+      original.$('.quote').querySelector(selector)?.textContent,
+      'Albert Einstein',
+      selector,
+    );
+  }
+});

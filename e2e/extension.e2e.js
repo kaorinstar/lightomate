@@ -544,9 +544,14 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
       { type: 'lm_click', fields: { TARGET: '（ページで選ぶ）' } },
       workspace,
     );
+    const extract = Blockly.serialization.blocks.append(
+      { type: 'lm_extract', fields: { TARGET: '（ページで選ぶ）', NAME: 'no' } },
+      workspace,
+    );
     navigate.nextConnection.connect(loop.previousConnection);
     loop.getInput('STEPS').connection.connect(click.previousConnection);
-    return { loop: loop.id, click: click.id };
+    click.nextConnection.connect(extract.previousConnection);
+    return { loop: loop.id, click: click.id, extract: extract.id };
   });
 
   // 要素を選ぶ前に保存すると、選んでいないブロックがあることを知らせます。
@@ -609,12 +614,33 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
     null,
   );
 
-  // 3. Esc キーでは、何も選ばずに終わります。
+  // 3. 翻訳が差し込んだ font 要素を押しても、翻訳していないページにもある要素（td.no）を選びます。
+  await site.waitForFunction(() => globalThis.document.querySelector('td.no font font') !== null);
+  await startPick(ids.extract);
+  await site.locator('tbody tr:nth-child(1) td.no font font').click();
+  const extractState = await waitUntil(
+    () =>
+      page.evaluate(
+        (blockId) =>
+          /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getBlockById(blockId).lmState,
+        ids.extract,
+      ),
+    (state) => state?.step?.target !== undefined,
+  );
+  assert.equal(extractState.step.target.tag, 'td');
+  assert.equal(extractState.step.target.selectors[0], 'td.no');
+  assert.ok(
+    extractState.step.target.selectors.every(
+      (/** @type {string} */ selector) => !selector.includes('font'),
+    ),
+  );
+
+  // 4. Esc キーでは、何も選ばずに終わります。
   await startPick(ids.click);
   await site.keyboard.press('Escape');
   await page.locator('#blocks-pick-notice').getByText('要素の選択を取り消しました。').waitFor();
 
-  // 4. 保存すると、選んだ要素がフローに入ります。
+  // 5. 保存すると、選んだ要素がフローに入ります。
   await page.bringToFront();
   await page.locator('#blocks-save').click();
   const saved = await waitUntil(
