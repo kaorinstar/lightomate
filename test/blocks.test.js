@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   BLOCK_COLOURS,
+  WAIT_TOOLTIP,
   blockDefinitions,
   conditionUsesValues,
   stepsToWorkspace,
@@ -229,4 +230,12 @@ test('ブロックの色は、どれも白い文字に対して 4.5:1 以上の�
     const ratio = 1.05 / (luminance(colour) + 0.05);
     assert.ok(ratio >= 4.5, `${name}（${colour}）の比は ${ratio.toFixed(2)} です。`);
   }
+});
+
+test('「秒待つ」のブロックには、実行速度の間隔に加えて待つことを示す説明がある', () => {
+  const wait = blockDefinitions().find(
+    (definition) => /** @type {any} */ (definition).type === 'lm_wait',
+  );
+  assert.equal(/** @type {any} */ (wait).tooltip, WAIT_TOOLTIP);
+  assert.match(WAIT_TOOLTIP, /実行速度の間隔.*に加えて待ちます/);
 });

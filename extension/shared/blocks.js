@@ -75,6 +75,10 @@ const CONDITION_ARGS = [
   { type: 'field_input', name: 'VALUE2', text: '' },
 ];
 
+/** 「秒待つ」のブロックの説明です。ブロックに指を合わせると表示します。 */
+export const WAIT_TOOLTIP =
+  'この位置で、決めた秒数だけ待ちます。実行速度の間隔（手順と手順の間に毎回入る待ち時間）に加えて待ちます。';
+
 /**
  * ブロックの定義です（Blockly の JSON 形式）。type は、手順の type に lm_ を付けたものです。
  * 入力欄の値を持たない入力（secret）と、ページ送りのある繰り返しは、欄が異なるため別の種類にします。
@@ -160,6 +164,8 @@ export function blockDefinitions() {
       args0: [
         { type: 'field_number', name: 'SECONDS', value: 1, min: 0.001, max: 300, precision: 0.001 },
       ],
+      // 実行速度（手順と手順の間の待ち時間）と重なることを示します。どちらかで足りると誤解されやすいためです。
+      tooltip: WAIT_TOOLTIP,
       colour: BLOCK_COLOURS.wait,
       ...statement,
     },
