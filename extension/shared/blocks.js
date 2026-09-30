@@ -226,10 +226,12 @@ export function blockDefinitions() {
     },
     {
       type: 'lm_forEach_pages',
-      // 1 行が長いと、ブロックの一覧の幅が広がるため、ページ送りの欄を 2 行目に分けます（#139）。
-      message0: '%1 の各行で繰り返す（上限 %2 件）',
-      args0: [
-        { type: 'field_label_serializable', name: 'TARGET', text: '' },
+      // ページ送りのない繰り返しと、1 行目から見分けられる文にします（#139）。一覧で取り違えやすいためです。
+      // 1 行が長いと、ブロックの一覧の幅が広がり、ブロックを置く面が狭くなるため、欄を 3 行に分けます。
+      message0: '%1 の各行で繰り返し、次のページへ進む',
+      args0: [{ type: 'field_label_serializable', name: 'TARGET', text: '' }],
+      message1: '上限 %1 件、%2 ページまで',
+      args1: [
         {
           type: 'field_number',
           name: 'MAX',
@@ -238,9 +240,6 @@ export function blockDefinitions() {
           max: 500,
           precision: 1,
         },
-      ],
-      message1: 'ページ送り：%1 ページまで、次へ：%2',
-      args1: [
         {
           type: 'field_number',
           name: 'MAX_PAGES',
@@ -249,10 +248,11 @@ export function blockDefinitions() {
           max: 50,
           precision: 1,
         },
-        { type: 'field_label_serializable', name: 'NEXT', text: '' },
       ],
-      message2: '%1',
-      args2: [{ type: 'input_statement', name: 'STEPS' }],
+      message2: '次のページへ進むボタン：%1',
+      args2: [{ type: 'field_label_serializable', name: 'NEXT', text: '' }],
+      message3: '%1',
+      args3: [{ type: 'input_statement', name: 'STEPS' }],
       colour: BLOCK_COLOURS.control,
       ...statement,
     },
