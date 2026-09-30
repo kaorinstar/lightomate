@@ -117,7 +117,6 @@ const elements = {
   searchMode: /** @type {HTMLSelectElement} */ (byId('search-mode')),
   noMatch: byId('no-match'),
   newFlow: byId('new'),
-  placeholder: byId('placeholder'),
   editor: byId('editor'),
   editorHeading: byId('editor-heading'),
   editorOrigin: byId('editor-origin'),
@@ -481,39 +480,97 @@ async function confirmDiscardBlocks(anchor, action) {
   return ok;
 }
 
-// ---- 一覧の表示と非表示（#9） ----
-// ブロックの編集画面を広く使えるよう、一覧を隠せるようにします。選んだ状態は、この画面を次に開いたときにも
-// 使います。保存できない環境（プライベートウィンドウなど）では、毎回一覧を表示します。
+// ---- 一覧の画面とフローの画面の切り替え（#9） ----
+// フローを開くと、一覧に替えてフローの詳細を画面の幅いっぱいに表示します。開くときに履歴を 1 件積むため、
+// ブラウザーの［戻る］でも一覧に戻れます。
 
-const LIST_HIDDEN_KEY = 'lightomate.listHidden';
-const listToggle = /** @type {HTMLButtonElement} */ (byId('list-toggle'));
 const flowsPanel = byId('panel-flows');
+const backToList = /** @type {HTMLButtonElement} */ (byId('back-to-list'));
 
 /**
- * 一覧を隠すか表示します。
- * @param {boolean} hidden
+ * 一覧の画面と、フローの画面（詳細か、JSON からの追加）を切り替えます。
+ * @param {boolean} detail フローの画面にする場合は true
  */
-function setListHidden(hidden) {
-  flowsPanel.classList.toggle('lm-list-hidden', hidden);
-  listToggle.textContent = hidden ? '一覧を表示' : '一覧を隠す';
-  listToggle.setAttribute('aria-expanded', String(!hidden));
-  try {
-    localStorage.setItem(LIST_HIDDEN_KEY, hidden ? '1' : '');
-  } catch {
-    // 保存できなくても、表示の切り替えは行います。
+function showDetailView(detail) {
+  const changed = flowsPanel.classList.contains('lm-view-detail') !== detail;
+  flowsPanel.classList.toggle('lm-view-detail', detail);
+  flowsPanel.classList.toggle('lm-view-list', !detail);
+  if (!changed) {
+    return;
   }
-  // 幅が変わったため、ブロックの表示の大きさを合わせ直します。
-  blockEditor.resize();
+  window.scrollTo(0, 0);
+  if (detail) {
+    // 隠していた間は大きさが 0 のため、表示した後にブロックの表示の大きさを合わせ直します。
+    blockEditor.resize();
+    // 押した一覧の行は隠れるため、フォーカスを戻るボタンに移します。
+    backToList.focus();
+  }
 }
 
-listToggle.addEventListener('click', () => {
-  setListHidden(!flowsPanel.classList.contains('lm-list-hidden'));
+/** 画面を離れる確認を出しているかです。 */
+let confirmingLeave = false;
+
+backToList.addEventListener('click', async () => {
+  if (confirmingLeave) {
+    return;
+  }
+  confirmingLeave = true;
+  const ok = await confirmDiscardBlocks(backToList.parentElement ?? backToList, '一覧に戻る');
+  confirmingLeave = false;
+  if (!ok) {
+    return;
+  }
+  const previous = selectedId;
+  if (history.state?.lmDetail) {
+    // フローを開いたときに積んだ履歴を戻します。popstate で一覧を表示します。
+    blockEditor.markSaved();
+    history.back();
+  } else {
+    select('');
+    focusFlowRow(previous);
+  }
 });
 
-try {
-  setListHidden(localStorage.getItem(LIST_HIDDEN_KEY) === '1');
-} catch {
-  setListHidden(false);
+// ブラウザーの［戻る］［進む］で、URL の # に合わせてフローを開くか一覧に戻ります。
+window.addEventListener('popstate', async () => {
+  const id = decodeURIComponent(location.hash.slice(1));
+  if (id === selectedId) {
+    return;
+  }
+  if (blockEditor.dirty) {
+    // 保存していない変更がある間は、画面を変えずに確認を出します。URL は今のフローに戻します。
+    // 確認をすでに出している場合は、2 つ目を出しません。
+    const target = id;
+    history.pushState({ lmDetail: true }, '', `#${encodeURIComponent(selectedId)}`);
+    if (confirmingLeave) {
+      return;
+    }
+    confirmingLeave = true;
+    const ok = await confirmDiscardBlocks(backToList.parentElement ?? backToList, '移動する');
+    confirmingLeave = false;
+    if (!ok) {
+      return;
+    }
+    blockEditor.markSaved();
+    select(target);
+    return;
+  }
+  const previous = selectedId;
+  select(id, { history: 'none' });
+  if (!id) {
+    focusFlowRow(previous);
+  }
+});
+
+/**
+ * 一覧に戻ったときに、開いていたフローの行にフォーカスを戻します。キーボードで続けて操作するためです。
+ * @param {string} id
+ */
+function focusFlowRow(id) {
+  requestAnimationFrame(() => {
+    const input = elements.flows.querySelector(`input[data-flow-id="${CSS.escape(id)}"]`);
+    input?.closest('.lm-flow-row')?.querySelector('button')?.focus();
+  });
 }
 
 // 保存していない変更がある状態で管理画面を閉じる場合は、Chrome の確認を出します。
@@ -664,7 +721,7 @@ selectDetailTab('steps');
 elements.newFlow.addEventListener('click', () => {
   select('');
   elements.importer.hidden = false;
-  elements.placeholder.hidden = true;
+  showDetailView(true);
   elements.importJson.focus();
 });
 
@@ -2389,12 +2446,19 @@ async function renderStopRules() {
 }
 
 /**
- * 編集するフローを選びます。空の文字列の場合は、どれも選びません。
+ * 編集するフローを選びます。空の文字列の場合は、どれも選ばずに一覧の画面に戻ります。
  * @param {string} id
+ * @param {{ history?: 'push' | 'replace' | 'none' }} [options] history：URL の履歴の扱い。
+ *   一覧からフローを開くときは push にし、ブラウザーの［戻る］で一覧に戻れるようにします
  */
-function select(id) {
+function select(id, { history: mode = 'replace' } = {}) {
   selectedId = id;
-  history.replaceState(null, '', id ? `#${encodeURIComponent(id)}` : location.pathname);
+  const url = id ? `#${encodeURIComponent(id)}` : location.pathname;
+  if (mode === 'push') {
+    history.pushState({ lmDetail: true }, '', url);
+  } else if (mode === 'replace') {
+    history.replaceState(id ? history.state : null, '', url);
+  }
   elements.importer.hidden = true;
   // 別のフローを選んだら、前のフローへの確認と誤りの表示を消します。
   for (const container of [elements.importConfirm, elements.editorConfirm]) {
@@ -2464,7 +2528,7 @@ async function render() {
 
   const stored = selectedId ? await getFlow(selectedId) : undefined;
   elements.editor.hidden = !stored;
-  elements.placeholder.hidden = Boolean(stored) || !elements.importer.hidden;
+  showDetailView(Boolean(stored) || !elements.importer.hidden);
   if (stored && elements.editor.dataset.id !== stored.id) {
     // 編集中の内容を上書きしないよう、別のフローを選んだときだけ JSON を入れ替えます。
     elements.editor.dataset.id = stored.id;
@@ -2620,7 +2684,7 @@ function flowListItem(stored) {
     if (stored.id !== selectedId && !(await confirmDiscardBlocks(row, '別のフローを開く'))) {
       return;
     }
-    select(stored.id);
+    select(stored.id, { history: 'push' });
   });
 
   const row = document.createElement('div');

@@ -41,12 +41,12 @@ body {
   }
 }
 
-/* 一覧を隠した状態です（#9）。詳細を画面の幅いっぱいに使います。 */
-.lm-layout.lm-list-hidden {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.lm-layout.lm-list-hidden > .lm-list {
+/*
+ * ［保存したフロー］のタブは、一覧の画面と、1 件のフローの画面を切り替えます（#9）。どちらも画面の幅いっぱいに
+ * 使います。手順のブロックを横に広く表示するためです。
+ */
+.lm-flows-panel.lm-view-list > .lm-detail,
+.lm-flows-panel.lm-view-detail > .lm-list {
   display: none;
 }
 

@@ -419,3 +419,46 @@ test('値の定義の編集：名前を変えて保存すると、手順の中�
   assert.equal(/** @type {any} */ (saved.steps[0]).url, `${server.origin}/form.html?q={{word}}`);
   assert.equal(await page.locator('#params-form').isHidden(), true);
 });
+
+test('保存したフロー：一覧で押したフローの画面に切り替わり、ボタンとブラウザーの［戻る］で一覧に戻る（#9）', async () => {
+  const { extensionPage: page } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: '画面の切り替え',
+    origin: server.origin,
+    steps: [{ type: 'navigate', cause: 'user', url: `${server.origin}/form.html` }],
+  };
+  await page.evaluate(
+    (flow) =>
+      chrome.storage.local.set({
+        flows: { view: { id: 'view', createdAt: '', updatedAt: '', flow } },
+      }),
+    flow,
+  );
+  const id = new URL(page.url()).host;
+  await page.goto(`chrome-extension://${id}/options/options.html`);
+  await page.reload();
+  const list = page.locator('#flow-list');
+  const editor = page.locator('#editor');
+  await list.getByText('画面の切り替え').click();
+  await editor.waitFor({ state: 'visible' });
+  assert.equal(await list.isHidden(), true);
+  assert.match(page.url(), /#view$/);
+
+  // ［← フローの一覧に戻る］で一覧に戻り、開いていたフローの行にフォーカスが戻ります。
+  await page.locator('#back-to-list').click();
+  await list.waitFor({ state: 'visible' });
+  assert.equal(await editor.isHidden(), true);
+  await waitUntil(
+    () => page.evaluate(() => globalThis.document.activeElement?.textContent ?? ''),
+    (text) => text.includes('画面の切り替え'),
+  );
+
+  // ブラウザーの［戻る］でも一覧に戻ります。
+  await list.getByText('画面の切り替え').click();
+  await editor.waitFor({ state: 'visible' });
+  await page.goBack();
+  await list.waitFor({ state: 'visible' });
+  assert.equal(await editor.isHidden(), true);
+});

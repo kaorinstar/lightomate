@@ -78,7 +78,12 @@
         </button>
       </div>
 
-      <section id="panel-flows" class="lm-layout" role="tabpanel" aria-labelledby="tab-flows">
+      <section
+        id="panel-flows"
+        class="lm-flows-panel lm-view-list"
+        role="tabpanel"
+        aria-labelledby="tab-flows"
+      >
         <nav class="card lm-list" id="flow-list" aria-labelledby="list-heading">
           <div class="card-header lm-card-header">
             <h2 id="list-heading" class="card-title">
@@ -156,21 +161,10 @@
         </nav>
 
         <div class="lm-detail">
-          <!-- 一覧を隠すと、詳細（手順のブロックなど）を画面の幅いっぱいに使えます（#9）。ボタンは、一覧の表示に
-               かかわらず同じ位置に置きます。 -->
+          <!-- フローを開くと、一覧に替えて詳細（手順のブロックなど）を画面の幅いっぱいに表示します（#9）。
+               このボタンで一覧に戻ります。ブラウザーの［戻る］でも戻れます。 -->
           <div class="lm-detail-tools">
-            <button
-              type="button"
-              class="btn btn-sm"
-              id="list-toggle"
-              aria-controls="flow-list"
-              aria-expanded="true"
-            >
-              一覧を隠す
-            </button>
-          </div>
-          <div id="placeholder" class="card card-body lm-empty">
-            左の一覧からフローを選ぶと、手順と実行時に入力する値を表示します。
+            <button type="button" class="btn btn-sm" id="back-to-list">← フローの一覧に戻る</button>
           </div>
 
           <section id="editor" class="card" hidden aria-labelledby="editor-heading">
