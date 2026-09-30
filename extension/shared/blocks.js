@@ -382,7 +382,7 @@ function unpickedMessage(blocks) {
           ? Boolean(step.condition?.target)
           : Boolean(step.target);
     if ((fields.includes('TARGET') && !hasTarget) || (fields.includes('NEXT') && !step.nextPage)) {
-      return `要素をまだ選んでいないブロック（${NOT_PICKED}）があります。そのブロックを選び、［ページで選ぶ］を押してください。`;
+      return `要素をまだ選んでいないブロック（${NOT_PICKED}）があります。そのブロックを右クリックし、［ページで選ぶ］を押してください。`;
     }
     for (const input of Object.values(block.inputs ?? {})) {
       if (input.block) {

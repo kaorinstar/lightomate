@@ -559,14 +559,15 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
   await page.locator('#blocks-notice').getByText('要素をまだ選んでいないブロック').waitFor();
 
   /**
-   * ブロックを選び、［ページで選ぶ］を押して、テスト用のページで選択モードが始まるのを待ちます。
+   * ブロックを右クリックし、メニューの［ページで選ぶ］を押して、テスト用のページで選択モードが始まるのを待ちます。
+   * keyboard を指定した場合は、利用者がキーボードで操作する場合と同じく、ブロックを押して選んだ後、
+   * Ctrl + Enter キーでメニューを開き、Enter キーで先頭の［ページで選ぶ］を押します。
    * @param {string} blockId
+   * @param {{ keyboard?: boolean }} [options]
    */
-  const startPick = async (blockId) => {
+  const startPick = async (blockId, { keyboard = false } = {}) => {
     await page.bringToFront();
-    // 利用者と同じく、マウスでブロックを押して選びます。
-    // ［ページで選ぶ］とブロックの両方が画面に入るよう、ボタンの並びを画面の上端に合わせます。
-    await page.locator('#blocks-pick-buttons').evaluate((element) => element.scrollIntoView());
+    await page.locator('#blocks').scrollIntoViewIfNeeded();
     const point = await page.evaluate((blockId) => {
       const Blockly = /** @type {any} */ (globalThis).Blockly;
       const rect = Blockly.getMainWorkspace()
@@ -575,21 +576,41 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
         .getBoundingClientRect();
       return { x: rect.x + 12, y: rect.y + 10 };
     }, blockId);
-    await page.mouse.click(point.x, point.y);
-    // ブロックにフォーカスが移ると、ページが動く場合があります。ボタンを画面に戻してから押します。
-    await page.locator('#blocks-pick').scrollIntoViewIfNeeded();
-    // ［ページで選ぶ］は、押し下げてから離すまで間を置きます。押し下げた時点でブロックの編集画面から
-    // フォーカスが外れ、ブロックの選択が外れても、押せるままであることを確かめるためです（#139）。
-    const button = await page.locator('#blocks-pick').boundingBox();
-    assert.ok(button);
-    await page.mouse.move(button.x + button.width / 2, button.y + button.height / 2);
-    await page.mouse.down();
-    await page.waitForTimeout(150);
-    await page.mouse.up();
+    if (keyboard) {
+      await page.mouse.click(point.x, point.y);
+      await page.keyboard.press('Control+Enter');
+      await page.getByRole('menuitem', { name: /^ページで選ぶ/ }).waitFor();
+      await page.keyboard.press('Enter');
+    } else {
+      await page.mouse.click(point.x, point.y, { button: 'right' });
+      await page.getByRole('menuitem', { name: /^ページで選ぶ/ }).click();
+    }
     await site.waitForFunction(
       () => globalThis.document.querySelector('lightomate-picker') !== null,
     );
   };
+
+  // 要素をまだ選んでいないブロックの説明（マウスを重ねると出る文）は、選ぶ方法を示します。右クリックのメニューには
+  // ［複製］があり、［インライン入力］はありません。メニューの項目の名前は、後ろにキーの組み合わせ（例：「複製 D」）が
+  // 付くため、先頭の一致で探します。
+  const tooltip = await page.evaluate((blockId) => {
+    const block = /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getBlockById(blockId);
+    return typeof block.tooltip === 'function' ? block.tooltip() : block.tooltip;
+  }, ids.loop);
+  assert.match(tooltip, /右クリックして［ページで選ぶ］を押し/);
+  await page.locator('#blocks').scrollIntoViewIfNeeded();
+  const loopBox = await page.evaluate((blockId) => {
+    const rect = /** @type {any} */ (globalThis).Blockly.getMainWorkspace()
+      .getBlockById(blockId)
+      .getSvgRoot()
+      .getBoundingClientRect();
+    return { x: rect.x + 12, y: rect.y + 10 };
+  }, ids.loop);
+  await page.mouse.click(loopBox.x, loopBox.y, { button: 'right' });
+  await page.getByRole('menuitem', { name: /^複製/ }).waitFor();
+  assert.equal(await page.getByRole('menuitem', { name: 'インライン入力' }).count(), 0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('menuitem', { name: /^複製/ }).waitFor({ state: 'hidden' });
 
   // 1. 繰り返しの行：2 行目のセルを押し、行の確認で Enter を押して「はい」を選びます。
   await startPick(ids.loop);
@@ -651,8 +672,8 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
     ),
   );
 
-  // 4. Esc キーでは、何も選ばずに終わります。
-  await startPick(ids.click);
+  // 4. Esc キーでは、何も選ばずに終わります。キーボードでメニューを開いて始めます。
+  await startPick(ids.click, { keyboard: true });
   await site.keyboard.press('Escape');
   await page.locator('#blocks-pick-notice').getByText('要素の選択を取り消しました。').waitFor();
 

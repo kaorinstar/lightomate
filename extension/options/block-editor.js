@@ -3,6 +3,7 @@
 // グローバルの Blockly を使います。ブロックの定義と、手順との変換は extension/shared/blocks.js にあります。
 
 import {
+  NOT_PICKED,
   PICK_FIELDS,
   blockDefinitions,
   conditionUsesValues,
@@ -86,8 +87,26 @@ function register() {
   }
   Blockly.blockRendering.register(RENDERER, Renderer);
 
-  // 右クリックのメニューから、要素の選択モードを始めます（#139）。キーボードの場合は、編集画面の上の
-  // ［ページで選ぶ］を使います。
+  // 要素を使うブロックには、ページで選ぶ方法を案内する説明（マウスを重ねると出る文）を付けます（#139）。
+  for (const type of Object.keys(PICK_FIELDS)) {
+    const definition = Blockly.Blocks[type];
+    const init = definition.init;
+    definition.init = function () {
+      init.call(this);
+      this.setTooltip(() => pickTooltip(this));
+    };
+  }
+
+  // 右クリックのメニューの文言です。Blockly の日本語の「重複」は、ブロックを写す操作に合わないため直します。
+  Blockly.Msg.DUPLICATE_BLOCK = '複製';
+  // 入力欄を 1 行に並べるか縦に並べるかの切り替え（インライン入力・外部入力）は、手順の内容を変えず、
+  // 利用者が使う場面がないため、メニューから外します。
+  if (Blockly.ContextMenuRegistry.registry.getItem('blockInline')) {
+    Blockly.ContextMenuRegistry.registry.unregister('blockInline');
+  }
+
+  // 右クリックのメニューから、要素の選択モードを始めます（#139）。キーボードでは、ブロックを選んで
+  // Ctrl + Enter キー（Mac では Command + Enter キー）でメニューを開きます（Blockly 13 の標準の操作）。
   for (const field of /** @type {const} */ (['TARGET', 'NEXT'])) {
     Blockly.ContextMenuRegistry.registry.register({
       id: `lm_pick_${field}`,
@@ -107,6 +126,23 @@ function register() {
       },
     });
   }
+}
+
+/**
+ * 要素を使うブロックの説明（マウスを重ねると出る文）です。まだ選んでいない欄があれば、選ぶ方法を示します。
+ * @param {any} block
+ * @returns {string}
+ */
+function pickTooltip(block) {
+  if (block.getFieldValue('TARGET') === NOT_PICKED) {
+    return block.type.startsWith('lm_forEach')
+      ? '右クリックして［ページで選ぶ］を押し、ページで、繰り返す一覧のどれか 1 行を押してください。'
+      : '右クリックして［ページで選ぶ］を押し、ページで、操作する要素を押してください。';
+  }
+  if (block.getField('NEXT') && block.getFieldValue('NEXT') === NOT_PICKED) {
+    return '右クリックして［次のページへ進むボタンをページで選ぶ］を押し、ページで、次のページへ進むボタンを押してください。';
+  }
+  return '選び直すには、右クリックして［ページで選ぶ］を押してください。';
 }
 
 /**
@@ -136,7 +172,7 @@ function theme(container) {
  * @typedef {object} PickInfo
  * @property {string} blockId
  * @property {string} blockType
- * @property {string} label ブロックの表示の文字（［ページで選ぶ］の横に、対象のブロックとして示します）
+ * @property {string} label ブロックの表示の文字
  * @property {('TARGET' | 'NEXT')[]} fields 選べる欄
  * @property {object[]} chain ブロックを囲む繰り返しの行の指定（外側から順）
  * @property {string} [error] 選べない理由。囲む繰り返しの行をまだ選んでいない場合です
@@ -147,14 +183,12 @@ function theme(container) {
  * @param {HTMLElement} container ブロックを表示する要素
  * @param {{
  *   onChange: (dirty: boolean) => void,
- *   onSelect?: (info: PickInfo | null, selected: boolean) => void,
  *   onPick?: (blockId: string, field: 'TARGET' | 'NEXT') => void,
  * }} options
- *   onChange：保存していない変更の有無が変わったとき。onSelect：選んだブロックが変わったとき、ブロックを動かした
- *   とき、ブロックを削除したとき（#139）。selected はブロックを選んでいるかで、選択が外れた場合は false です
+ *   onChange：保存していない変更の有無が変わったとき。
  *   onPick：右クリックのメニューの［ページで選ぶ］を押したとき（#139）
  */
-export function createBlockEditor(container, { onChange, onSelect, onPick }) {
+export function createBlockEditor(container, { onChange, onPick }) {
   register();
   if (onPick) {
     onPickFromMenu = onPick;
@@ -182,15 +216,6 @@ export function createBlockEditor(container, { onChange, onSelect, onPick }) {
   workspace.addChangeListener((/** @type {any} */ event) => {
     if (!loading && !event.isUiEvent) {
       setDirty(true);
-    }
-    // 選んだブロックが変わったとき、または選んだブロックの位置が変わったときに、選べる要素を知らせます。
-    if (
-      event.type === Blockly.Events.SELECTED ||
-      event.type === Blockly.Events.BLOCK_MOVE ||
-      event.type === Blockly.Events.BLOCK_DELETE
-    ) {
-      const selected = Blockly.getSelected();
-      onSelect?.(pickInfo(selected), Boolean(selected));
     }
   });
 
@@ -289,11 +314,6 @@ export function createBlockEditor(container, { onChange, onSelect, onPick }) {
      */
     pickInfo(blockId) {
       return pickInfo(workspace.getBlockById(blockId));
-    },
-
-    /** 選んでいるブロックの情報です。選んでいない場合と、要素を選べないブロックの場合は null です。 */
-    selectedPickInfo() {
-      return pickInfo(Blockly.getSelected());
     },
 
     /**

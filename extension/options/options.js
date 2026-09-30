@@ -178,9 +178,6 @@ const elements = {
   blocksSave: /** @type {HTMLButtonElement} */ (byId('blocks-save')),
   blocksRevert: /** @type {HTMLButtonElement} */ (byId('blocks-revert')),
   blocksNotice: byId('blocks-notice'),
-  blocksPick: /** @type {HTMLButtonElement} */ (byId('blocks-pick')),
-  blocksPickNext: /** @type {HTMLButtonElement} */ (byId('blocks-pick-next')),
-  blocksPickHint: byId('blocks-pick-hint'),
   blocksPickNotice: byId('blocks-pick-notice'),
   jsonNotice: byId('json-notice'),
   jsonFeedback: byId('json-feedback'),
@@ -304,7 +301,6 @@ let selectedId = decodeURIComponent(location.hash.slice(1));
 /** ［手順］タブのブロックの編集画面です。 */
 const blockEditor = createBlockEditor(elements.blocks, {
   onChange: updateBlockButtons,
-  onSelect: updatePickButtons,
   onPick: (blockId, field) => {
     startPick(blockId, field).catch((error) =>
       showNotice(elements.blocksPickNotice, String(error), 'error'),
@@ -341,58 +337,15 @@ function updateBlockButtons(dirty) {
 // ---- ページで要素を選ぶ（#139） ----
 
 /**
- * 最後に選んだ、要素を使うブロックです。［ページで選ぶ］を押したときに、ブロックの選択が外れていても
- * 使えるよう、ブロックの選択が変わるたびに控えます。
- * @type {import('./block-editor.js').PickInfo | null}
- */
-let pickTarget = null;
-
-/**
  * 選択モードで選んでいる途中のブロックです。結果が届いたら、このブロックに入れます。
  * @type {{ blockId: string, field: 'TARGET' | 'NEXT', requestId: string } | null}
  */
 let pendingPick = null;
 
 /**
- * 選んだブロックに合わせて、［ページで選ぶ］を押せるようにします。
- * ブロックの選択が外れただけの場合は、最後に選んだブロックを対象のまま残します。［ページで選ぶ］を押すと、
- * マウスのボタンを押し下げた時点でブロックの編集画面からフォーカスが外れ、選択が外れるためです（#139）。
- * 対象を変えるのは、別のブロックを選んだときと、対象のブロックを削除したときです。
- * @param {import('./block-editor.js').PickInfo | null} info 選んでいるブロックの情報
- * @param {boolean} [selected] ブロックを選んでいるか
- */
-function updatePickButtons(info, selected = true) {
-  if (!selected && pickTarget) {
-    // 選択が外れただけなら、対象のブロックがまだあるかだけを確かめます。
-    info = blockEditor.pickInfo(pickTarget.blockId);
-  }
-  pickTarget = info;
-  elements.blocksPick.disabled = !info;
-  elements.blocksPickNext.hidden = !info?.fields.includes('NEXT');
-  elements.blocksPickHint.textContent = info
-    ? `対象：${info.label}`
-    : '要素を使うブロックを選ぶと押せます。';
-}
-
-elements.blocksPick.addEventListener('click', () => {
-  if (pickTarget) {
-    startPick(pickTarget.blockId, 'TARGET').catch((error) =>
-      showNotice(elements.blocksPickNotice, String(error), 'error'),
-    );
-  }
-});
-
-elements.blocksPickNext.addEventListener('click', () => {
-  if (pickTarget) {
-    startPick(pickTarget.blockId, 'NEXT').catch((error) =>
-      showNotice(elements.blocksPickNotice, String(error), 'error'),
-    );
-  }
-});
-
-/**
  * 要素の選択モードを始めます。フローのサイトのタブで利用者が要素を押すと、結果が picker/done で届きます。
- * サイトを操作する許可は、ボタンを押した直後に求めます。Chrome は、押した直後にしか確認を出さないためです。
+ * サイトを操作する許可は、メニューの［ページで選ぶ］を押した直後に求めます。Chrome は、押した直後にしか確認を
+ * 出さないためです。
  * @param {string} blockId
  * @param {'TARGET' | 'NEXT'} field
  */
@@ -474,7 +427,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     // ページ送りのある繰り返しでは、行の次に［次へ］のボタンを選ぶ必要があるため、続けて押すボタンを示します。
     const next =
       field === 'TARGET' && blockEditor.pickInfo(blockId)?.blockType === 'lm_forEach_pages'
-        ? '続けて、上の［次のページへ進むボタンをページで選ぶ］を押してください。'
+        ? '続けて、同じブロックを右クリックし、［次のページへ進むボタンをページで選ぶ］を押してください。'
         : '保存するには［手順を保存］を押してください。';
     showToast(elements.toast, `「${label}」${rows}を選びました。${next}`);
   }
