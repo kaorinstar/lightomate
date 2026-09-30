@@ -33,8 +33,8 @@ async function getState() {
 }
 
 /**
- * 選択モードを始めます。フローのサイトを表示しているタブのうち最後に使ったタブを前面に出し、ない場合は
- * フローの最初のページを新しいタブで開きます。
+ * 選択モードを始めます。管理画面と同じウィンドウで、フローのサイトを表示しているタブのうち最後に使ったタブを
+ * 前面に出し、ない場合はフローの最初のページを同じウィンドウの新しいタブで開きます。
  * @param {unknown} request 管理画面からの指示 { origin, url, mode, chain }
  * @param {chrome.runtime.MessageSender} sender
  * @returns {Promise<{ ok: true, requestId: string } | { ok: false, error: string }>}
@@ -58,11 +58,13 @@ export async function startPicker(request, sender) {
   }
   await stopPicker();
 
-  const tabs = (await chrome.tabs.query({ url: `${origin}/*` })).filter(
-    (tab) => tab.id !== undefined && tab.id !== optionsTabId,
-  );
-  tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
+  // 管理画面と同じウィンドウのタブだけを使います。別のウィンドウを前面に出す操作は、Windows では OS に
+  // 止められ、タスクバーが点滅するだけになる場合があり、利用者には何も起きないように見えるためです。
   const optionsTab = await chrome.tabs.get(optionsTabId);
+  const tabs = (
+    await chrome.tabs.query({ url: `${origin}/*`, windowId: optionsTab.windowId })
+  ).filter((tab) => tab.id !== undefined && tab.id !== optionsTabId);
+  tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
   const tab =
     tabs[0] ??
     (await chrome.tabs.create({

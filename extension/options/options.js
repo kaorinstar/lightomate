@@ -430,6 +430,12 @@ async function startPick(blockId, field) {
     return;
   }
   pendingPick = { blockId, field, requestId: response.requestId };
+  // サイトのタブに切り替わらなかった場合も、選択が始まったことと、どこで選ぶかがわかるようにします。
+  showNotice(
+    elements.blocksPickNotice,
+    'サイトのタブで、要素を選んでいます。そのタブでページの要素を押してください。Esc キーで取り消せます。',
+    'info',
+  );
 }
 
 // 選択モードの結果を受け取ります。Service Worker が、ページで選んだ要素の指定を送ります。
