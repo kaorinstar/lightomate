@@ -132,7 +132,8 @@ const elements = {
   intervalFeedback: byId('interval-feedback'),
   speedNotice: byId('speed-notice'),
   scheduleForm: /** @type {HTMLFormElement} */ (byId('schedule-form')),
-  scheduleStatus: byId('schedule-status'),
+  scheduleState: byId('schedule-state'),
+  scheduleSummary: byId('schedule-summary'),
   scheduleReason: byId('schedule-reason'),
   scheduleReasonBody: byId('schedule-reason-body'),
   scheduleFrequency: /** @type {HTMLSelectElement} */ (byId('schedule-frequency')),
@@ -1489,21 +1490,29 @@ async function fillScheduleFields(flowId) {
  */
 async function renderSchedule(stored) {
   const schedule = (await listSchedules())[stored.id];
-  elements.scheduleStatus.textContent = schedule
-    ? `${describeSchedule(schedule)}（次回：${formatRunAt(nextRunAt(schedule, new Date()))}）`
-    : '設定していません。';
+  // 状態は、色だけで伝えないよう、印の文字（設定済み・未設定）でも示します。
+  elements.scheduleState.textContent = schedule ? '設定済み' : '未設定';
+  elements.scheduleState.classList.toggle('lm-status-success', Boolean(schedule));
+  if (schedule) {
+    const when = document.createElement('strong');
+    when.textContent = describeSchedule(schedule);
+    const next = document.createElement('span');
+    next.className = 'lm-sub';
+    next.textContent = `次回 ${formatRunAt(nextRunAt(schedule, new Date()))}`;
+    elements.scheduleSummary.replaceChildren(when, ' ', next);
+  } else {
+    elements.scheduleSummary.replaceChildren('定期実行は設定していません。');
+  }
   const problems = schedulingProblems(stored.flow);
   elements.scheduleReason.hidden = problems.length === 0;
   elements.scheduleReasonBody.replaceChildren(
     ...(problems.length === 0
       ? []
       : [
-          paragraph(
-            'このフローは定期実行できません。定期実行は人がいない間に動くため、実行のたびに入力する値を使えません。',
-          ),
-          paragraph('理由'),
+          paragraph('定期実行は人がいない間に動くため、実行のたびに入力する値を使えません。'),
+          paragraph('理由', 'lm-guide-label'),
           list(problems),
-          paragraph('定期実行するには'),
+          paragraph('定期実行するには', 'lm-guide-label'),
           list(schedulingRemedies(stored.flow)),
         ]),
   );
@@ -1518,11 +1527,15 @@ async function renderSchedule(stored) {
 
 /**
  * @param {string} text
+ * @param {string} [className]
  * @returns {HTMLParagraphElement}
  */
-function paragraph(text) {
+function paragraph(text, className) {
   const element = document.createElement('p');
   element.textContent = text;
+  if (className) {
+    element.className = className;
+  }
   return element;
 }
 

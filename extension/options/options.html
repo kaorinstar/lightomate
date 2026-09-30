@@ -244,9 +244,12 @@
                   設定した日時に、背景のタブで実行します。<wbr />開始・完了・一時停止は、Windows
                   の通知で知らせます。<wbr />Chrome を起動している間だけ実行します。
                 </p>
-                <p id="schedule-status" class="lm-schedule-status"></p>
-                <div id="schedule-reason" class="lm-sub lm-aside" hidden>
-                  <span class="lm-aside-mark" aria-hidden="true">ⓘ</span>
+                <div class="lm-schedule-status">
+                  <span id="schedule-state" class="lm-status"></span>
+                  <span id="schedule-summary"></span>
+                </div>
+                <div id="schedule-reason" class="alert alert-info lm-guide" hidden>
+                  <p class="lm-guide-title">このフローは定期実行できません</p>
                   <div id="schedule-reason-body"></div>
                 </div>
                 <div class="lm-speed-row" id="schedule-fields">

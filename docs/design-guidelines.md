@@ -157,6 +157,8 @@ content script がページの中に出す表示（`extension/content/overlay.js
 | 入力欄の誤り | `extension/shared/ui.js` の `showFieldError`（`is-invalid` と `invalid-feedback` を使います） |
 | 確認 | `extension/shared/ui.js` の `confirmInline` |
 | 備考（区画の外の補足、#108） | 枠と背景のない `lm-sub lm-aside`。先頭に `aria-hidden` の「ⓘ」を置きます。操作の結果ではなく常に表示する案内のため、「5. 知らせと誤りの表示場所」の知らせには含めません |
+| 設定の状態（#22） | 状態の印（`base.css` の `lm-status`）で「設定済み」「未設定」を示し、続けて内容を太字、補足を `lm-sub` で書きます |
+| 操作できない理由と対処の案内（区画の中で常に表示する案内、#22） | `alert alert-info lm-guide`。先頭に「i」の印を付けた見出しを置き、「理由」「〜するには」の小見出しの下に箇条書きで書きます。操作の結果ではないため、「5. 知らせと誤りの表示場所」の知らせには含めません |
 
 - 1 つの区画に `btn-primary` は 1 つだけ置きます。どれを押せばよいかを、色で示すためです。
 

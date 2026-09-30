@@ -418,27 +418,54 @@ body {
 }
 
 .lm-schedule-status {
-  margin-bottom: 0.5rem;
-}
-
-/* 定期実行できない理由と、定期実行できるようにする方法の案内です（サイドパネルの備考と同じ形）。 */
-.lm-aside {
   display: flex;
-  gap: 0.25rem;
-  margin: 0 0 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
-.lm-aside-mark {
-  flex: none;
+/* 常に表示する案内です。操作できない理由と、その対処を見出し付きで示します（#22）。 */
+.lm-guide {
+  margin-bottom: 0.75rem;
+  padding: 0.75rem 1rem;
 }
 
-.lm-aside p,
-.lm-aside ul {
-  margin-bottom: 0.25rem;
+.lm-guide p,
+.lm-guide ul {
+  margin: 0;
 }
 
-.lm-aside ul {
+.lm-guide ul {
   padding-inline-start: 1.25rem;
+}
+
+.lm-guide-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin-bottom: 0.25rem !important;
+  font-weight: 600;
+}
+
+/* 色だけで伝えないよう、知らせ（.lm-notice）と同じ記号を見出しの先頭に付けます。 */
+.lm-guide-title::before {
+  content: 'i';
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.1em;
+  height: 1.1em;
+  border: 1.5px solid currentcolor;
+  border-radius: 50%;
+  font-size: 0.85em;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.lm-guide-label {
+  margin-top: 0.5rem !important;
+  font-weight: 600;
 }
 
 .lm-speed-feedback:empty {
