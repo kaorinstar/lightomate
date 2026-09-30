@@ -115,6 +115,8 @@ const elements = {
   editorMeta: byId('editor-meta'),
   editorTitle: byId('editor-title'),
   editorActions: byId('editor-actions'),
+  more: /** @type {HTMLButtonElement} */ (byId('more')),
+  editorMore: byId('editor-more'),
   editorConfirm: byId('editor-confirm'),
   editorNotice: byId('editor-notice'),
   openFirst: /** @type {HTMLButtonElement} */ (byId('open-first')),
@@ -711,6 +713,19 @@ elements.renameForm.addEventListener('submit', async (event) => {
 });
 
 /**
+ * 詳細の見出しの「…」（その他の操作）を開閉します（#137）。
+ * @param {boolean} open
+ */
+function setMoreOpen(open) {
+  elements.editorMore.hidden = !open;
+  elements.more.setAttribute('aria-expanded', String(open));
+}
+
+elements.more.addEventListener('click', () => {
+  setMoreOpen(elements.editorMore.hidden === true);
+});
+
+/**
  * 見出しの位置を、名前の入力欄に切り替えます。
  * @param {boolean} show
  */
@@ -1006,7 +1021,13 @@ function batchRow(batch, flows) {
       return item;
     }),
   );
-  row.append(name, order);
+  // 名前と実行する順を左に、操作を右端に置きます（#137）。行の幅を使い、ほかの一覧の行と同じ配置にします。
+  const text = document.createElement('div');
+  text.className = 'lm-batch-text';
+  text.append(name, order);
+  const head = document.createElement('div');
+  head.className = 'lm-batch-head';
+  row.append(head);
 
   const problems = batchProblems(batch.flowIds, flows);
   if (problems.length > 0) {
@@ -1079,7 +1100,8 @@ function batchRow(batch, flows) {
       showNotice(notice, String(error), 'error'),
     );
   });
-  row.append(buttons, confirm, notice);
+  head.append(text, buttons);
+  row.append(confirm, notice);
   return row;
 }
 
@@ -1669,10 +1691,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// ---- 実行の速度（#15） ----
+// ---- 実行速度（#15） ----
 
 /**
- * 実行の速度の欄に、フローの手順の間隔を入れます。指定がない場合は空欄にします（既定の 1 秒）。
+ * 実行速度の欄に、フローの手順の間隔を入れます。指定がない場合は空欄にします（既定の 1 秒）。
  * @param {import('../shared/flow.js').Flow} flow
  */
 function fillSpeedFields(flow) {
@@ -1681,7 +1703,7 @@ function fillSpeedFields(flow) {
   clearSpeedError();
 }
 
-/** 実行の速度の誤りを消します。2 つの欄で、行の直下の表示欄を共有しています。 */
+/** 実行速度の誤りを消します。2 つの欄で、行の直下の表示欄を共有しています。 */
 function clearSpeedError() {
   showFieldError(elements.intervalMin, elements.intervalFeedback, '');
   showFieldError(elements.intervalMax, elements.intervalFeedback, '');
@@ -1717,7 +1739,7 @@ elements.speedForm.addEventListener('submit', async (event) => {
     interval: result.flow.interval,
   });
   if (replaced === null) {
-    // JSON の編集欄は別のタブにあるため、押したボタンのある［実行の速度］のタブに出します（#132）。
+    // JSON の編集欄は別のタブにあるため、押したボタンのある［実行速度］のタブに出します（#132）。
     showNotice(
       elements.speedNotice,
       'JSON の編集欄を読み取れないため、編集欄の速度は書き換えていません。［JSON を保存］を押すと、速度は編集欄の内容に戻ります。',
@@ -1837,7 +1859,9 @@ async function renderHistory() {
         status.append(trigger);
       }
 
+      // 幅が狭い画面では、表を行ごとの縦の並びにし、列の見出しの代わりにこの名前を表示します（#137）。
       const reason = document.createElement('td');
+      reason.dataset.label = '止まった手順と理由';
       if (entry.stepNumber !== undefined) {
         const step = document.createElement('div');
         // 止まった手順の内容は、サイドパネルの実行の表示と同じく、番号の後に括弧で添えます（#93）。
@@ -1853,6 +1877,7 @@ async function renderHistory() {
 
       const files = document.createElement('td');
       files.className = 'lm-sub';
+      files.dataset.label = '保存したファイル';
       files.textContent = entry.files.join('\n');
 
       // 行ごとに同じ「×」が並ぶため、読み上げでは対象の日時とフロー名を示します。1 件ずつの削除は確認しません。
@@ -1873,7 +1898,7 @@ async function renderHistory() {
       });
       const actions = document.createElement('td');
       // ［コピー］は成功以外の行にだけ置くため、右に寄せて「×」の位置を行の間でそろえます。
-      actions.className = 'lm-nowrap text-end';
+      actions.className = 'lm-nowrap text-end lm-history-actions';
       // 成功以外の履歴は、原因の調査を依頼するときに貼り付けられるよう、1 件ずつコピーできます（#93）。
       if (entry.status !== 'done') {
         const copy = document.createElement('button');
@@ -2168,6 +2193,7 @@ async function render() {
   if (stored && elements.editor.dataset.id !== stored.id) {
     // 編集中の内容を上書きしないよう、別のフローを選んだときだけ JSON を入れ替えます。
     elements.editor.dataset.id = stored.id;
+    setMoreOpen(false);
     elements.json.value = JSON.stringify(orderFlow(stored.flow), null, 2);
     fillSpeedFields(stored.flow);
     await fillScheduleFields(stored.id);
@@ -2199,14 +2225,21 @@ function renderDetail({ flow, createdAt, updatedAt }) {
     step.type === 'input' && step.secret ? [{ step, index: number }] : [],
   );
   const inputs = params.length + secrets.length;
-  elements.editorMeta.textContent = [
+  // 項目ごとに折り返さない範囲にし、日付と時刻が別の行に分かれないようにします（#137）。
+  const metaParts = [
     `手順 ${flattened.length} 件`,
     inputs > 0 ? `実行時に入力 ${inputs} 項目` : '',
     `作成 ${formatDateTime(createdAt)}`,
     `更新 ${formatDateTime(updatedAt)}`,
-  ]
-    .filter(Boolean)
-    .join('・');
+  ].filter(Boolean);
+  elements.editorMeta.replaceChildren(
+    ...metaParts.flatMap((text, index) => {
+      const part = document.createElement('span');
+      part.className = 'lm-nowrap';
+      part.textContent = text;
+      return index === 0 ? [part] : ['・', part];
+    }),
+  );
 
   elements.paramsSection.hidden = inputs === 0;
   elements.params.replaceChildren(

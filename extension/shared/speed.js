@@ -116,7 +116,7 @@ export function parseSeconds(text, minMs, maxMs) {
 }
 
 /**
- * 管理画面の「実行の速度」の入力を、手順の間隔にします。
+ * 管理画面の「実行速度」の入力を、手順の間隔にします。
  * 片方だけ入力した場合は、空欄の方に同じ値を入れます（一定の間隔）。両方が空欄の場合は interval を
  * undefined とし、既定の間隔に戻します。
  * @param {string} minText 最短の欄の文字列（秒）

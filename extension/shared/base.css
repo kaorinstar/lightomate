@@ -5,6 +5,31 @@
  */
 
 /*
+ * 書体です（#137）。どの端末でも同じ見た目にするため、Noto Sans JP を同梱して使います
+ * （extension/vendor/noto-sans-jp/、scripts/vendor.js）。太さを 1 つのファイルで変えられる形式のため、
+ * 400・600・700 のどれも同じファイルで表示します。読み込めない場合は OS の書体で表示します。
+ */
+:root {
+  --tblr-font-sans-serif:
+    'Noto Sans JP Variable', system-ui, -apple-system, 'Segoe UI', 'Yu Gothic UI', Meiryo,
+    sans-serif;
+}
+
+/*
+ * OS で動きを減らす設定を選んだ人には、色の変化や開閉の動きを止めます（#137。WCAG 2.2 の 2.3.3）。
+ * Tabler は入力欄など一部の部品でしか止めないため、すべての要素に指定します。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
  * Tabler は、入力欄の誤りの印とセレクトボックスの矢印を data: の画像で描きます。拡張機能の CSP は
  * data: の画像を許可していないため、これらを使わない指定に置き換えます。誤りは赤枠と文言で示します。
  * 印の分の右の余白は、Tabler が !important 付きで印の大きさの変数から計算するため、変数を変えて余白を
@@ -22,6 +47,21 @@
   padding-inline-end: 0.75rem;
   background-image: none;
   appearance: auto;
+}
+
+/*
+ * セレクトボックスと時刻の欄の高さを、同じ大きさの入力欄にそろえます（#137）。
+ * Chrome は、標準の見た目（appearance: auto）のセレクトボックスで行の高さの指定を使わず、書体の標準の
+ * 行の高さで表示します。そのため、並べた入力欄（検索欄と一致方法、定期実行の周期と時刻など）と高さが
+ * ずれます。高さを、Tabler の入力欄と同じ値で指定します。
+ */
+.form-select,
+.form-control[type='time'] {
+  height: calc(1.25rem + 1.125rem + calc(var(--tblr-border-width) * 2));
+}
+
+.form-select-sm {
+  height: calc(1rem + 0.625rem + calc(var(--tblr-border-width) * 2));
 }
 
 /*
@@ -96,11 +136,13 @@
 }
 
 /*
-  カードの本文と一覧の 1 行の上下の余白です（#85）。Tabler の標準は 20px で、ほかの余白より大きいため、
-  12px にします。左右の余白は標準のままです。
+  カードの本文と一覧の 1 行の余白です。上下は 12px です（#85）。Tabler の標準は 20px で、ほかの余白より
+  大きいためです。左右は 16px です（#137）。公開されている管理画面のテンプレート（CoreUI、AdminLTE）と
+  同じ値にし、狭い幅でも本文の幅を広く使えるようにします。
 */
 .card {
   --tblr-card-spacer-y: 0.75rem;
+  --tblr-card-spacer-x: 1rem;
 }
 
 .list-group {
@@ -131,11 +173,12 @@
 }
 
 /*
- * 見出しの帯の中と、選んでいる一覧の行・マウスを重ねた一覧の行の補足（サイト、日時、件数）は、
+ * 見出しの帯の中と、選んでいる一覧の行・マウスを重ねた一覧の行の補足（サイト、日時、件数、「…」）は、
  * 背景が一段濃いため、補足の色では 4.5:1 に届きません。本文の色を混ぜて濃くします。
  */
 .card-header .lm-sub,
 .card-header .lm-count:not(:empty),
+.card-header .btn-ghost-secondary:not(:hover, :active, :focus, [aria-expanded='true']),
 :is(.list-group-item, .list-group-item-action):is(.active, :hover, :focus-visible) .lm-sub {
   color: color-mix(in oklab, var(--tblr-secondary) 80%, var(--tblr-body-color));
 }
@@ -283,6 +326,27 @@
 .lm-hint {
   max-width: 40em;
   color: var(--tblr-secondary);
+}
+
+div.lm-hint {
+  margin-bottom: 1rem;
+}
+
+/*
+ * 3 文以上になる説明は、要点の 1 文と箇条書きにします（#137）。1 つの段落に文が続くと、どこに何が
+ * 書いてあるかを探しにくいためです。管理画面の各タブの先頭の説明（lm-panel-note）も同じ形です。
+ */
+:is(.lm-hint, .lm-panel-note) > p {
+  margin: 0 0 0.25rem;
+}
+
+:is(.lm-hint, .lm-panel-note) > ul {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
+
+:is(.lm-hint, .lm-panel-note) > ul > li + li {
+  margin-top: 0.125rem;
 }
 
 /* 補足の文字です。見出し・本文・補足の 3 段階のうち、最も小さいものです。 */
@@ -479,9 +543,15 @@
  * 常に表示する案内（コールアウト）です。操作できない理由と、その対処を示します（#22、#133）。
  * 操作の結果の知らせ（.lm-notice）と異なり、閉じるボタンを持たず、関係する区画の先頭に置きます。
  */
+/*
+ * 見た目は、左に太い線を引き、背景を薄く塗る形です（#137。AdminLTE の callout と同じ形）。
+ * 枠で囲む操作の結果の知らせ（.lm-notice）と、形でも見分けられるようにします。
+ */
 .lm-guide {
   margin-bottom: 0.75rem;
   padding: 0.75rem 1rem;
+  border-width: 0;
+  border-inline-start: 0.25rem solid var(--tblr-alert-variant-color);
 }
 
 .lm-guide p,
@@ -496,7 +566,8 @@
 
 .lm-guide-title {
   display: flex;
-  align-items: center;
+  align-items: baseline;
+  text-align: start;
   gap: 0.4em;
   margin-bottom: 0.25rem !important;
   font-weight: 600;

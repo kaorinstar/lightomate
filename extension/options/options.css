@@ -157,8 +157,22 @@ body {
   margin-top: 0.5rem;
 }
 
-.lm-batch-row .lm-buttons {
-  margin-top: 0.5rem;
+/* まとめフローの行の 1 段目です。名前と実行する順を左に、操作を右端に置き、狭い幅では操作を下に送ります。 */
+.lm-batch-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.lm-batch-text {
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+
+.lm-batch-text .lm-batch-order {
+  margin-bottom: 0;
 }
 
 /* まとめフローの行の中に開く、実行する値の入力欄です（#7）。フローごとの欄の間と、ボタンの上に余白を置きます。 */
@@ -216,6 +230,24 @@ body {
   font-weight: 700;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+/*
+ * 詳細の見出しの操作です。囲みの要素は並びに加わらず（display: contents）、よく使う操作はフロー名の右に、
+ * 「…」で開くその他の操作は見出しの帯の幅いっぱいの次の行に、右端をそろえて並べます。
+ * 開いたときに、よく使う操作とフロー名の位置が動かないようにするためです（#137）。
+ */
+.lm-detail-actions {
+  display: contents;
+}
+
+#editor-more {
+  flex-basis: 100%;
+  justify-content: flex-end;
+}
+
+.lm-detail-actions[hidden] {
+  display: none;
 }
 
 .lm-detail-header .lm-buttons[hidden] {
@@ -333,8 +365,20 @@ body {
   min-height: 16rem;
 }
 
+/* 下部です。内容と区別するため、上に境界線を引きます（#137。AdminLTE の下部と同じ形）。 */
 .lm-footer {
   margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--tblr-border-color);
+}
+
+/*
+ * 画面の見出しのアプリ名です。Tabler は大文字に変えますが、サイドパネルの見出しと同じ「Lightomate」の
+ * 表記にそろえます（#137）。
+ */
+.lm-page-header .page-pretitle {
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 /* 選んだフローを開く・実行するときの、値の入力欄です（#43）。手順の一覧と区別するため、枠で囲みます。 */
@@ -356,10 +400,73 @@ body {
   margin: 0 0 1rem;
 }
 
-/* 実行履歴の表です（#19）。止まった理由と保存したファイルは長いため、折り返します。 */
+/*
+ * 実行履歴の表です（#19）。止まった理由、保存したファイル、サイトは長いため、途中でも折り返します。
+ * 途中で折り返さない指定（break-word）にすると、ファイル名などの長い語の分だけ表が広がり、横に
+ * スクロールしないと右端の［コピー］と「×」が見えなくなるためです（#137）。
+ */
 .lm-history td {
   overflow-wrap: anywhere;
   white-space: pre-line;
+}
+
+/*
+ * 開始日時、結果、行の操作（［コピー］と「×」）は折り返しません。
+ * .lm-history td の white-space より優先させるため、表の中に限って指定します。
+ */
+.lm-history .lm-nowrap {
+  white-space: nowrap;
+}
+
+/*
+ * 幅が狭い画面では、6 列の表が収まらず、横にスクロールしないと右端の［コピー］と「×」が見えなくなります。
+ * そのため、表を 1 件ずつの縦の並びにし、［コピー］と「×」を各行の右上に置きます（#137）。
+ * 列の見出しの代わりに、止まった理由と保存したファイルには項目名（data-label）を添えます。
+ */
+@media (width <= 900px) {
+  .lm-history thead {
+    display: none;
+  }
+
+  .lm-history,
+  .lm-history tbody,
+  .lm-history td {
+    display: block;
+  }
+
+  .lm-history tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem 1rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--tblr-border-color);
+  }
+
+  /* Tabler の card-table は先頭と末尾の列に左右の余白を付けるため、同じ詳しさの指定で外します。 */
+  .lm-history td,
+  .lm-history tr td:first-child,
+  .lm-history tr td:last-child {
+    grid-column: 1;
+    padding: 0;
+    border: 0;
+  }
+
+  .lm-history td:empty {
+    display: none;
+  }
+
+  .lm-history tr td.lm-history-actions {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .lm-history td[data-label]::before {
+    display: block;
+    color: var(--tblr-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    content: attr(data-label);
+  }
 }
 
 /* 見出しの帯の直下に出す、すべて削除の確認と、削除できなかった知らせです（#75）。 */
@@ -368,12 +475,8 @@ body {
   margin: 0.75rem 1rem;
 }
 
-.lm-history .lm-nowrap {
-  white-space: nowrap;
-}
-
 /*
-  実行の速度の欄です（#15）。最短・最長・［速度を保存］を 1 行に並べ、狭い幅では折り返します。
+  実行速度の欄です（#15）。最短・最長・［速度を保存］を 1 行に並べ、狭い幅では折り返します。
   誤りは行の直下に 1 つだけ出します。欄が横に並ぶため、各欄の直下には置けないためです。
 */
 .lm-speed-row {
@@ -428,11 +531,6 @@ body {
 
 .lm-list > .lm-card-header .card-title {
   white-space: nowrap;
-}
-
-/* ［設定］のタブです（#41）。説明文が長くならないよう、幅を抑えます。 */
-.lm-settings {
-  max-width: 48rem;
 }
 
 .lm-setting {

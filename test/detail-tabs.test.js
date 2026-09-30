@@ -24,10 +24,10 @@ const detailTabs = [
   (match) => /** @type {Record<string, string>} */ ({ ...attributes(match[0]), label: match[1] }),
 );
 
-test('フローの詳細のタブは［手順］［実行の速度］［定期実行］［JSON］の 4 つである', () => {
+test('フローの詳細のタブは［手順］［実行速度］［定期実行］［JSON］の 4 つである', () => {
   assert.deepEqual(
     detailTabs.map((tab) => tab.label),
-    ['手順', '実行の速度', '定期実行', 'JSON'],
+    ['手順', '実行速度', '定期実行', 'JSON'],
   );
   for (const tab of detailTabs) {
     assert.equal(tab.role, 'tab');
