@@ -148,7 +148,6 @@ const elements = {
   params: byId('params'),
   stepCount: byId('step-count'),
   steps: byId('steps'),
-  jsonDetails: /** @type {HTMLDetailsElement} */ (byId('json-details')),
   jsonNotice: byId('json-notice'),
   jsonFeedback: byId('json-feedback'),
   json: /** @type {HTMLTextAreaElement} */ (byId('json')),
@@ -280,7 +279,9 @@ function clearNotices() {
 // WAI-ARIA の Tabs パターンに従います（https://www.w3.org/WAI/ARIA/apg/patterns/tabs/）。
 // 選んだタブは URL の ?tab= に書き、再読み込みしても同じタブを開きます。
 
-const tabs = /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll('[role="tab"]')]);
+const tabs = /** @type {HTMLButtonElement[]} */ ([
+  ...document.querySelectorAll('#main-tabs [role="tab"]'),
+]);
 
 /**
  * タブを切り替えます。
@@ -328,6 +329,55 @@ for (const [index, tab] of tabs.entries()) {
 // ?tab= がない場合は、保存したフローのタブを開きます。サイドパネルの［編集］から開く URL
 // （#<フローの id>）には ?tab= がないため、そのフローを保存したフローのタブで開きます。
 selectTab(new URL(location.href).searchParams.get('tab') ?? 'flows');
+
+// ---- フローの詳細のタブ（#132） ----
+// 画面の上部のタブと同じく WAI-ARIA の Tabs パターンに従います。選んだタブは保存しません。
+// タブを切り替えても、隠した区画の入力（保存していない JSON の編集など）は消しません。
+
+const detailTabs = /** @type {HTMLButtonElement[]} */ ([
+  ...document.querySelectorAll('[data-detail-tab]'),
+]);
+
+/** 選んでいるフローの詳細のタブです。 */
+let detailTab = 'steps';
+
+/**
+ * フローの詳細のタブを切り替えます。
+ * @param {string} name data-detail-tab の値
+ * @param {boolean} [focus] 選んだタブにフォーカスを移すか
+ */
+function selectDetailTab(name, focus = false) {
+  const current = detailTabs.find((tab) => tab.dataset.detailTab === name) ?? detailTabs[0];
+  detailTab = current.dataset.detailTab ?? 'steps';
+  for (const tab of detailTabs) {
+    const selected = tab === current;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    byId(tab.getAttribute('aria-controls') ?? '').hidden = !selected;
+  }
+  if (focus) {
+    current.focus();
+  }
+}
+
+for (const [index, tab] of detailTabs.entries()) {
+  tab.addEventListener('click', () => {
+    clearNotices();
+    selectDetailTab(tab.dataset.detailTab ?? '');
+  });
+  tab.addEventListener('keydown', (event) => {
+    const moves = { ArrowRight: 1, ArrowLeft: -1 };
+    const move = moves[/** @type {'ArrowRight' | 'ArrowLeft'} */ (event.key)];
+    if (move) {
+      event.preventDefault();
+      const next = detailTabs[(index + move + detailTabs.length) % detailTabs.length];
+      selectDetailTab(next.dataset.detailTab ?? '', true);
+    }
+  });
+}
+
+selectDetailTab('steps');
 
 // ---- 保存したフロー ----
 
@@ -632,8 +682,9 @@ elements.renameForm.addEventListener('submit', async (event) => {
   // JSON の編集欄は読み込み直さず、名前だけを書き換えます。保存していない編集を失わないためです（#53）。
   const renamed = replaceJsonName(elements.json.value, result.name);
   if (renamed === null) {
+    // JSON の編集欄は別のタブにあるため、名前の変更の知らせと同じく、詳細の上部に出します（#132）。
     showNotice(
-      elements.jsonNotice,
+      elements.editorNotice,
       `JSON の編集欄を読み取れないため、編集欄の名前は書き換えていません。［JSON を保存］を押すと、名前は編集欄の内容に戻ります。`,
       'warning',
     );
@@ -1659,8 +1710,9 @@ elements.speedForm.addEventListener('submit', async (event) => {
     interval: result.flow.interval,
   });
   if (replaced === null) {
+    // JSON の編集欄は別のタブにあるため、押したボタンのある［実行の速度］のタブに出します（#132）。
     showNotice(
-      elements.jsonNotice,
+      elements.speedNotice,
       'JSON の編集欄を読み取れないため、編集欄の速度は書き換えていません。［JSON を保存］を押すと、速度は編集欄の内容に戻ります。',
       'warning',
     );
@@ -2042,8 +2094,11 @@ function select(id) {
   clearNotices();
   showRenameForm(false);
   hideRunForm();
-  // 別のフローを選んだら、JSON の編集欄は閉じ、内容の表示から見せます。
-  elements.jsonDetails.open = false;
+  // 別のフローを選んだら、JSON の編集欄ではなく内容の表示から見せます。ほかのタブは選んだままにし、
+  // フローを見比べられるようにします（#132）。
+  if (detailTab === 'json') {
+    selectDetailTab('steps');
+  }
   render().catch(console.error);
 }
 
