@@ -419,3 +419,53 @@
 .lm-status-danger {
   --lm-status-color: var(--tblr-danger);
 }
+
+/*
+ * 常に表示する案内（コールアウト）です。操作できない理由と、その対処を示します（#22、#133）。
+ * 操作の結果の知らせ（.lm-notice）と異なり、閉じるボタンを持たず、関係する区画の先頭に置きます。
+ */
+.lm-guide {
+  margin-bottom: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+
+.lm-guide p,
+.lm-guide ul {
+  margin: 0;
+}
+
+.lm-guide ul {
+  padding-inline-start: 1.25rem;
+}
+
+.lm-guide-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin-bottom: 0.25rem !important;
+  font-weight: 600;
+}
+
+/* 色だけで伝えないよう、知らせ（.lm-notice）と同じ記号を見出しの先頭に付けます。 */
+.lm-guide-title::before {
+  content: 'i';
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.1em;
+  height: 1.1em;
+  border: 1.5px solid currentcolor;
+  border-radius: 50%;
+  font-size: 0.85em;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.lm-guide-title:only-child {
+  margin-bottom: 0 !important;
+}
+
+.lm-guide-label {
+  margin-top: 0.5rem !important;
+  font-weight: 600;
+}

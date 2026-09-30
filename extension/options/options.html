@@ -182,7 +182,9 @@
             <div class="card-body">
               <div id="editor-confirm" hidden></div>
               <p id="editor-notice" hidden></p>
-              <p id="run-reason" class="lm-sub" hidden></p>
+              <div id="run-reason" class="alert alert-info lm-guide" hidden>
+                <p class="lm-guide-title" id="run-reason-text"></p>
+              </div>
 
               <form id="run-form" class="lm-block lm-run-form" novalidate hidden>
                 <h3 id="run-form-heading" class="lm-block-title"></h3>
@@ -465,7 +467,9 @@
             ></select>
           </div>
           <p id="batch-no-match" class="lm-empty" hidden>該当するまとめフローはありません。</p>
-          <p id="batch-empty" class="lm-empty">まとめフローはまだありません。</p>
+          <p id="batch-empty" class="lm-empty">
+            まとめフローはまだありません。［保存したフロー］でフローを選び、［まとめフローとして保存］を押すと作成できます。
+          </p>
           <div id="batch-list" class="list-group list-group-flush"></div>
         </div>
       </section>
@@ -481,7 +485,9 @@
               <h2 class="card-title">指定したサイト</h2>
               <button type="button" class="btn btn-sm" id="stop-clear">新しいサイト</button>
             </div>
-            <p id="stop-empty" class="lm-empty">指定はまだありません。</p>
+            <p id="stop-empty" class="lm-empty">
+              指定はまだありません。「サイトごとの指定」にサイトと止める要素を入力し、［このサイトの指定を保存］を押すと追加できます。
+            </p>
             <div id="stop-list" class="list-group list-group-flush"></div>
           </div>
 
@@ -565,7 +571,9 @@
           </div>
           <div id="history-confirm" hidden></div>
           <p id="history-notice" hidden></p>
-          <p id="history-empty" class="lm-empty">実行履歴はまだありません。</p>
+          <p id="history-empty" class="lm-empty">
+            実行履歴はまだありません。フローを実行すると、結果がここに記録されます。
+          </p>
           <div class="table-responsive" id="history-table-wrap">
             <table class="table table-vcenter card-table lm-history">
               <thead>

@@ -371,20 +371,6 @@ body {
 }
 
 /*
-  結果は文字で示し、失敗と一時停止には色も付けます。色だけで伝えないためです。
-  文字色は、明るい表示と暗い表示の両方でコントラスト比が 4.5:1 以上になる *-text-emphasis を使います。
-*/
-.lm-history td.lm-status-failed {
-  color: var(--tblr-danger-text-emphasis, var(--tblr-danger));
-  font-weight: 600;
-}
-
-.lm-history td.lm-status-halted {
-  color: var(--tblr-warning-text-emphasis, var(--tblr-warning));
-  font-weight: 600;
-}
-
-/*
   実行の速度の欄です（#15）。最短・最長・［速度を保存］を 1 行に並べ、狭い幅では折り返します。
   誤りは行の直下に 1 つだけ出します。欄が横に並ぶため、各欄の直下には置けないためです。
 */
@@ -419,49 +405,6 @@ body {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
-}
-
-/* 常に表示する案内です。操作できない理由と、その対処を見出し付きで示します（#22）。 */
-.lm-guide {
-  margin-bottom: 0.75rem;
-  padding: 0.75rem 1rem;
-}
-
-.lm-guide p,
-.lm-guide ul {
-  margin: 0;
-}
-
-.lm-guide ul {
-  padding-inline-start: 1.25rem;
-}
-
-.lm-guide-title {
-  display: flex;
-  align-items: center;
-  gap: 0.4em;
-  margin-bottom: 0.25rem !important;
-  font-weight: 600;
-}
-
-/* 色だけで伝えないよう、知らせ（.lm-notice）と同じ記号を見出しの先頭に付けます。 */
-.lm-guide-title::before {
-  content: 'i';
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  width: 1.1em;
-  height: 1.1em;
-  border: 1.5px solid currentcolor;
-  border-radius: 50%;
-  font-size: 0.85em;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.lm-guide-label {
-  margin-top: 0.5rem !important;
-  font-weight: 600;
 }
 
 .lm-speed-feedback:empty {
