@@ -100,7 +100,7 @@ LIGHTOMATE_CHROMIUM=/opt/pw-browsers/chromium npm run test:e2e
 | `docs/receipt-flow.md` | 領収書のフローの作り方の手引き。例の JSON は `docs/examples/receipt-flow.json` で、`test/receipt-flow.test.js` が形式を確かめます |
 | `docs/backup-format.md` | 一括バックアップのファイルの形式の説明。`extension/shared/backup.js` と同時に変更します |
 | `docs/design-guidelines.md` | 画面の配置、見た目、知らせの出し方の規則。画面を変更するときはこれに従います |
-| `extension/vendor/` | 同梱した外部のファイル（Tabler の CSS と、書体 Noto Sans JP）。`npm run vendor` で `node_modules` から複写します。手で編集しません |
+| `extension/vendor/` | 同梱した外部のファイル（Tabler の CSS、書体 Noto Sans JP、ブロックの編集画面の Blockly）。`npm run vendor` で `node_modules` から複写します。手で編集しません |
 
 - content script は `manifest.json` で宣言せず、記録中のタブにだけ Service Worker が
   `chrome.scripting.executeScript` で読み込みます。同じページに 2 回読み込まれても誤りにならないよう、

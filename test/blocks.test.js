@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  BLOCK_COLOURS,
   blockDefinitions,
   conditionUsesValues,
   stepsToWorkspace,
@@ -213,4 +214,19 @@ test('条件の種類ごとに、値の欄を使うかが決まる', () => {
   assert.deepEqual(conditionUsesValues('exists'), { value: false, value2: false });
   assert.deepEqual(conditionUsesValues('contains'), { value: true, value2: false });
   assert.deepEqual(conditionUsesValues('range'), { value: true, value2: true });
+});
+
+test('ブロックの色は、どれも白い文字に対して 4.5:1 以上の濃さである', () => {
+  /** @param {string} hex */
+  const luminance = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((index) => {
+      const value = Number.parseInt(hex.slice(index, index + 2), 16) / 255;
+      return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  for (const [name, colour] of Object.entries(BLOCK_COLOURS)) {
+    const ratio = 1.05 / (luminance(colour) + 0.05);
+    assert.ok(ratio >= 4.5, `${name}（${colour}）の比は ${ratio.toFixed(2)} です。`);
+  }
 });
