@@ -91,7 +91,7 @@ LIGHTOMATE_CHROMIUM=/opt/pw-browsers/chromium npm run test:e2e
 | `extension/options/` | 設定・編集画面：ビジュアルエディタを置く場所 |
 | `extension/shared/` | 共通モジュール：フロー定義の型と検証、パラメータの処理など。`chrome.*` を使いません |
 | `extension/common/` | Service Worker と拡張機能の画面の両方で使う、`chrome.*` を使うモジュール：フローの保存など |
-| `extension/content/` | content script（ページ内で動くスクリプト）：操作の記録と実行 |
+| `extension/content/` | content script（ページ内で動くスクリプト）：操作の記録と実行、要素の選択モード |
 | `test/` | 単体テスト |
 | `e2e/` | 自動の動作確認（Chromium に拡張機能を読み込むテスト）と、テスト用のページ（`e2e/pages/`） |
 | `scripts/` | 開発とリリース用のスクリプト（Node.js）。拡張機能には含めません |

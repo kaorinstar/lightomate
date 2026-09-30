@@ -185,9 +185,11 @@ export function blockDefinitions() {
     },
     {
       type: 'lm_while',
-      message0: '%1 %2 %3 %4 %5 の間、繰り返す（上限 %6 回）',
-      args0: [
-        ...CONDITION_ARGS,
+      // 1 行が長いと、ブロックの一覧の幅が広がり、ブロックを置く面が狭くなるため、2 行に分けます（#139）。
+      message0: '%1 %2 %3 %4 %5 の間',
+      args0: CONDITION_ARGS,
+      message1: '繰り返す（上限 %1 回）',
+      args1: [
         {
           type: 'field_number',
           name: 'MAX',
@@ -197,8 +199,8 @@ export function blockDefinitions() {
           precision: 1,
         },
       ],
-      message1: '%1',
-      args1: [{ type: 'input_statement', name: 'STEPS' }],
+      message2: '%1',
+      args2: [{ type: 'input_statement', name: 'STEPS' }],
       colour: BLOCK_COLOURS.control,
       extensions: ['lm_condition'],
       ...statement,
@@ -224,7 +226,8 @@ export function blockDefinitions() {
     },
     {
       type: 'lm_forEach_pages',
-      message0: '%1 の各行で繰り返す（上限 %2 件、%3 ページまで。次へ：%4）',
+      // 1 行が長いと、ブロックの一覧の幅が広がるため、ページ送りの欄を 2 行目に分けます（#139）。
+      message0: '%1 の各行で繰り返す（上限 %2 件）',
       args0: [
         { type: 'field_label_serializable', name: 'TARGET', text: '' },
         {
@@ -235,6 +238,9 @@ export function blockDefinitions() {
           max: 500,
           precision: 1,
         },
+      ],
+      message1: 'ページ送り：%1 ページまで、次へ：%2',
+      args1: [
         {
           type: 'field_number',
           name: 'MAX_PAGES',
@@ -245,17 +251,38 @@ export function blockDefinitions() {
         },
         { type: 'field_label_serializable', name: 'NEXT', text: '' },
       ],
-      message1: '%1',
-      args1: [{ type: 'input_statement', name: 'STEPS' }],
+      message2: '%1',
+      args2: [{ type: 'input_statement', name: 'STEPS' }],
       colour: BLOCK_COLOURS.control,
       ...statement,
     },
   ];
 }
 
+/** 要素をまだ選んでいない欄に出す文です（#139）。 */
+export const NOT_PICKED = '（ページで選ぶ）';
+
 /**
- * ブロックの一覧（ツールボックス）に出すブロックです。要素の指定（target）を必要としない手順だけを出します。
- * 要素を必要とする手順は、要素を選ぶ仕組み（#139）ができるまで、既存のブロックの複製で足します。
+ * 要素の指定を持つブロックの種類と、その欄です（#139）。TARGET は手順の要素（繰り返しでは行）、NEXT は
+ * ページ送りの［次へ］のボタンです。
+ * @type {Record<string, ('TARGET' | 'NEXT')[]>}
+ */
+export const PICK_FIELDS = {
+  lm_click: ['TARGET'],
+  lm_input: ['TARGET'],
+  lm_input_secret: ['TARGET'],
+  lm_select: ['TARGET'],
+  lm_extract: ['TARGET'],
+  lm_if: ['TARGET'],
+  lm_while: ['TARGET'],
+  lm_forEach: ['TARGET'],
+  lm_forEach_pages: ['TARGET', 'NEXT'],
+};
+
+/**
+ * ブロックの一覧（ツールボックス）に出すブロックです。
+ * 要素の指定を必要とするブロックは、要素をまだ選んでいない状態で出します。置いた後に［ページで選ぶ］で
+ * 要素を選びます（#139）。選択の欄（lm_select）は、選ぶ値を記録からしか作れないため出しません。
  * @returns {{ kind: 'flyoutToolbox', contents: object[] }}
  */
 export function toolbox() {
@@ -267,10 +294,106 @@ export function toolbox() {
     { type: 'savePdf' },
     { type: 'closeTab' },
   ];
+  /** @type {object[]} */
+  const picked = [
+    { type: 'lm_click', fields: { TARGET: NOT_PICKED } },
+    { type: 'lm_input', fields: { TARGET: NOT_PICKED, VALUE: '' } },
+    { type: 'lm_input_secret', fields: { TARGET: NOT_PICKED } },
+    { type: 'lm_extract', fields: { TARGET: NOT_PICKED, NAME: 'value' } },
+    { type: 'lm_if', fields: { TARGET: NOT_PICKED, COND: 'exists', VALUE: '', VALUE2: '' } },
+    { type: 'lm_forEach', fields: { TARGET: NOT_PICKED, MAX: DEFAULT_FOREACH_MAX } },
+    {
+      type: 'lm_forEach_pages',
+      fields: {
+        TARGET: NOT_PICKED,
+        MAX: DEFAULT_FOREACH_MAX,
+        MAX_PAGES: DEFAULT_MAX_PAGES,
+        NEXT: NOT_PICKED,
+      },
+    },
+    {
+      type: 'lm_while',
+      fields: { TARGET: NOT_PICKED, COND: 'exists', VALUE: '', VALUE2: '', MAX: DEFAULT_WHILE_MAX },
+    },
+  ];
   return {
     kind: 'flyoutToolbox',
-    contents: steps.map((step) => ({ kind: 'block', ...stepToBlock(step) })),
+    contents: [
+      ...steps.map((step) => ({ kind: 'block', ...stepToBlock(step) })),
+      ...picked.map((block) => ({ kind: 'block', ...block })),
+    ],
   };
+}
+
+/**
+ * ページで選んだ結果を、ブロックの元の手順に入れます（#139）。元の手順は変更しません。
+ * @param {string} blockType ブロックの種類（例：lm_click）
+ * @param {Record<string, any> | undefined} step ブロックの元の手順。一覧から置いた直後のブロックにはありません
+ * @param {'TARGET' | 'NEXT'} field 選んだ欄
+ * @param {{ target?: object, items?: object }} result ページで選んだ要素の指定
+ * @returns {Record<string, any>}
+ */
+export function pickedStep(blockType, step, field, result) {
+  const type = stepTypeOf(blockType);
+  /** @type {Record<string, any>} */
+  const next = structuredClone(step ?? { type });
+  if (field === 'NEXT') {
+    next.nextPage = result.target;
+  } else if (type === 'forEach') {
+    next.items = result.items;
+  } else if (type === 'if' || type === 'while') {
+    next.condition = { ...(next.condition ?? { exists: true }), target: result.target };
+  } else {
+    next.target = result.target;
+  }
+  if (blockType === 'lm_input_secret') {
+    next.secret = true;
+  }
+  return next;
+}
+
+/**
+ * ブロックの種類から、手順の種類を返します。例：lm_forEach_pages → forEach
+ * @param {string} blockType
+ * @returns {string}
+ */
+function stepTypeOf(blockType) {
+  return blockType.replace(/^lm_/, '').replace(/_(secret|pages)$/, '');
+}
+
+/**
+ * 要素をまだ選んでいないブロックがあれば、その説明を返します（#139）。すべて選んでいれば空の文字列です。
+ * 保存の前の検証（validateFlow）の誤りの文より先に、直し方を示すためです。
+ * @param {BlockState[]} blocks 最上位のブロック
+ * @returns {string}
+ */
+function unpickedMessage(blocks) {
+  /** @type {BlockState[]} */
+  const queue = [...blocks];
+  while (queue.length > 0) {
+    const block = /** @type {BlockState} */ (queue.shift());
+    const step = /** @type {Record<string, any>} */ (block.extraState?.step ?? {});
+    const fields = PICK_FIELDS[block.type] ?? [];
+    const type = stepTypeOf(block.type);
+    const hasTarget =
+      type === 'forEach'
+        ? Boolean(step.items)
+        : type === 'if' || type === 'while'
+          ? Boolean(step.condition?.target)
+          : Boolean(step.target);
+    if ((fields.includes('TARGET') && !hasTarget) || (fields.includes('NEXT') && !step.nextPage)) {
+      return `要素をまだ選んでいないブロック（${NOT_PICKED}）があります。そのブロックを選び、［ページで選ぶ］を押してください。`;
+    }
+    for (const input of Object.values(block.inputs ?? {})) {
+      if (input.block) {
+        queue.push(input.block);
+      }
+    }
+    if (block.next?.block) {
+      queue.push(block.next.block);
+    }
+  }
+  return '';
 }
 
 /**
@@ -446,6 +569,10 @@ export function workspaceToSteps(state) {
         'つながっていないブロックがあります。すべてのブロックを 1 つの並びにつなげるか、使わないブロックを削除してください。',
     };
   }
+  const unpicked = unpickedMessage(tops);
+  if (unpicked) {
+    return { steps: [], error: unpicked };
+  }
   return { steps: tops[0] ? unchain(tops[0]) : [] };
 }
 
@@ -472,10 +599,13 @@ function unchain(first) {
  * @returns {Step}
  */
 export function blockToStep(block) {
-  const type = block.type.replace(/^lm_/, '').replace(/_(secret|pages)$/, '');
+  const type = stepTypeOf(block.type);
   /** @type {Record<string, any>} */
   const step = structuredClone(block.extraState?.step ?? { type });
   step.type = type;
+  if (block.type === 'lm_input_secret') {
+    step.secret = true;
+  }
   const fields = block.fields ?? {};
   const text = (/** @type {string} */ name) => String(fields[name] ?? '');
   /** @param {string} name */
@@ -558,12 +688,12 @@ function keepDefault(original, field, fallback) {
 
 /**
  * 条件の欄の値から、条件を作り直します。調べる要素（target）は元の条件のものを使います。
- * @param {Condition} original
+ * @param {Condition | undefined} original 一覧から置いた直後のブロックにはありません
  * @param {Record<string, unknown>} fields
  * @returns {Condition}
  */
 function conditionFromFields(original, fields) {
-  const target = original.target;
+  const target = /** @type {Condition} */ (original)?.target;
   const value = String(fields.VALUE ?? '');
   const value2 = String(fields.VALUE2 ?? '');
   switch (fields.COND) {
@@ -584,7 +714,7 @@ function conditionFromFields(original, fields) {
         ...(value2 ? { to: value2 } : {}),
       });
     default:
-      return original;
+      return original ?? /** @type {Condition} */ ({ target, exists: true });
   }
 }
 

@@ -43,6 +43,7 @@ import {
   flowOrigins,
   formatFlowJson,
   isWebOrigin,
+  isWebUrl,
   orderFlow,
   replaceJsonFields,
   replaceJsonName,
@@ -177,6 +178,10 @@ const elements = {
   blocksSave: /** @type {HTMLButtonElement} */ (byId('blocks-save')),
   blocksRevert: /** @type {HTMLButtonElement} */ (byId('blocks-revert')),
   blocksNotice: byId('blocks-notice'),
+  blocksPick: /** @type {HTMLButtonElement} */ (byId('blocks-pick')),
+  blocksPickNext: /** @type {HTMLButtonElement} */ (byId('blocks-pick-next')),
+  blocksPickHint: byId('blocks-pick-hint'),
+  blocksPickNotice: byId('blocks-pick-notice'),
   jsonNotice: byId('json-notice'),
   jsonFeedback: byId('json-feedback'),
   json: /** @type {HTMLTextAreaElement} */ (byId('json')),
@@ -269,6 +274,7 @@ const notices = [
   elements.allSitesNotice,
   elements.backupNotice,
   elements.blocksNotice,
+  elements.blocksPickNotice,
   elements.paramsEditNotice,
   elements.paramsNotice,
 ];
@@ -296,7 +302,19 @@ let selectedId = decodeURIComponent(location.hash.slice(1));
 // ---- 手順のブロック（#9） ----
 
 /** ［手順］タブのブロックの編集画面です。 */
-const blockEditor = createBlockEditor(elements.blocks, { onChange: updateBlockButtons });
+const blockEditor = createBlockEditor(elements.blocks, {
+  onChange: updateBlockButtons,
+  onSelect: updatePickButtons,
+  onPick: (blockId, field) => {
+    startPick(blockId, field).catch((error) =>
+      showNotice(elements.blocksPickNotice, String(error), 'error'),
+    );
+  },
+});
+
+/** 表示しているフローです。要素の選択モード（#139）で、開くサイトを決めるのに使います。 */
+/** @type {import('../shared/flow.js').Flow | null} */
+let shownFlow = null;
 
 /**
  * ブロックに表示している手順（保存済みの内容）です。JSON の文字列で持ち、保存済みのフローと比べて、
@@ -319,6 +337,134 @@ function updateBlockButtons(dirty) {
   elements.blocksSave.disabled = !dirty;
   elements.blocksRevert.disabled = !dirty;
 }
+
+// ---- ページで要素を選ぶ（#139） ----
+
+/**
+ * 最後に選んだ、要素を使うブロックです。［ページで選ぶ］を押したときに、ブロックの選択が外れていても
+ * 使えるよう、ブロックの選択が変わるたびに控えます。
+ * @type {import('./block-editor.js').PickInfo | null}
+ */
+let pickTarget = null;
+
+/**
+ * 選択モードで選んでいる途中のブロックです。結果が届いたら、このブロックに入れます。
+ * @type {{ blockId: string, field: 'TARGET' | 'NEXT', requestId: string } | null}
+ */
+let pendingPick = null;
+
+/**
+ * 選んだブロックに合わせて、［ページで選ぶ］を押せるようにします。
+ * @param {import('./block-editor.js').PickInfo | null} info
+ */
+function updatePickButtons(info) {
+  pickTarget = info;
+  elements.blocksPick.disabled = !info;
+  elements.blocksPickNext.hidden = !info?.fields.includes('NEXT');
+  elements.blocksPickHint.textContent = info
+    ? info.blockType.startsWith('lm_forEach')
+      ? '選んだ繰り返しのブロックの、繰り返す行をページで選べます。'
+      : '選んだブロックの要素をページで選べます。'
+    : '要素を使うブロックを選ぶと押せます。';
+}
+
+elements.blocksPick.addEventListener('click', () => {
+  if (pickTarget) {
+    startPick(pickTarget.blockId, 'TARGET').catch((error) =>
+      showNotice(elements.blocksPickNotice, String(error), 'error'),
+    );
+  }
+});
+
+elements.blocksPickNext.addEventListener('click', () => {
+  if (pickTarget) {
+    startPick(pickTarget.blockId, 'NEXT').catch((error) =>
+      showNotice(elements.blocksPickNotice, String(error), 'error'),
+    );
+  }
+});
+
+/**
+ * 要素の選択モードを始めます。フローのサイトのタブで利用者が要素を押すと、結果が picker/done で届きます。
+ * サイトを操作する許可は、ボタンを押した直後に求めます。Chrome は、押した直後にしか確認を出さないためです。
+ * @param {string} blockId
+ * @param {'TARGET' | 'NEXT'} field
+ */
+async function startPick(blockId, field) {
+  clearNotices();
+  const info = blockEditor.pickInfo(blockId);
+  const flow = shownFlow;
+  if (!info || !flow) {
+    return;
+  }
+  if (info.error && field === 'TARGET') {
+    showNotice(elements.blocksPickNotice, info.error, 'error');
+    return;
+  }
+  const denied = await requestPermission(flow.origin);
+  if (denied) {
+    showNotice(elements.blocksPickNotice, denied, 'error');
+    return;
+  }
+  // 最初の手順がページを開く手順なら、その URL を開きます。実行時に入力する値（{{名前}}）を含む場合は、
+  // サイトの先頭のページを開きます。
+  const first = flow.steps[0];
+  const url =
+    first?.type === 'navigate' && !first.url.includes('{{') && isWebUrl(first.url)
+      ? first.url
+      : undefined;
+  const response = await chrome.runtime.sendMessage({
+    kind: 'picker/start',
+    origin: flow.origin,
+    url,
+    mode: field === 'TARGET' && info.blockType.startsWith('lm_forEach') ? 'rows' : 'element',
+    // ページ送りの［次へ］は行の内側を探さないため、囲む繰り返しの行は使いません。
+    chain: field === 'NEXT' ? [] : info.chain,
+  });
+  if (!response?.ok) {
+    showNotice(
+      elements.blocksPickNotice,
+      response?.error ?? '選択を始められませんでした。',
+      'error',
+    );
+    return;
+  }
+  pendingPick = { blockId, field, requestId: response.requestId };
+}
+
+// 選択モードの結果を受け取ります。Service Worker が、ページで選んだ要素の指定を送ります。
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (
+    sender.id !== chrome.runtime.id ||
+    message?.kind !== 'picker/done' ||
+    !pendingPick ||
+    message.requestId !== pendingPick.requestId
+  ) {
+    return;
+  }
+  const { blockId, field } = pendingPick;
+  pendingPick = null;
+  clearNotices();
+  const result = message.result ?? {};
+  if (result.cancelled) {
+    showNotice(elements.blocksPickNotice, '要素の選択を取り消しました。', 'info');
+  } else if (result.error) {
+    showNotice(elements.blocksPickNotice, result.error, 'error');
+  } else if (!blockEditor.applyPick(blockId, field, result)) {
+    showNotice(
+      elements.blocksPickNotice,
+      '要素を選んでいる間にブロックが削除されたため、反映しませんでした。',
+      'error',
+    );
+  } else {
+    const label = (result.items ?? result.target)?.label ?? '';
+    const rows = result.items ? `（${result.count} 件の行）` : '';
+    showToast(
+      elements.toast,
+      `「${label}」${rows}を選びました。保存するには［手順を保存］を押してください。`,
+    );
+  }
+});
 
 /**
  * ブロックに、保存済みのフローの手順を表示し直します。
@@ -2594,10 +2740,12 @@ async function render() {
     if (!blockEditor.dirty && JSON.stringify(stored.flow.steps) !== loadedSteps) {
       loadBlocks(stored.flow.steps);
     }
+    shownFlow = stored.flow;
     renderDetail(stored);
     await renderSchedule(stored);
     await renderRunButtons(stored.flow);
   } else {
+    shownFlow = null;
     delete elements.editor.dataset.id;
   }
 }

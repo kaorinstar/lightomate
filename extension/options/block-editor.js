@@ -3,8 +3,10 @@
 // グローバルの Blockly を使います。ブロックの定義と、手順との変換は extension/shared/blocks.js にあります。
 
 import {
+  PICK_FIELDS,
   blockDefinitions,
   conditionUsesValues,
+  pickedStep,
   stepsToWorkspace,
   toolbox,
   workspaceToSteps,
@@ -16,6 +18,13 @@ import {
 const Blockly = /** @type {any} */ (globalThis).Blockly;
 
 let registered = false;
+
+/**
+ * 右クリックのメニューの［ページで選ぶ］を押したときに呼ぶ処理です（#139）。メニューは 1 回だけ登録するため、
+ * 編集画面を作るときに差し替えます。
+ * @type {(blockId: string, field: 'TARGET' | 'NEXT') => void}
+ */
+let onPickFromMenu = () => {};
 
 /** 画像と音のファイルの場所です。options.html からの相対パスです。 */
 const MEDIA = '../vendor/blockly/media/';
@@ -76,6 +85,28 @@ function register() {
     }
   }
   Blockly.blockRendering.register(RENDERER, Renderer);
+
+  // 右クリックのメニューから、要素の選択モードを始めます（#139）。キーボードの場合は、編集画面の上の
+  // ［ページで選ぶ］を使います。
+  for (const field of /** @type {const} */ (['TARGET', 'NEXT'])) {
+    Blockly.ContextMenuRegistry.registry.register({
+      id: `lm_pick_${field}`,
+      scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+      weight: -1,
+      displayText: field === 'NEXT' ? '［次へ］のボタンをページで選ぶ' : 'ページで選ぶ',
+      /** @param {any} scope */
+      preconditionFn(scope) {
+        const block = scope.block;
+        return !block.isInFlyout && (PICK_FIELDS[block.type] ?? []).includes(field)
+          ? 'enabled'
+          : 'hidden';
+      },
+      /** @param {any} scope */
+      callback(scope) {
+        onPickFromMenu(scope.block.id, field);
+      },
+    });
+  }
 }
 
 /**
@@ -101,12 +132,31 @@ function theme(container) {
 }
 
 /**
+ * 要素を選べるブロックの情報です（#139）。
+ * @typedef {object} PickInfo
+ * @property {string} blockId
+ * @property {string} blockType
+ * @property {('TARGET' | 'NEXT')[]} fields 選べる欄
+ * @property {object[]} chain ブロックを囲む繰り返しの行の指定（外側から順）
+ * @property {string} [error] 選べない理由。囲む繰り返しの行をまだ選んでいない場合です
+ */
+
+/**
  * ブロックの編集画面を作ります。
  * @param {HTMLElement} container ブロックを表示する要素
- * @param {{ onChange: (dirty: boolean) => void }} options onChange：保存していない変更の有無が変わったとき
+ * @param {{
+ *   onChange: (dirty: boolean) => void,
+ *   onSelect?: (info: PickInfo | null) => void,
+ *   onPick?: (blockId: string, field: 'TARGET' | 'NEXT') => void,
+ * }} options
+ *   onChange：保存していない変更の有無が変わったとき。onSelect：選んだブロックが変わったとき（#139）。
+ *   onPick：右クリックのメニューの［ページで選ぶ］を押したとき（#139）
  */
-export function createBlockEditor(container, { onChange }) {
+export function createBlockEditor(container, { onChange, onSelect, onPick }) {
   register();
+  if (onPick) {
+    onPickFromMenu = onPick;
+  }
   const workspace = Blockly.inject(container, {
     renderer: RENDERER,
     theme: theme(container),
@@ -131,7 +181,39 @@ export function createBlockEditor(container, { onChange }) {
     if (!loading && !event.isUiEvent) {
       setDirty(true);
     }
+    // 選んだブロックが変わったとき、または選んだブロックの位置が変わったときに、選べる要素を知らせます。
+    if (event.type === Blockly.Events.SELECTED || event.type === Blockly.Events.BLOCK_MOVE) {
+      onSelect?.(pickInfo(Blockly.getSelected()));
+    }
   });
+
+  /**
+   * ブロックの要素を選べるかと、選ぶときに使う情報を返します（#139）。
+   * @param {any} block
+   * @returns {PickInfo | null}
+   */
+  const pickInfo = (block) => {
+    const fields = block && !block.isInFlyout ? PICK_FIELDS[block.type] : undefined;
+    if (!block || !fields || block.workspace !== workspace) {
+      return null;
+    }
+    // 囲む繰り返しの行の指定を、外側から順に集めます。行の内側の要素（scope: item）を作るのに使います。
+    /** @type {object[]} */
+    const chain = [];
+    let error = '';
+    for (let parent = block.getSurroundParent(); parent; parent = parent.getSurroundParent()) {
+      if (parent.type === 'lm_forEach' || parent.type === 'lm_forEach_pages') {
+        const items = parent.lmState?.step?.items;
+        if (items) {
+          chain.unshift(items);
+        } else {
+          error =
+            '囲んでいる繰り返しの行をまだ選んでいません。先に繰り返しのブロックで行を選んでください。';
+        }
+      }
+    }
+    return { blockId: block.id, blockType: block.type, fields, chain, ...(error ? { error } : {}) };
+  };
 
   // 画面の色が変わったら（OS の設定の切り替え）、Blockly の配色も合わせます。
   new MutationObserver(() => workspace.setTheme(theme(container))).observe(
@@ -182,6 +264,42 @@ export function createBlockEditor(container, { onChange }) {
     /** 保存していない変更があるかです。 */
     get dirty() {
       return dirty;
+    },
+
+    /**
+     * ブロックの要素を選べるかと、選ぶときに使う情報を返します（#139）。
+     * @param {string} blockId
+     * @returns {PickInfo | null}
+     */
+    pickInfo(blockId) {
+      return pickInfo(workspace.getBlockById(blockId));
+    },
+
+    /** 選んでいるブロックの情報です。選んでいない場合と、要素を選べないブロックの場合は null です。 */
+    selectedPickInfo() {
+      return pickInfo(Blockly.getSelected());
+    },
+
+    /**
+     * ページで選んだ結果をブロックに入れます（#139）。保存は［手順を保存］で行います。
+     * @param {string} blockId
+     * @param {'TARGET' | 'NEXT'} field
+     * @param {{ target?: { label: string }, items?: { label: string } }} result
+     * @returns {boolean} ブロックが見つかり、入れられたか
+     */
+    applyPick(blockId, field, result) {
+      const block = workspace.getBlockById(blockId);
+      if (!block) {
+        return false;
+      }
+      const step = pickedStep(block.type, block.lmState?.step, field, result);
+      block.lmState = { step };
+      const label =
+        (field === 'TARGET' && result.items ? result.items : result.target)?.label ?? '';
+      block.setFieldValue(label, field);
+      setDirty(true);
+      block.select();
+      return true;
     },
 
     /** 表示の大きさを合わせ直します。隠していた区画を表示したときに呼びます。 */

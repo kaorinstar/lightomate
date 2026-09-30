@@ -5,8 +5,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   BLOCK_COLOURS,
+  PICK_FIELDS,
   blockDefinitions,
   conditionUsesValues,
+  pickedStep,
   stepsToWorkspace,
   toolbox,
   workspaceToSteps,
@@ -182,8 +184,10 @@ test('ブロックの一覧から出した直後のブロック（元の手順�
   assert.deepEqual(steps, [{ type: 'wait', ms: 3000 }, { type: 'closeTab' }]);
 });
 
-test('ブロックの一覧には、要素を必要としない手順だけを出し、どれも形式の検証を通る', () => {
-  const contents = toolbox().contents;
+test('ブロックの一覧の、要素を必要としないブロックは、そのまま形式の検証を通る', () => {
+  const contents = toolbox().contents.filter(
+    (entry) => !(/** @type {any} */ (entry).type in PICK_FIELDS),
+  );
   const steps = contents.map(
     (entry) => workspaceToSteps({ blocks: { blocks: [/** @type {any} */ (entry)] } }).steps[0],
   );
@@ -200,6 +204,92 @@ test('ブロックの一覧には、要素を必要としない手順だけを�
     ),
   };
   assert.deepEqual(validateFlow(flow), []);
+});
+
+test('ブロックの一覧の、要素を必要とするブロックは、要素を選ぶまで保存できず、選ぶと形式の検証を通る（#139）', () => {
+  const picked = toolbox().contents.filter(
+    (entry) => /** @type {any} */ (entry).type in PICK_FIELDS,
+  );
+  assert.deepEqual(
+    picked.map((entry) => /** @type {any} */ (entry).type),
+    [
+      'lm_click',
+      'lm_input',
+      'lm_input_secret',
+      'lm_extract',
+      'lm_if',
+      'lm_forEach',
+      'lm_forEach_pages',
+      'lm_while',
+    ],
+  );
+  const row = { selectors: ['tr.order-row'], tag: 'tr', label: '一覧の行（tr.order-row）' };
+  const link = { selectors: ['a.receipt'], tag: 'a', label: '領収書', scope: 'item' };
+  const next = { selectors: ['#next'], tag: 'button', label: '次へ' };
+  for (const entry of picked) {
+    const block = /** @type {any} */ (structuredClone(entry));
+    const unpicked = workspaceToSteps({ blocks: { blocks: [block] } });
+    assert.match(unpicked.error ?? '', /要素をまだ選んでいないブロック/, block.type);
+
+    let step = pickedStep(block.type, undefined, 'TARGET', {
+      target: { selectors: ['#q'], tag: 'input', label: '検索' },
+      items: row,
+    });
+    if (block.type === 'lm_forEach_pages') {
+      step = pickedStep(block.type, step, 'NEXT', { target: next });
+    }
+    block.extraState = { step };
+    const inner =
+      block.type === 'lm_forEach' || block.type === 'lm_forEach_pages'
+        ? {
+            STEPS: {
+              block: { type: 'lm_click', extraState: { step: { type: 'click', target: link } } },
+            },
+          }
+        : {};
+    block.inputs = inner;
+    const result = workspaceToSteps({ blocks: { blocks: [block] } });
+    assert.equal(result.error, undefined, block.type);
+    const flow = {
+      schemaVersion: 12,
+      name: 'テスト',
+      origin: 'https://shop.example.com',
+      steps: [
+        { type: 'navigate', cause: 'user', url: 'https://shop.example.com/' },
+        ...result.steps,
+      ],
+    };
+    assert.deepEqual(validateFlow(flow), [], block.type);
+  }
+});
+
+test('ページで選んだ結果は、繰り返しでは行、条件では調べる要素、［次へ］ではページ送りに入る（#139）', () => {
+  const target = { selectors: ['#a'], tag: 'a', label: 'A' };
+  const items = { selectors: ['li'], tag: 'li', label: '行' };
+  assert.deepEqual(
+    pickedStep('lm_click', { type: 'click', target: target, newTab: true }, 'TARGET', { target }),
+    {
+      type: 'click',
+      target,
+      newTab: true,
+    },
+  );
+  assert.deepEqual(pickedStep('lm_forEach', undefined, 'TARGET', { items }), {
+    type: 'forEach',
+    items,
+  });
+  assert.deepEqual(
+    pickedStep('lm_if', { type: 'if', condition: { target: items, contains: 'x' } }, 'TARGET', {
+      target,
+    }),
+    { type: 'if', condition: { target, contains: 'x' } },
+  );
+  assert.deepEqual(pickedStep('lm_forEach_pages', { type: 'forEach', items }, 'NEXT', { target }), {
+    type: 'forEach',
+    items,
+    nextPage: target,
+  });
+  assert.equal(pickedStep('lm_input_secret', undefined, 'TARGET', { target }).secret, true);
 });
 
 test('ブロックの定義は、手順の種類ごとに 1 つ以上あり、名前が重ならない', () => {

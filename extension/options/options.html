@@ -341,12 +341,10 @@
                       ブロックを並べ替えて、手順を変えます。［手順を保存］を押すまで保存しません。
                     </p>
                     <ul>
+                      <li>追加：左の一覧から、置きたい場所へ動かします。</li>
                       <li>
-                        追加：左の一覧から、ページを開く・待つ・一時停止・PDF
-                        の保存・タブを閉じる、を足せます。
-                      </li>
-                      <li>
-                        クリックや入力：記録するか、既存のブロックを右クリックして［複製］し、置きたい場所へ動かします。
+                        クリック・入力・条件・繰り返し：ブロックを選び、［ページで選ぶ］を押して、ページの上で要素を押します。繰り返しでは、一覧のどれか
+                        1 行を押します。
                       </li>
                       <li>
                         キーボード：ブロックを選んで M キーで動かし始め、矢印キーで動かし、Enter
@@ -354,6 +352,18 @@
                       </li>
                     </ul>
                   </div>
+                  <div class="lm-buttons mb-2" id="blocks-pick-buttons">
+                    <button type="button" class="btn btn-sm" id="blocks-pick" disabled>
+                      ページで選ぶ
+                    </button>
+                    <button type="button" class="btn btn-sm" id="blocks-pick-next" hidden>
+                      ［次へ］のボタンをページで選ぶ
+                    </button>
+                    <span class="lm-sub" id="blocks-pick-hint" aria-live="polite">
+                      要素を使うブロックを選ぶと押せます。
+                    </span>
+                  </div>
+                  <p id="blocks-pick-notice" hidden></p>
                   <div
                     id="blocks"
                     class="lm-blocks"

@@ -495,3 +495,134 @@ test('必ず止まる場所：一覧で押したサイトの入力欄に切り�
   await list.waitFor({ state: 'visible' });
   assert.equal(await form.isHidden(), true);
 });
+
+test('要素の選択モード：ページで行と行の内側の要素を選ぶとブロックに入り、リンクの移動もページの処理も起きない（#139）', async () => {
+  const { extensionPage: page } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: '要素の選択',
+    origin: server.origin,
+    steps: [{ type: 'navigate', cause: 'user', url: `${server.origin}/picker.html` }],
+  };
+  await page.evaluate(
+    (flow) =>
+      chrome.storage.local.set({
+        flows: { picker: { id: 'picker', createdAt: '', updatedAt: '', flow } },
+      }),
+    flow,
+  );
+  const id = new URL(page.url()).host;
+  await page.goto(`chrome-extension://${id}/options/options.html#picker`);
+  await page.reload();
+  await page.waitForFunction(
+    () =>
+      /** @type {any} */ (globalThis).Blockly?.getMainWorkspace()?.getAllBlocks(false).length > 0,
+  );
+
+  // ブロックの一覧から置いたのと同じ、要素をまだ選んでいない繰り返しとクリックのブロックをつなぎます。
+  const ids = await page.evaluate(() => {
+    const Blockly = /** @type {any} */ (globalThis).Blockly;
+    const workspace = Blockly.getMainWorkspace();
+    const [navigate] = workspace.getTopBlocks(true);
+    const loop = Blockly.serialization.blocks.append(
+      { type: 'lm_forEach', fields: { TARGET: '（ページで選ぶ）', MAX: 100 } },
+      workspace,
+    );
+    const click = Blockly.serialization.blocks.append(
+      { type: 'lm_click', fields: { TARGET: '（ページで選ぶ）' } },
+      workspace,
+    );
+    navigate.nextConnection.connect(loop.previousConnection);
+    loop.getInput('STEPS').connection.connect(click.previousConnection);
+    return { loop: loop.id, click: click.id };
+  });
+
+  // 要素を選ぶ前に保存すると、選んでいないブロックがあることを知らせます。
+  await page.locator('#blocks-save').click();
+  await page.locator('#blocks-notice').getByText('要素をまだ選んでいないブロック').waitFor();
+
+  /**
+   * ブロックを選び、［ページで選ぶ］を押して、開いたページを返します。
+   * @param {string} blockId
+   */
+  const startPick = async (blockId) => {
+    await page.bringToFront();
+    // Blockly 13 では、ブロックを選ぶことはフォーカスを移すことです。利用者がブロックを押したときと同じです。
+    await page.evaluate((blockId) => {
+      const Blockly = /** @type {any} */ (globalThis).Blockly;
+      Blockly.getFocusManager().focusNode(Blockly.getMainWorkspace().getBlockById(blockId));
+    }, blockId);
+    await page.locator('#blocks-pick').click();
+    const picked = await waitUntil(
+      async () => pagesAt('/picker.html')[0],
+      (found) => found !== undefined,
+    );
+    await picked.waitForFunction(
+      () => globalThis.document.querySelector('lightomate-picker') !== null,
+    );
+    return picked;
+  };
+
+  // 1. 繰り返しの行：2 行目のセルを押し、行の確認で Enter を押して「はい」を選びます。
+  const site = await startPick(ids.loop);
+  await site.locator('tbody tr:nth-child(2) .no').click();
+  await site.keyboard.press('Enter');
+  const loopState = await waitUntil(
+    () =>
+      page.evaluate(
+        (blockId) =>
+          /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getBlockById(blockId).lmState,
+        ids.loop,
+      ),
+    (state) => state?.step?.items !== undefined,
+  );
+  assert.deepEqual(loopState.step.items.selectors, [
+    'tr.invoice-row',
+    '#invoices > tbody > tr.invoice-row',
+  ]);
+
+  // 2. 行の内側のリンク：押してもリンクの移動も、ページのスクリプトの処理も起きません。
+  await startPick(ids.click);
+  await site.locator('tbody tr:nth-child(3) a.receipt').click();
+  const clickState = await waitUntil(
+    () =>
+      page.evaluate(
+        (blockId) =>
+          /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getBlockById(blockId).lmState,
+        ids.click,
+      ),
+    (state) => state?.step?.target !== undefined,
+  );
+  assert.equal(clickState.step.target.scope, 'item');
+  assert.equal(clickState.step.target.selectors[0], 'a.receipt');
+  assert.equal(new URL(site.url()).pathname, '/picker.html');
+  assert.equal(await site.locator('#clicked').textContent(), '押されていません');
+  assert.equal(
+    await site.evaluate(() => globalThis.document.querySelector('lightomate-picker')),
+    null,
+  );
+
+  // 3. Esc キーでは、何も選ばずに終わります。
+  await startPick(ids.click);
+  await site.keyboard.press('Escape');
+  await page.locator('#blocks-pick-notice').getByText('要素の選択を取り消しました。').waitFor();
+
+  // 4. 保存すると、選んだ要素がフローに入ります。
+  await page.bringToFront();
+  await page.locator('#blocks-save').click();
+  const saved = await waitUntil(
+    () =>
+      page.evaluate(async () => {
+        const { flows } = await chrome.storage.local.get('flows');
+        return /** @type {{ picker: { flow: Flow } }} */ (flows).picker.flow;
+      }),
+    (flow) => flow.steps.length === 2,
+  );
+  const loop = /** @type {any} */ (saved.steps[1]);
+  assert.equal(loop.type, 'forEach');
+  assert.equal(loop.items.selectors[0], 'tr.invoice-row');
+  assert.equal(loop.steps[0].type, 'click');
+  assert.equal(loop.steps[0].target.scope, 'item');
+  await site.close();
+});
