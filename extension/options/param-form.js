@@ -3,6 +3,7 @@
 // （docs/design-guidelines.md の「配置と余白」）。入力の値と定義の変換は shared/param-edit.js にあります。
 
 import { PARAM_TYPES } from '../shared/params.js';
+import { showFieldError } from '../shared/ui.js';
 
 /** @typedef {import('../shared/param-edit.js').ParamRow} ParamRow */
 
@@ -31,9 +32,16 @@ function field(text, control) {
   label.className = 'form-label';
   label.htmlFor = control.id;
   label.textContent = text;
+  // 誤りは、この欄の直下に出します（docs/design-guidelines.md の「5. 知らせと誤りの表示場所」）。
+  const feedback = document.createElement('div');
+  feedback.className = 'invalid-feedback';
+  feedback.id = `${control.id}-feedback`;
+  const clear = () => showFieldError(control, feedback, '');
+  control.addEventListener('input', clear);
+  control.addEventListener('change', clear);
   const wrapper = document.createElement('div');
   wrapper.className = 'lm-param-field';
-  wrapper.append(label, control);
+  wrapper.append(label, control, feedback);
   return wrapper;
 }
 
@@ -152,4 +160,31 @@ export function readParamRows(container) {
       default: value('default'),
     };
   });
+}
+
+/**
+ * 入力の誤りを、該当する値の該当する欄の直下に出します。誤りのある最初の欄にフォーカスを移します。
+ * 誤りがない場合は false を返します。
+ * @param {HTMLElement} container
+ * @param {import('../shared/param-edit.js').ParamRowError[]} errors
+ * @returns {boolean}
+ */
+export function showParamRowErrors(container, errors) {
+  const fieldsets = [...container.querySelectorAll('fieldset.lm-param-row')];
+  /** @type {HTMLElement | null} */
+  let first = null;
+  for (const { index, field, message } of errors) {
+    const control = /** @type {HTMLInputElement | HTMLSelectElement | null} */ (
+      fieldsets[index]?.querySelector(`[data-role="${field}"]`)
+    );
+    const feedback = control ? document.getElementById(`${control.id}-feedback`) : null;
+    if (control && feedback) {
+      // 同じ欄に誤りが複数ある場合は、改行で並べます。
+      const text = feedback.textContent ? `${feedback.textContent}\n${message}` : message;
+      showFieldError(control, feedback, text);
+      first ??= control;
+    }
+  }
+  first?.focus();
+  return errors.length > 0;
 }

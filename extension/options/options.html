@@ -79,7 +79,7 @@
       </div>
 
       <section id="panel-flows" class="lm-layout" role="tabpanel" aria-labelledby="tab-flows">
-        <nav class="card lm-list" aria-labelledby="list-heading">
+        <nav class="card lm-list" id="flow-list" aria-labelledby="list-heading">
           <div class="card-header lm-card-header">
             <h2 id="list-heading" class="card-title">
               保存したフロー<span class="lm-count" id="flow-count"></span>
@@ -156,6 +156,19 @@
         </nav>
 
         <div class="lm-detail">
+          <!-- 一覧を隠すと、詳細（手順のブロックなど）を画面の幅いっぱいに使えます（#9）。ボタンは、一覧の表示に
+               かかわらず同じ位置に置きます。 -->
+          <div class="lm-detail-tools">
+            <button
+              type="button"
+              class="btn btn-sm"
+              id="list-toggle"
+              aria-controls="flow-list"
+              aria-expanded="true"
+            >
+              一覧を隠す
+            </button>
+          </div>
           <div id="placeholder" class="card card-body lm-empty">
             左の一覧からフローを選ぶと、手順と実行時に入力する値を表示します。
           </div>

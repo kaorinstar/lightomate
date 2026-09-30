@@ -41,6 +41,19 @@ body {
   }
 }
 
+/* 一覧を隠した状態です（#9）。詳細を画面の幅いっぱいに使います。 */
+.lm-layout.lm-list-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lm-layout.lm-list-hidden > .lm-list {
+  display: none;
+}
+
+.lm-detail-tools {
+  margin-bottom: 0.5rem;
+}
+
 .lm-card-header {
   justify-content: space-between;
   gap: 0.5rem;

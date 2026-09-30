@@ -31,8 +31,14 @@ import { listHistory, onHistoryChanged } from '../common/history-store.js';
 import { describeParam, formatDateTime } from '../shared/describe.js';
 import { flattenSteps } from '../shared/control-flow.js';
 import { createBlockEditor } from './block-editor.js';
-import { paramFieldset, readParamRows } from './param-form.js';
-import { paramsFromRows, renameParamReferences, rowsFromParams } from '../shared/param-edit.js';
+import { paramFieldset, readParamRows, showParamRowErrors } from './param-form.js';
+import {
+  describeParamSaveErrors,
+  paramRowErrors,
+  paramsFromRows,
+  renameParamReferences,
+  rowsFromParams,
+} from '../shared/param-edit.js';
 import {
   flowOrigins,
   formatFlowJson,
@@ -417,7 +423,12 @@ elements.paramsForm.addEventListener('submit', async (event) => {
   if (!stored) {
     return;
   }
-  const { params, renames } = paramsFromRows(readParamRows(elements.paramsRows));
+  const rows = readParamRows(elements.paramsRows);
+  // 値ごと・欄ごとの誤りは、その欄の直下に出します。「値 2」の見出しで、どの値かが分かります。
+  if (showParamRowErrors(elements.paramsRows, paramRowErrors(rows))) {
+    return;
+  }
+  const { params, renames } = paramsFromRows(rows);
   let steps = stored.flow.steps;
   for (const { from, to } of renames) {
     steps = renameParamReferences(steps, from, to);
@@ -431,11 +442,7 @@ elements.paramsForm.addEventListener('submit', async (event) => {
   }
   const result = await saveFlow(flow, selectedId);
   if (!result.ok) {
-    showNotice(
-      elements.paramsNotice,
-      `誤りがあるため、保存しませんでした。\n${result.errors.join('\n')}`,
-      'error',
-    );
+    showNotice(elements.paramsNotice, describeParamSaveErrors(result.errors), 'error');
     return;
   }
   showParamsForm(null);
@@ -471,6 +478,41 @@ async function confirmDiscardBlocks(anchor, action) {
   });
   holder.remove();
   return ok;
+}
+
+// ---- 一覧の表示と非表示（#9） ----
+// ブロックの編集画面を広く使えるよう、一覧を隠せるようにします。選んだ状態は、この画面を次に開いたときにも
+// 使います。保存できない環境（プライベートウィンドウなど）では、毎回一覧を表示します。
+
+const LIST_HIDDEN_KEY = 'lightomate.listHidden';
+const listToggle = /** @type {HTMLButtonElement} */ (byId('list-toggle'));
+const flowsPanel = byId('panel-flows');
+
+/**
+ * 一覧を隠すか表示します。
+ * @param {boolean} hidden
+ */
+function setListHidden(hidden) {
+  flowsPanel.classList.toggle('lm-list-hidden', hidden);
+  listToggle.textContent = hidden ? '一覧を表示' : '一覧を隠す';
+  listToggle.setAttribute('aria-expanded', String(!hidden));
+  try {
+    localStorage.setItem(LIST_HIDDEN_KEY, hidden ? '1' : '');
+  } catch {
+    // 保存できなくても、表示の切り替えは行います。
+  }
+  // 幅が変わったため、ブロックの表示の大きさを合わせ直します。
+  blockEditor.resize();
+}
+
+listToggle.addEventListener('click', () => {
+  setListHidden(!flowsPanel.classList.contains('lm-list-hidden'));
+});
+
+try {
+  setListHidden(localStorage.getItem(LIST_HIDDEN_KEY) === '1');
+} catch {
+  setListHidden(false);
 }
 
 // 保存していない変更がある状態で管理画面を閉じる場合は、Chrome の確認を出します。
