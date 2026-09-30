@@ -256,10 +256,12 @@ Service Worker へ送ります。条件を満たすかの判定にだけ使い�
 
 ### 依存パッケージ
 
-- 拡張機能に同梱する外部のファイルは、Tabler の CSS（`extension/vendor/tabler/tabler.min.css`）だけです。
-  外部の JavaScript は同梱しません。拡張機能の CSP が外部からの読み込みを禁止しているため、CDN ではなく
-  同梱します。
-- 同梱するファイルは、`npm run vendor`（`scripts/vendor.js`）で `node_modules` の `@tabler/core` から複写します。
+- 拡張機能に同梱する外部のファイルは、Tabler の CSS（`extension/vendor/tabler/tabler.min.css`）と、
+  書体 Noto Sans JP（`extension/vendor/noto-sans-jp/`。CSS、書体のファイル、ライセンスの文書。#137）だけです。
+  外部の JavaScript は同梱しません。拡張機能の CSP が外部からの読み込みを禁止しているため、CDN や
+  Google Fonts ではなく同梱します。書体は SIL Open Font License 1.1 で、同梱と再配布が認められています。
+- 同梱するファイルは、`npm run vendor`（`scripts/vendor.js`）で `node_modules` の `@tabler/core` と
+  `@fontsource-variable/noto-sans-jp` から複写します。
   版は `package-lock.json` で固定します。同梱したファイルが `node_modules` の内容と一致することを
   `test/vendor.test.js` で確かめ、手で書き換えたファイルや複写し忘れを CI で検出します。
 - ESLint、Prettier、TypeScript、型定義などのパッケージは、検査のためだけに使う開発用のもので、拡張機能には
