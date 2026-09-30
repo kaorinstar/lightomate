@@ -293,7 +293,19 @@
               >
                 <section id="params-section" class="lm-block" aria-labelledby="params-heading">
                   <h3 id="params-heading" class="lm-block-title">実行時に入力する値</h3>
-                  <dl id="params" class="lm-params"></dl>
+                  <div class="table-responsive lm-params" id="params">
+                    <table class="table table-vcenter mb-0">
+                      <thead>
+                        <tr>
+                          <th scope="col">表示名</th>
+                          <th scope="col">手順での書き方</th>
+                          <th scope="col">種類</th>
+                          <th scope="col">既定値</th>
+                        </tr>
+                      </thead>
+                      <tbody id="params-body"></tbody>
+                    </table>
+                  </div>
                   <p id="params-empty" class="lm-hint mb-2" hidden>
                     実行時に入力する値はありません。
                   </p>

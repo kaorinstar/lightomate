@@ -28,7 +28,7 @@ import {
   saveStopRule,
 } from '../common/stop-rules-store.js';
 import { listHistory, onHistoryChanged } from '../common/history-store.js';
-import { describeParam, formatDateTime } from '../shared/describe.js';
+import { formatDateTime, paramColumns } from '../shared/describe.js';
 import { flattenSteps } from '../shared/control-flow.js';
 import { createBlockEditor } from './block-editor.js';
 import { paramFieldset, readParamRows, showParamRowErrors } from './param-form.js';
@@ -163,6 +163,7 @@ const elements = {
   scheduleSave: /** @type {HTMLButtonElement} */ (byId('schedule-save')),
   scheduleNotice: byId('schedule-notice'),
   params: byId('params'),
+  paramsBody: byId('params-body'),
   paramsEmpty: byId('params-empty'),
   paramsButtons: byId('params-buttons'),
   paramsEdit: /** @type {HTMLButtonElement} */ (byId('params-edit')),
@@ -2524,13 +2525,19 @@ function renderDetail({ flow, createdAt, updatedAt }) {
 
   elements.params.hidden = inputs === 0;
   elements.paramsEmpty.hidden = inputs > 0;
-  elements.params.replaceChildren(
-    ...params.flatMap((param) => definition(param.label, describeParam(param))),
-    ...secrets.flatMap(({ step, index }) =>
-      definition(
+  elements.paramsBody.replaceChildren(
+    ...params.map((param) => {
+      const { label, reference, type, defaultValue } = paramColumns(param);
+      return paramTableRow([label, reference, type, defaultValue]);
+    }),
+    // パスワードなど、値を記録しない入力です。名前がないため、手順での書き方は空欄にします。
+    ...secrets.map(({ step, index }) =>
+      paramTableRow([
         `${step.type === 'input' ? step.target.label : ''}（手順 ${index + 1}）`,
-        '値は記録していません。実行するときに入力します',
-      ),
+        '―',
+        '記録しない値（実行するときに入力）',
+        'なし',
+      ]),
     ),
   );
 
@@ -2538,17 +2545,24 @@ function renderDetail({ flow, createdAt, updatedAt }) {
 }
 
 /**
- * 実行時に入力する値の一覧の、1 項目（名前と説明）です。
- * @param {string} term
- * @param {string} description
- * @returns {HTMLElement[]}
+ * 実行時に入力する値の表の 1 行です。2 列目（手順での書き方）は、コードの書式で表示します。
+ * @param {string[]} cells 表示名、手順での書き方、種類、既定値
+ * @returns {HTMLTableRowElement}
  */
-function definition(term, description) {
-  const dt = document.createElement('dt');
-  dt.textContent = term;
-  const dd = document.createElement('dd');
-  dd.textContent = description;
-  return [dt, dd];
+function paramTableRow(cells) {
+  const row = document.createElement('tr');
+  for (const [index, text] of cells.entries()) {
+    const cell = document.createElement('td');
+    if (index === 1 && text.startsWith('{{')) {
+      const code = document.createElement('code');
+      code.textContent = text;
+      cell.append(code);
+    } else {
+      cell.textContent = text;
+    }
+    row.append(cell);
+  }
+  return row;
 }
 
 /**

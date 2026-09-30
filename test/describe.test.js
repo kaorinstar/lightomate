@@ -3,8 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  describeParam,
   describeStep,
+  paramColumns,
   runDetailText,
   runStatusLabel,
   runStatusText,
@@ -21,24 +21,25 @@ test('手順の種類を短い名前にする', () => {
 });
 
 test('年月の既定値の @previous-month と @current-month を、前月と今月と表示する', () => {
-  assert.equal(
-    describeParam({ name: 't', label: '対象月', type: 'month', default: '@previous-month' }),
-    '年月・既定値は前月',
+  assert.deepEqual(
+    paramColumns({ name: 'month', label: '対象月', type: 'month', default: '@previous-month' }),
+    { label: '対象月', reference: '{{month}}', type: '年月', defaultValue: '前月' },
   );
   assert.equal(
-    describeParam({ name: 't', label: '対象月', type: 'month', default: '@current-month' }),
-    '年月・既定値は今月',
+    paramColumns({ name: 't', label: '対象月', type: 'month', default: '@current-month' })
+      .defaultValue,
+    '今月',
   );
 });
 
-test('選択肢と、既定値がない場合を表示する', () => {
-  assert.equal(
-    describeParam({ name: 's', label: '店舗', type: 'select', options: ['本店', '支店'] }),
-    '選択肢（本店、支店）・既定値なし',
+test('選択肢は種類に添え、既定値がない場合は「なし」と表示する', () => {
+  assert.deepEqual(
+    paramColumns({ name: 's', label: '店舗', type: 'select', options: ['本店', '支店'] }),
+    { label: '店舗', reference: '{{s}}', type: '選択肢（本店、支店）', defaultValue: 'なし' },
   );
   assert.equal(
-    describeParam({ name: 'n', label: '数量', type: 'number', default: '3' }),
-    '数値・既定値は3',
+    paramColumns({ name: 'n', label: '数量', type: 'number', default: '3' }).defaultValue,
+    '3',
   );
 });
 
