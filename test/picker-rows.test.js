@@ -147,3 +147,15 @@ test('繰り返しの中の繰り返しでは、外側の行の内側で行を�
   const levels = window.resolveRows([{ selectors: ['div.group'] }, result.items]);
   assert.equal(levels[1].length, 5);
 });
+
+test('ページ全体を基準にした指定では、class を使う候補を、何番目かをたどる指定より前に置く（ページ送りの［次へ］）', () => {
+  const { window, $ } = page(`
+    <nav><ul class="pager"><li class="next"><a href="/page/2/">Next</a></li></ul></nav>`);
+  const target = window.buildPageTarget($('li.next > a'));
+  assert.deepEqual(plain(target.selectors), ['li.next > a', 'html > body > nav > ul > li > a']);
+  // 2 ページ目では［Previous］が前に加わります。class を使う候補は、引き続き［Next］だけを指します。
+  const second = page(`
+    <nav><ul class="pager"><li class="previous"><a href="/page/1/">Previous</a></li><li class="next"><a href="/page/3/">Next</a></li></ul></nav>`);
+  const found = second.document.querySelector(target.selectors[0]);
+  assert.equal(found?.getAttribute('href'), '/page/3/');
+});

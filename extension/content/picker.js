@@ -7,7 +7,7 @@
 // 選択モードの間は、押す操作をページに伝えません。リンクの移動やボタンの動作を起こさないためです。
 // 操作は window の捕獲段階で受け取り、ページのスクリプトより先に止めます。利用者の操作（isTrusted）だけを扱います。
 
-/* global buildInnerTarget, buildRowsTarget, buildTarget, containingRow, resolveRows */
+/* global buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, resolveRows */
 
 (() => {
   const scope = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
@@ -259,7 +259,7 @@
     const element = pickable(target);
     // 繰り返しの中のブロックでは、行の内側を押した場合に、行を基準にした指定（scope: item）にします。
     const row = config.chain.length > 0 ? containingRow(element, levels) : null;
-    finish({ target: row ? buildInnerTarget(element, row) : buildTarget(element) });
+    finish({ target: row ? buildInnerTarget(element, row) : buildPageTarget(element) });
   };
 
   const events = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'dblclick', 'auxclick'];

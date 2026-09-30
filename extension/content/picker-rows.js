@@ -6,8 +6,8 @@
 //
 // 行の見分けには、タグと class だけを使います。表示の文字は、翻訳で置き換わるため使いません（CLAUDE.md）。
 
-/* global looksGenerated, visibleText */
-/* exported buildInnerTarget, buildRowsTarget, containingRow, resolveRows */
+/* global buildTarget, looksGenerated, visibleText */
+/* exported buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, resolveRows */
 
 /**
  * 要素の形（タグと class の組）を、CSS セレクターとして返します。例：`tr.order-row`
@@ -230,4 +230,32 @@ function resolveRows(chain) {
 function containingRow(element, levels) {
   const innermost = levels.at(-1) ?? [];
   return innermost.find((row) => row.contains(element)) ?? null;
+}
+
+/**
+ * ページ全体を基準にした要素の指定を作ります。記録と同じ buildTarget の指定に、class を使う候補
+ * （例：`li.next > a`）を、何番目の要素かをたどる指定より前に加えます。
+ * 何番目かをたどる指定は、ページ送りで［前へ］が加わるなど、並びが変わると別の要素を指すためです。
+ * class は翻訳で変わりません。
+ * @param {Element} element
+ * @returns {{ selectors: string[], tag: string, label: string, text?: string }}
+ */
+function buildPageTarget(element) {
+  const target = buildTarget(element);
+  const shape = shapeSelector(element);
+  const parent = element.parentElement;
+  /** @type {string[]} */
+  const candidates = [];
+  if (shape !== element.tagName.toLowerCase()) {
+    candidates.push(shape);
+  }
+  if (parent && shapeSelector(parent) !== parent.tagName.toLowerCase()) {
+    candidates.push(`${shapeSelector(parent)} > ${shape}`);
+  }
+  const added = candidates.filter(
+    (selector) =>
+      !target.selectors.includes(selector) && sameElements(queryAll(document, selector), [element]),
+  );
+  const structural = target.selectors.slice(-1);
+  return { ...target, selectors: [...target.selectors.slice(0, -1), ...added, ...structural] };
 }
