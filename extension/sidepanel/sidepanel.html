@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>Lightomate</title>
     <link rel="stylesheet" href="../vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="../vendor/noto-sans-jp/wght.css" />
     <link rel="stylesheet" href="../shared/base.css" />
     <link rel="stylesheet" href="sidepanel.css" />
     <script type="module" src="sidepanel.js"></script>
@@ -173,6 +174,8 @@
               aria-label="一致方法"
             ></select>
           </div>
+          <!-- 同じサイトのフローを実行中のときなど、複数の行に共通する実行できない理由を 1 回だけ示します（#136）。 -->
+          <div id="flows-reason" class="alert alert-info lm-guide lm-list-guide" hidden></div>
           <p id="flows-empty" class="lm-empty"></p>
           <div id="flows" class="list-group list-group-flush lm-flows"></div>
         </section>
@@ -216,6 +219,7 @@
           <p id="batch-empty" class="lm-empty">
             まとめフローはまだありません。「フローの管理」の［保存したフロー］でフローを選び、［まとめフローとして保存］を押すと登録できます。
           </p>
+          <div id="batch-reason" class="alert alert-info lm-guide lm-list-guide" hidden></div>
           <div id="batch-list" class="list-group list-group-flush lm-flows"></div>
         </section>
         <p class="lm-sub lm-aside">

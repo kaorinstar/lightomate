@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>Lightomate のフローの管理</title>
     <link rel="stylesheet" href="../vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="../vendor/noto-sans-jp/wght.css" />
     <link rel="stylesheet" href="../shared/base.css" />
     <link rel="stylesheet" href="options.css" />
     <script type="module" src="options.js"></script>
@@ -171,12 +172,35 @@
                   <button type="button" class="btn btn-sm" id="rename-cancel">キャンセル</button>
                 </div>
               </form>
-              <div class="lm-buttons" id="editor-actions">
-                <button type="button" class="btn btn-sm btn-primary" id="run">実行</button>
-                <button type="button" class="btn btn-sm" id="open-first">最初のページを開く</button>
-                <button type="button" class="btn btn-sm" id="rename">名前の変更</button>
-                <button type="button" class="btn btn-sm" id="export">ファイルに書き出し</button>
-                <button type="button" class="btn btn-sm btn-ghost-danger" id="delete">削除</button>
+              <!--
+                よく使う［実行］［最初のページを開く］だけを出し、ほかの操作は「…」の中に置きます（#137）。
+                サイドパネルの一覧の行と同じ形です。見出しの帯を低く保ち、フロー名の横に操作を並べるためです。
+              -->
+              <div class="lm-detail-actions" id="editor-actions">
+                <div class="lm-buttons">
+                  <button type="button" class="btn btn-sm btn-primary" id="run">実行</button>
+                  <button type="button" class="btn btn-sm" id="open-first">
+                    最初のページを開く
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-ghost-secondary"
+                    id="more"
+                    title="その他の操作"
+                    aria-label="その他の操作"
+                    aria-expanded="false"
+                    aria-controls="editor-more"
+                  >
+                    …
+                  </button>
+                </div>
+                <div class="lm-buttons" id="editor-more" hidden>
+                  <button type="button" class="btn btn-sm" id="rename">名前の変更</button>
+                  <button type="button" class="btn btn-sm" id="export">ファイルに書き出し</button>
+                  <button type="button" class="btn btn-sm btn-ghost-danger" id="delete">
+                    削除
+                  </button>
+                </div>
               </div>
             </div>
             <div class="card-body">
@@ -594,7 +618,7 @@
       </section>
 
       <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
-        <div class="card lm-settings">
+        <div class="card">
           <div class="card-header lm-card-header">
             <h2 class="card-title">サイトの許可</h2>
           </div>
@@ -614,7 +638,7 @@
         </div>
 
         <!-- すべてのフローと設定の一括バックアップです（#17）。復元は追加だけを行い、既存のデータを消しません。 -->
-        <div class="card lm-settings mt-3">
+        <div class="card mt-3">
           <div class="card-header lm-card-header">
             <h2 class="card-title">バックアップ</h2>
           </div>
@@ -634,7 +658,7 @@
         </div>
 
         <!-- 無保証と利用上の注意の要約です（#109）。詳しい内容は README.md を正とし、画面は要約とリンクに限ります。 -->
-        <div class="card lm-settings mt-3">
+        <div class="card mt-3">
           <div class="card-header lm-card-header">
             <h2 class="card-title">免責事項</h2>
           </div>

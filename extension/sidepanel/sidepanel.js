@@ -138,6 +138,8 @@ const elements = {
   flowsNotice: byId('flows-notice'),
   flows: byId('flows'),
   flowsEmpty: byId('flows-empty'),
+  flowsReason: byId('flows-reason'),
+  batchReason: byId('batch-reason'),
   toast: byId('toast'),
   flowsHeading: byId('flows-heading'),
   flowsAsideScope: byId('flows-aside-scope'),
@@ -692,41 +694,77 @@ async function render() {
 
   await renderActivity(runs, batchRuns);
 
-  // 記録中は、まとめフローも実行できないようにします（#7）。
-  for (const item of elements.batchList.querySelectorAll('button[data-batch-run]')) {
-    const run = /** @type {HTMLButtonElement} */ (item);
-    run.disabled = Boolean(recording);
-    const reason = run.closest('.list-group-item')?.querySelector('.lm-flow-reason');
-    if (reason instanceof HTMLElement) {
-      reason.textContent = recording ? '記録中は実行できません。' : '';
-      reason.hidden = !recording;
-    }
+  // 記録中は、まとめフローも実行できないようにします（#7）。理由は一覧の先頭に 1 回だけ示します（#136）。
+  const batchRunButtons = elements.batchList.querySelectorAll('button[data-batch-run]');
+  for (const item of batchRunButtons) {
+    /** @type {HTMLButtonElement} */ (item).disabled = Boolean(recording);
   }
+  showListReasons(
+    elements.batchReason,
+    recording && batchRunButtons.length > 0 ? ['記録中は実行できません。'] : [],
+  );
 
-  // 記録中と、同じサイトのフローを実行中は、実行のボタンを押せなくし、理由を行の中に表示します。
+  // 記録中と、同じサイトのフローを実行中は、実行のボタンを押せなくします。
   // すべてのフローを表示しているとき（Web ページ以外）は、最初の手順がページを開く手順でないフローも
   // 押せなくします。開くページが決まらず、実行するタブもないためです。
+  // 記録中と実行中の理由は、多くの行で同じ文になるため、一覧の先頭に 1 回だけ示します（#136）。
+  // 最初のページがない理由は、行ごとに異なるため、その行の中に示します。
+  /** @type {Set<string>} */
+  const shared = new Set();
   for (const item of elements.flows.querySelectorAll('[data-origin]')) {
     const row = /** @type {HTMLElement} */ (item);
     const conflict = findConflictingRun(row.dataset.origin ?? '', runs);
     const noFirstPage = row.dataset.noFirstPage === 'true';
-    const text = noFirstPage
-      ? NO_FIRST_PAGE
-      : recording
-        ? '記録中は実行できません。'
-        : conflict
-          ? conflictMessage(conflict.origin, conflict.flowName)
-          : '';
+    const common = recording
+      ? '記録中は実行できません。'
+      : conflict
+        ? conflictMessage(conflict.origin, conflict.flowName)
+        : '';
+    if (common) {
+      shared.add(common);
+    }
     const run = row.querySelector('button[data-run]');
     if (run instanceof HTMLButtonElement) {
-      run.disabled = Boolean(text);
+      run.disabled = noFirstPage || Boolean(common);
     }
     const reason = row.querySelector('.lm-flow-reason');
     if (reason instanceof HTMLElement) {
-      reason.textContent = text;
-      reason.hidden = !text;
+      reason.textContent = noFirstPage ? NO_FIRST_PAGE : '';
+      reason.hidden = !noFirstPage;
     }
   }
+  showListReasons(elements.flowsReason, [...shared]);
+}
+
+/**
+ * 一覧の先頭の案内に、実行できない理由を示します（#136）。理由がなければ案内を隠します。
+ * 理由が 1 つなら 1 文だけ、複数なら見出しと箇条書きにします（docs/design-guidelines.md の案内の規則）。
+ * @param {HTMLElement} guide 案内（class="alert alert-info lm-guide"）
+ * @param {string[]} reasons
+ */
+function showListReasons(guide, reasons) {
+  guide.hidden = reasons.length === 0;
+  if (reasons.length === 0) {
+    guide.replaceChildren();
+    return;
+  }
+  const title = document.createElement('p');
+  title.className = 'lm-guide-title';
+  if (reasons.length === 1) {
+    title.textContent = reasons[0];
+    guide.replaceChildren(title);
+    return;
+  }
+  title.textContent = '次の理由で、実行できないフローがあります。';
+  const list = document.createElement('ul');
+  list.append(
+    ...reasons.map((reason) => {
+      const item = document.createElement('li');
+      item.textContent = reason;
+      return item;
+    }),
+  );
+  guide.replaceChildren(title, list);
 }
 
 /**
@@ -1419,10 +1457,7 @@ function batchItem(batch, flows) {
   const main = document.createElement('div');
   main.className = 'lm-flow-main';
   main.append(text, actions);
-  const reason = document.createElement('p');
-  reason.className = 'lm-flow-reason lm-sub';
-  reason.hidden = true;
-  item.append(main, reason);
+  item.append(main);
 
   const notice = batchRowNotices.get(batch.id);
   if (notice) {

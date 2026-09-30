@@ -115,6 +115,8 @@ const elements = {
   editorMeta: byId('editor-meta'),
   editorTitle: byId('editor-title'),
   editorActions: byId('editor-actions'),
+  more: /** @type {HTMLButtonElement} */ (byId('more')),
+  editorMore: byId('editor-more'),
   editorConfirm: byId('editor-confirm'),
   editorNotice: byId('editor-notice'),
   openFirst: /** @type {HTMLButtonElement} */ (byId('open-first')),
@@ -711,6 +713,19 @@ elements.renameForm.addEventListener('submit', async (event) => {
 });
 
 /**
+ * 詳細の見出しの「…」（その他の操作）を開閉します（#137）。
+ * @param {boolean} open
+ */
+function setMoreOpen(open) {
+  elements.editorMore.hidden = !open;
+  elements.more.setAttribute('aria-expanded', String(open));
+}
+
+elements.more.addEventListener('click', () => {
+  setMoreOpen(elements.editorMore.hidden === true);
+});
+
+/**
  * 見出しの位置を、名前の入力欄に切り替えます。
  * @param {boolean} show
  */
@@ -1006,7 +1021,13 @@ function batchRow(batch, flows) {
       return item;
     }),
   );
-  row.append(name, order);
+  // 名前と実行する順を左に、操作を右端に置きます（#137）。行の幅を使い、ほかの一覧の行と同じ配置にします。
+  const text = document.createElement('div');
+  text.className = 'lm-batch-text';
+  text.append(name, order);
+  const head = document.createElement('div');
+  head.className = 'lm-batch-head';
+  row.append(head);
 
   const problems = batchProblems(batch.flowIds, flows);
   if (problems.length > 0) {
@@ -1079,7 +1100,8 @@ function batchRow(batch, flows) {
       showNotice(notice, String(error), 'error'),
     );
   });
-  row.append(buttons, confirm, notice);
+  head.append(text, buttons);
+  row.append(confirm, notice);
   return row;
 }
 
@@ -2168,6 +2190,7 @@ async function render() {
   if (stored && elements.editor.dataset.id !== stored.id) {
     // 編集中の内容を上書きしないよう、別のフローを選んだときだけ JSON を入れ替えます。
     elements.editor.dataset.id = stored.id;
+    setMoreOpen(false);
     elements.json.value = JSON.stringify(orderFlow(stored.flow), null, 2);
     fillSpeedFields(stored.flow);
     await fillScheduleFields(stored.id);
@@ -2199,14 +2222,21 @@ function renderDetail({ flow, createdAt, updatedAt }) {
     step.type === 'input' && step.secret ? [{ step, index: number }] : [],
   );
   const inputs = params.length + secrets.length;
-  elements.editorMeta.textContent = [
+  // 項目ごとに折り返さない範囲にし、日付と時刻が別の行に分かれないようにします（#137）。
+  const metaParts = [
     `手順 ${flattened.length} 件`,
     inputs > 0 ? `実行時に入力 ${inputs} 項目` : '',
     `作成 ${formatDateTime(createdAt)}`,
     `更新 ${formatDateTime(updatedAt)}`,
-  ]
-    .filter(Boolean)
-    .join('・');
+  ].filter(Boolean);
+  elements.editorMeta.replaceChildren(
+    ...metaParts.flatMap((text, index) => {
+      const part = document.createElement('span');
+      part.className = 'lm-nowrap';
+      part.textContent = text;
+      return index === 0 ? [part] : ['・', part];
+    }),
+  );
 
   elements.paramsSection.hidden = inputs === 0;
   elements.params.replaceChildren(

@@ -157,8 +157,22 @@ body {
   margin-top: 0.5rem;
 }
 
-.lm-batch-row .lm-buttons {
-  margin-top: 0.5rem;
+/* まとめフローの行の 1 段目です。名前と実行する順を左に、操作を右端に置き、狭い幅では操作を下に送ります。 */
+.lm-batch-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.lm-batch-text {
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+
+.lm-batch-text .lm-batch-order {
+  margin-bottom: 0;
 }
 
 /* まとめフローの行の中に開く、実行する値の入力欄です（#7）。フローごとの欄の間と、ボタンの上に余白を置きます。 */
@@ -216,6 +230,18 @@ body {
   font-weight: 700;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+/* 詳細の見出しの操作です。「…」で開くその他の操作は、よく使う操作の下の行に、右端をそろえて並べます。 */
+.lm-detail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.lm-detail-actions[hidden] {
+  display: none;
 }
 
 .lm-detail-header .lm-buttons[hidden] {
@@ -333,8 +359,20 @@ body {
   min-height: 16rem;
 }
 
+/* 下部です。内容と区別するため、上に境界線を引きます（#137。AdminLTE の下部と同じ形）。 */
 .lm-footer {
   margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--tblr-border-color);
+}
+
+/*
+ * 画面の見出しのアプリ名です。Tabler は大文字に変えますが、サイドパネルの見出しと同じ「Lightomate」の
+ * 表記にそろえます（#137）。
+ */
+.lm-page-header .page-pretitle {
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 /* 選んだフローを開く・実行するときの、値の入力欄です（#43）。手順の一覧と区別するため、枠で囲みます。 */
@@ -356,9 +394,14 @@ body {
   margin: 0 0 1rem;
 }
 
-/* 実行履歴の表です（#19）。止まった理由と保存したファイルは長いため、折り返します。 */
+/*
+ * 実行履歴の表です（#19）。止まった理由と保存したファイルは長いため、折り返します。
+ * サイトやファイル名の途中では、列の幅に収まらない場合だけ折り返します（#137）。
+ * anywhere にすると、列の幅を決めるときに 1 文字ずつ折り返せる前提で計算され、サイトの名前が
+ * 短い幅で途中から折り返されるためです。
+ */
 .lm-history td {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   white-space: pre-line;
 }
 
@@ -366,10 +409,6 @@ body {
 #history-confirm,
 #history-notice {
   margin: 0.75rem 1rem;
-}
-
-.lm-history .lm-nowrap {
-  white-space: nowrap;
 }
 
 /*
@@ -428,11 +467,6 @@ body {
 
 .lm-list > .lm-card-header .card-title {
   white-space: nowrap;
-}
-
-/* ［設定］のタブです（#41）。説明文が長くならないよう、幅を抑えます。 */
-.lm-settings {
-  max-width: 48rem;
 }
 
 .lm-setting {
