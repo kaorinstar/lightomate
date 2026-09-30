@@ -462,3 +462,36 @@ test('保存したフロー：一覧で押したフローの画面に切り替�
   await list.waitFor({ state: 'visible' });
   assert.equal(await editor.isHidden(), true);
 });
+
+test('必ず止まる場所：一覧で押したサイトの入力欄に切り替わり、ボタンとブラウザーの［戻る］で一覧に戻る（#9）', async () => {
+  const { extensionPage: page } = browser;
+  await page.evaluate(() =>
+    chrome.storage.local.set({
+      stopRules: { 'https://shop.example.com': { selectors: ['#buy'], paths: [] } },
+    }),
+  );
+  const id = new URL(page.url()).host;
+  await page.goto(`chrome-extension://${id}/options/options.html?tab=stop-rules`);
+  await page.reload();
+  const list = page.locator('#stop-list');
+  const form = page.locator('#stop-form');
+  await list.getByText('https://shop.example.com').click();
+  await form.waitFor({ state: 'visible' });
+  assert.equal(await list.isHidden(), true);
+  assert.equal(await page.locator('#stop-selectors').inputValue(), '#buy');
+  assert.equal(
+    await page.locator('#stop-form-heading').innerText(),
+    'https://shop.example.com の指定',
+  );
+
+  await page.locator('#stop-back').click();
+  await list.waitFor({ state: 'visible' });
+  assert.equal(await form.isHidden(), true);
+
+  await page.locator('#stop-clear').click();
+  await form.waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#stop-form-heading').innerText(), '新しいサイトの指定');
+  await page.goBack();
+  await list.waitFor({ state: 'visible' });
+  assert.equal(await form.isHidden(), true);
+});

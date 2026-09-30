@@ -626,7 +626,8 @@ function selectTab(name, focus = false) {
   } else {
     url.searchParams.set('tab', current.dataset.tab ?? '');
   }
-  history.replaceState(null, '', url);
+  // 一覧から開いた画面の履歴（#9）を残すため、履歴の状態は引き継ぎます。
+  history.replaceState(history.state, '', url);
 }
 
 for (const [index, tab] of tabs.entries()) {
@@ -2277,6 +2278,42 @@ elements.stopClear.addEventListener('click', () => {
   editStopRule('', { selectors: [], paths: [] });
 });
 
+// 一覧の画面と入力欄の画面を切り替えます（#9。［保存したフロー］のタブと同じ形）。入力欄を開くときに
+// 履歴を 1 件積むため、ブラウザーの［戻る］でも一覧に戻れます。
+
+const stopViews = byId('stop-views');
+const stopBack = /** @type {HTMLButtonElement} */ (byId('stop-back'));
+const stopHeading = byId('stop-form-heading');
+
+/**
+ * 指定したサイトの一覧の画面に戻ります。直前に開いていたサイトの行（新しいサイトの場合は［新しいサイト］）に
+ * フォーカスを戻します。
+ */
+function showStopList() {
+  const origin = stopViews.dataset.origin ?? '';
+  stopViews.classList.replace('lm-view-detail', 'lm-view-list');
+  delete stopViews.dataset.origin;
+  clearNotices();
+  const row = [...elements.stopList.querySelectorAll('button')].find(
+    (button) => button.dataset.origin === origin,
+  );
+  (row ?? elements.stopClear).focus();
+}
+
+stopBack.addEventListener('click', () => {
+  if (history.state?.lmStop) {
+    history.back();
+  } else {
+    showStopList();
+  }
+});
+
+window.addEventListener('popstate', () => {
+  if (stopViews.classList.contains('lm-view-detail') && !history.state?.lmStop) {
+    showStopList();
+  }
+});
+
 elements.stopDelete.addEventListener('click', () => {
   clearNotices();
   onDeleteStopRule().catch((error) => showNotice(elements.stopNotice, String(error), 'error'));
@@ -2379,7 +2416,7 @@ async function onDeleteStopRule() {
     showNotice(elements.stopNotice, `削除できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
-  editStopRule('', { selectors: [], paths: [] });
+  stopBack.click();
   showToast(elements.toast, `${origin} の指定を削除しました。`);
 }
 
@@ -2401,14 +2438,21 @@ function selectorSyntaxErrors(selectors) {
 }
 
 /**
- * 指定を入力欄に表示します。
- * @param {string} origin
+ * 指定を入力欄に表示し、一覧に替えて入力欄の画面を表示します。
+ * @param {string} origin 空の文字列の場合は、新しいサイトの指定です
  * @param {{ selectors: string[], paths: string[] }} rule
  */
 function editStopRule(origin, rule) {
   for (const [control, feedback] of fieldFeedbacks) {
     showFieldError(control, feedback, '');
   }
+  stopHeading.textContent = origin ? `${origin} の指定` : '新しいサイトの指定';
+  if (!stopViews.classList.contains('lm-view-detail')) {
+    history.pushState({ ...history.state, lmStop: true }, '', location.href);
+    stopViews.classList.replace('lm-view-list', 'lm-view-detail');
+    window.scrollTo(0, 0);
+  }
+  stopViews.dataset.origin = origin;
   elements.stopOrigin.value = origin;
   elements.stopSelectors.value = rule.selectors.join('\n');
   elements.stopPaths.value = rule.paths.join('\n');
@@ -2425,6 +2469,7 @@ async function renderStopRules() {
       count.className = 'lm-sub';
       count.textContent = `要素 ${rule.selectors.length} 件・画面 ${rule.paths.length} 件`;
       const button = listButton(origin, count);
+      button.dataset.origin = origin;
       button.addEventListener('click', () => {
         clearNotices();
         getStopRule(origin)

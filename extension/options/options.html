@@ -80,7 +80,7 @@
 
       <section
         id="panel-flows"
-        class="lm-flows-panel lm-view-list"
+        class="lm-views lm-view-list"
         role="tabpanel"
         aria-labelledby="tab-flows"
       >
@@ -609,7 +609,8 @@
           </ul>
         </div>
 
-        <div class="lm-layout">
+        <!-- 一覧で押すか［新しいサイト］を押すと、一覧に替えて入力欄を表示します（#9。［保存したフロー］と同じ形）。 -->
+        <div class="lm-views lm-view-list" id="stop-views">
           <div class="card lm-list">
             <div class="card-header lm-card-header">
               <h2 class="card-title">指定したサイト</h2>
@@ -621,71 +622,74 @@
             <div id="stop-list" class="list-group list-group-flush"></div>
           </div>
 
-          <form
-            id="stop-form"
-            class="card lm-detail"
-            novalidate
-            aria-labelledby="stop-form-heading"
-          >
-            <div class="card-header">
-              <h2 id="stop-form-heading" class="card-title">サイトごとの指定</h2>
+          <div class="lm-detail">
+            <div class="lm-detail-tools">
+              <button type="button" class="btn btn-sm" id="stop-back">
+                ← 指定したサイトの一覧に戻る
+              </button>
             </div>
-            <div class="card-body">
-              <div class="mb-3">
-                <label class="form-label mb-1" for="stop-origin">サイト</label>
-                <p class="lm-hint mb-2" id="stop-origin-hint">
-                  https:// または http://
-                  から始まる、サイトの先頭の部分（オリジン）です。例：https://www.amazon.co.jp
-                </p>
-                <input
-                  type="text"
-                  class="form-control"
-                  id="stop-origin"
-                  aria-describedby="stop-origin-hint"
-                  list="stop-origins"
-                />
-                <div class="invalid-feedback" id="stop-origin-feedback"></div>
-                <datalist id="stop-origins"></datalist>
+            <form id="stop-form" class="card" novalidate aria-labelledby="stop-form-heading">
+              <div class="card-header">
+                <h2 id="stop-form-heading" class="card-title">サイトごとの指定</h2>
               </div>
-              <div class="mb-3">
-                <label class="form-label mb-1" for="stop-selectors">止める要素</label>
-                <p class="lm-hint mb-2" id="stop-selectors-hint">
-                  CSS セレクター（ページの要素を指す書き方）を、1 行に 1 件書きます。例：#placeOrder
-                </p>
-                <textarea
-                  id="stop-selectors"
-                  aria-describedby="stop-selectors-hint"
-                  class="form-control lm-code"
-                  rows="4"
-                  spellcheck="false"
-                ></textarea>
-                <div class="invalid-feedback" id="stop-selectors-feedback"></div>
+              <div class="card-body">
+                <div class="mb-3">
+                  <label class="form-label mb-1" for="stop-origin">サイト</label>
+                  <p class="lm-hint mb-2" id="stop-origin-hint">
+                    https:// または http://
+                    から始まる、サイトの先頭の部分（オリジン）です。例：https://www.amazon.co.jp
+                  </p>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="stop-origin"
+                    aria-describedby="stop-origin-hint"
+                    list="stop-origins"
+                  />
+                  <div class="invalid-feedback" id="stop-origin-feedback"></div>
+                  <datalist id="stop-origins"></datalist>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label mb-1" for="stop-selectors">止める要素</label>
+                  <p class="lm-hint mb-2" id="stop-selectors-hint">
+                    CSS セレクター（ページの要素を指す書き方）を、1 行に 1
+                    件書きます。例：#placeOrder
+                  </p>
+                  <textarea
+                    id="stop-selectors"
+                    aria-describedby="stop-selectors-hint"
+                    class="form-control lm-code"
+                    rows="4"
+                    spellcheck="false"
+                  ></textarea>
+                  <div class="invalid-feedback" id="stop-selectors-feedback"></div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label mb-1" for="stop-paths">止める画面</label>
+                  <p class="lm-hint mb-2" id="stop-paths-hint">
+                    URL のパス（サイトの先頭の部分より後ろ）を、1 行に 1 件書きます。*
+                    は任意の文字列です。例：/checkout/*
+                  </p>
+                  <textarea
+                    id="stop-paths"
+                    aria-describedby="stop-paths-hint"
+                    class="form-control lm-code"
+                    rows="4"
+                    spellcheck="false"
+                  ></textarea>
+                  <div class="invalid-feedback" id="stop-paths-feedback"></div>
+                </div>
+                <div class="lm-buttons" id="stop-buttons">
+                  <button type="submit" class="btn btn-primary">このサイトの指定を保存</button>
+                  <button type="button" class="btn btn-ghost-danger" id="stop-delete">
+                    このサイトの指定を削除
+                  </button>
+                </div>
+                <div id="stop-confirm" hidden></div>
+                <p id="stop-notice" hidden></p>
               </div>
-              <div class="mb-3">
-                <label class="form-label mb-1" for="stop-paths">止める画面</label>
-                <p class="lm-hint mb-2" id="stop-paths-hint">
-                  URL のパス（サイトの先頭の部分より後ろ）を、1 行に 1 件書きます。*
-                  は任意の文字列です。例：/checkout/*
-                </p>
-                <textarea
-                  id="stop-paths"
-                  aria-describedby="stop-paths-hint"
-                  class="form-control lm-code"
-                  rows="4"
-                  spellcheck="false"
-                ></textarea>
-                <div class="invalid-feedback" id="stop-paths-feedback"></div>
-              </div>
-              <div class="lm-buttons" id="stop-buttons">
-                <button type="submit" class="btn btn-primary">このサイトの指定を保存</button>
-                <button type="button" class="btn btn-ghost-danger" id="stop-delete">
-                  このサイトの指定を削除
-                </button>
-              </div>
-              <div id="stop-confirm" hidden></div>
-              <p id="stop-notice" hidden></p>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
       </section>
 

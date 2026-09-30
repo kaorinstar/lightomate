@@ -23,30 +23,12 @@ body {
   color: var(--tblr-secondary);
 }
 
-/* 一覧と詳細を左右に並べます。幅が狭い場合は 1 列にします。 */
-.lm-layout {
-  display: grid;
-  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
-  gap: 1rem;
-  align-items: start;
-}
-
-.lm-layout[hidden] {
-  display: none;
-}
-
-@media (width <= 700px) {
-  .lm-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 /*
- * ［保存したフロー］のタブは、一覧の画面と、1 件のフローの画面を切り替えます（#9）。どちらも画面の幅いっぱいに
- * 使います。手順のブロックを横に広く表示するためです。
+ * ［保存したフロー］と［必ず止まる場所］のタブは、一覧の画面と、1 件の画面（詳細や入力欄）を切り替えます（#9）。
+ * どちらも画面の幅いっぱいに使います。手順のブロックを横に広く表示するためです。
  */
-.lm-flows-panel.lm-view-list > .lm-detail,
-.lm-flows-panel.lm-view-detail > .lm-list {
+.lm-views.lm-view-list > .lm-detail,
+.lm-views.lm-view-detail > .lm-list {
   display: none;
 }
 
