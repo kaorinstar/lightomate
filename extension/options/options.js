@@ -1017,7 +1017,7 @@ function batchRow(batch, flows) {
 
   const run = document.createElement('button');
   run.type = 'button';
-  run.className = 'btn btn-sm btn-primary';
+  run.className = 'btn btn-sm btn-outline-primary';
   run.textContent = '実行';
   run.setAttribute('aria-label', `まとめフロー「${batch.name}」を実行`);
   run.disabled = problems.length > 0;

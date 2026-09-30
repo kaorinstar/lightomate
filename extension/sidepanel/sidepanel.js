@@ -1070,7 +1070,10 @@ function flowItem(stored) {
   name.textContent = stored.flow.name;
   const detail = document.createElement('div');
   detail.className = 'lm-sub';
-  detail.textContent = `手順 ${flattenSteps(stored.flow.steps).length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
+  detail.append(
+    `手順 ${flattenSteps(stored.flow.steps).length} 件・更新 `,
+    nowrap(formatDateTime(stored.updatedAt)),
+  );
   const text = document.createElement('div');
   text.className = 'lm-flow-text';
   text.append(name, detail);
@@ -1078,7 +1081,7 @@ function flowItem(stored) {
   if (schedule) {
     const next = document.createElement('div');
     next.className = 'lm-sub';
-    next.textContent = `定期実行・次回 ${formatRunAt(nextRunAt(schedule, new Date()))}`;
+    next.append('定期実行・次回 ', nowrap(formatRunAt(nextRunAt(schedule, new Date()))));
     text.append(next);
   }
 
@@ -1109,7 +1112,7 @@ function flowItem(stored) {
     return item;
   }
 
-  const run = button('実行', 'btn btn-sm btn-primary', () => {
+  const run = button('実行', 'btn btn-sm btn-outline-primary', () => {
     onRunClick(stored).catch((error) => setRowNotice(stored.id, String(error), 'error'));
   });
   run.dataset.run = stored.id;
@@ -1390,7 +1393,7 @@ function batchItem(batch, flows) {
   text.className = 'lm-flow-text';
   text.append(name, detail);
 
-  const run = button('実行', 'btn btn-sm btn-primary', () => {
+  const run = button('実行', 'btn btn-sm btn-outline-primary', () => {
     onBatchRunClick(batch, flows).catch((error) =>
       setBatchRowNotice(batch.id, String(error), 'error'),
     );
@@ -1882,6 +1885,18 @@ function button(text, className, onClick) {
   element.textContent = text;
   element.className = className;
   element.addEventListener('click', onClick);
+  return element;
+}
+
+/**
+ * 途中で折り返さない文字（日時など）を作ります。幅が狭いときに、日付と時刻が別の行に分かれないようにします。
+ * @param {string} text
+ * @returns {HTMLSpanElement}
+ */
+function nowrap(text) {
+  const element = document.createElement('span');
+  element.className = 'lm-nowrap';
+  element.textContent = text;
   return element;
 }
 

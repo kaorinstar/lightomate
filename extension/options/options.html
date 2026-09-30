@@ -130,7 +130,7 @@
                 maxlength="200"
               />
               <div class="invalid-feedback" id="batch-name-feedback"></div>
-              <p class="lm-sub mt-2 mb-1">
+              <p class="lm-hint mt-2 mb-1">
                 実行する順（選んだ順）。別のサイトのフローは並行して、同じサイトのフローはこの順に 1
                 件ずつ実行します。
               </p>
@@ -188,7 +188,7 @@
 
               <form id="run-form" class="lm-block lm-run-form" novalidate hidden>
                 <h3 id="run-form-heading" class="lm-block-title"></h3>
-                <p class="lm-sub">入力した値は保存しません。</p>
+                <p class="lm-hint">入力した値は保存しません。</p>
                 <div id="run-fields" class="lm-run-fields mb-3"></div>
                 <div class="lm-buttons">
                   <button type="submit" class="btn btn-primary" id="run-submit"></button>
@@ -271,7 +271,7 @@
               >
                 <form id="speed-form" class="lm-block" novalidate aria-labelledby="speed-heading">
                   <h3 id="speed-heading" class="lm-block-title">実行の速度</h3>
-                  <p class="lm-sub">
+                  <p class="lm-hint">
                     手順と手順の間に、最短と最長の間で毎回変わる時間だけ待ちます。<wbr />1
                     秒以上、60 秒以下で入力します。<wbr />片方だけ入力すると、両方に同じ値を入れます。<wbr />両方を空欄にすると、既定の
                     1 秒です。
@@ -283,7 +283,6 @@
                       class="form-control lm-seconds"
                       id="interval-min"
                       inputmode="decimal"
-                      placeholder="1"
                     />
                     <span>秒</span>
                     <span aria-hidden="true">〜</span>
@@ -293,10 +292,11 @@
                       class="form-control lm-seconds"
                       id="interval-max"
                       inputmode="decimal"
-                      placeholder="1"
                     />
                     <span>秒</span>
-                    <button type="submit" class="btn" id="speed-save">速度を保存</button>
+                    <button type="submit" class="btn btn-primary" id="speed-save">
+                      速度を保存
+                    </button>
                   </div>
                   <div class="invalid-feedback lm-speed-feedback" id="interval-feedback"></div>
                   <p id="speed-notice" hidden></p>
@@ -316,7 +316,7 @@
                   aria-labelledby="schedule-heading"
                 >
                   <h3 id="schedule-heading" class="lm-block-title">定期実行</h3>
-                  <p class="lm-sub">
+                  <p class="lm-hint">
                     設定した日時に、背景のタブで実行します。<wbr />開始・完了・一時停止は、Windows
                     の通知で知らせます。<wbr />Chrome を起動している間だけ実行します。
                   </p>
@@ -349,7 +349,6 @@
                         id="schedule-day"
                         inputmode="numeric"
                         aria-label="日"
-                        placeholder="1"
                       />
                       <span>日</span>
                     </span>
@@ -367,7 +366,9 @@
                   </label>
                   <div class="invalid-feedback lm-speed-feedback" id="schedule-feedback"></div>
                   <div class="lm-buttons mt-2">
-                    <button type="submit" class="btn" id="schedule-save">定期実行を保存</button>
+                    <button type="submit" class="btn btn-primary" id="schedule-save">
+                      定期実行を保存
+                    </button>
                   </div>
                   <p id="schedule-notice" hidden></p>
                 </form>
@@ -376,7 +377,7 @@
               <div id="detail-panel-json" role="tabpanel" aria-labelledby="detail-tab-json" hidden>
                 <section class="lm-block" aria-labelledby="json-heading">
                   <h3 id="json-heading" class="lm-block-title">JSON を直接編集（上級者向け）</h3>
-                  <p class="lm-sub">
+                  <p class="lm-hint">
                     形式は、リポジトリの docs/flow-format.md
                     に記載しています。保存する前に形式を検証し、誤りがあれば保存しません。
                   </p>
@@ -403,25 +404,20 @@
               <h2 id="import-heading" class="card-title">JSON からフローを追加</h2>
             </div>
             <div class="card-body">
-              <p class="lm-sub">
-                フロー定義の JSON
-                を貼り付けるか、ファイルを選んでください。一覧で複数のフローを選んで
-                書き出したファイルも読み込めます。追加する前に、フローが操作するサイトを確認します。
+              <p class="lm-hint">
+                フロー定義の JSON を貼り付けるか、ファイルを選んでください。<wbr />一覧で複数のフローを選んで書き出したファイルも読み込めます。<wbr />追加する前に、フローが操作するサイトを確認します。
               </p>
-              <input
-                type="file"
-                class="form-control mb-3"
-                id="file"
-                accept="application/json,.json"
-                aria-label="フロー定義のファイル"
-              />
               <div class="mb-3">
+                <label class="form-label" for="file">ファイル</label>
+                <input type="file" class="form-control" id="file" accept="application/json,.json" />
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="import-json">JSON</label>
                 <textarea
                   id="import-json"
                   class="form-control lm-code"
                   rows="18"
                   spellcheck="false"
-                  aria-label="追加するフロー定義の JSON"
                 ></textarea>
                 <div class="invalid-feedback" id="import-json-feedback"></div>
               </div>
@@ -502,42 +498,47 @@
             </div>
             <div class="card-body">
               <div class="mb-3">
-                <label class="form-label" for="stop-origin"
-                  >サイト（https:// または http:// から始まるオリジン）</label
-                >
+                <label class="form-label mb-1" for="stop-origin">サイト</label>
+                <p class="lm-hint mb-2" id="stop-origin-hint">
+                  https:// または http://
+                  から始まる、サイトの先頭の部分（オリジン）です。例：https://www.amazon.co.jp
+                </p>
                 <input
                   type="text"
                   class="form-control"
                   id="stop-origin"
+                  aria-describedby="stop-origin-hint"
                   list="stop-origins"
-                  placeholder="https://www.amazon.co.jp"
                 />
                 <div class="invalid-feedback" id="stop-origin-feedback"></div>
                 <datalist id="stop-origins"></datalist>
               </div>
               <div class="mb-3">
-                <label class="form-label" for="stop-selectors"
-                  >止める要素（CSS セレクター。1 行に 1 件）</label
-                >
+                <label class="form-label mb-1" for="stop-selectors">止める要素</label>
+                <p class="lm-hint mb-2" id="stop-selectors-hint">
+                  CSS セレクター（ページの要素を指す書き方）を、1 行に 1 件書きます。例：#placeOrder
+                </p>
                 <textarea
                   id="stop-selectors"
+                  aria-describedby="stop-selectors-hint"
                   class="form-control lm-code"
                   rows="4"
                   spellcheck="false"
-                  placeholder="#placeOrder"
                 ></textarea>
                 <div class="invalid-feedback" id="stop-selectors-feedback"></div>
               </div>
               <div class="mb-3">
-                <label class="form-label" for="stop-paths"
-                  >止める画面（URL のパス。1 行に 1 件。* は任意の文字列）</label
-                >
+                <label class="form-label mb-1" for="stop-paths">止める画面</label>
+                <p class="lm-hint mb-2" id="stop-paths-hint">
+                  URL のパス（サイトの先頭の部分より後ろ）を、1 行に 1 件書きます。*
+                  は任意の文字列です。例：/checkout/*
+                </p>
                 <textarea
                   id="stop-paths"
+                  aria-describedby="stop-paths-hint"
                   class="form-control lm-code"
                   rows="4"
                   spellcheck="false"
-                  placeholder="/checkout/*"
                 ></textarea>
                 <div class="invalid-feedback" id="stop-paths-feedback"></div>
               </div>
@@ -603,7 +604,7 @@
               すべてのサイトを許可
             </label>
             <p id="all-sites-notice" hidden></p>
-            <p class="lm-sub mt-2 mb-0">
+            <p class="lm-hint mt-2 mb-0">
               オンにすると、記録と実行で、サイトごとに許可を求める確認を出しません。記録中に別のサイトへ移動した場合も、確認なしで記録を続けます。<wbr />オンにするときに
               Chrome
               が表示する確認には「すべてのサイト上にある自分のデータの読み取りと変更」と書かれますが、Lightomate
@@ -618,7 +619,7 @@
             <h2 class="card-title">バックアップ</h2>
           </div>
           <div class="card-body">
-            <p class="lm-sub mt-0 mb-2">
+            <p class="lm-hint mt-0 mb-2">
               保存したフロー、まとめフロー、必ず止まる場所を、1 つのファイルに書き出します。<wbr />Chrome
               の再インストールや PC の買い替えの前に書き出しておくと、復元で元に戻せます。<wbr />復元は追加だけを行い、今あるデータは消しません。同じ内容のフローと、同じサイトの必ず止まる場所は追加しません。
             </p>

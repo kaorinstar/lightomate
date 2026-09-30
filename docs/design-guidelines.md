@@ -45,6 +45,12 @@ content script がページの中に出す表示（`extension/content/overlay.js
 | [GOV.UK Design System：Fieldset](https://design-system.service.gov.uk/components/fieldset/) | 関係する入力欄は、見出し（legend）を持つまとまりにする | 入力欄のまとまり |
 | [Fluent 2：Typography](https://fluent2.microsoft.design/typography) | 大きさと太さで階層を作り、役割ごとに決めた少数の段階だけを使う | 文字の階層（「4. 色・余白・文字」）の裏付け |
 | [Material Design 3：M3 Expressive](https://m3.material.io/blog/building-with-m3-expressive) | 大きさ、形、色、文字、囲みで、主な操作と重要な情報を強調する。強調は目的を持って使う | 強調の使い方（「要素ごとの見た目」） |
+| [GOV.UK Design System：Text input](https://design-system.service.gov.uk/components/text-input/) | 項目名は入力欄の上に常に表示する。説明（hint）は項目名と入力欄の間に置き、`aria-describedby` で結び付ける。placeholder を項目名・説明・例の代わりに使わない | 項目名と説明の置き方（「配置と余白」） |
+| [NN/g：Placeholders in Form Fields Are Harmful](https://www.nngroup.com/articles/form-design-placeholders/) | placeholder は入力を始めると消え、入力済みの値と見分けにくく、薄い文字で読みにくい | 例は説明文に書く |
+| [NN/g：Proximity Principle in Visual Design](https://www.nngroup.com/articles/gestalt-proximity/) | 近くに置いたものは関係があると受け取られる。関係するものを近づけ、別のまとまりを離す | 余白の大きさの使い分け |
+| [GOV.UK Design System：Layout](https://design-system.service.gov.uk/styles/layout/) | 本文の幅を読みやすい長さに制限する。内容は左に寄せる | 説明文の幅と左寄せ |
+| [WCAG 2.2：1.4.8 Visual Presentation](https://www.w3.org/WAI/WCAG22/Understanding/visual-presentation.html) | 文の 1 行の幅は 80 字以内（日本語・中国語・韓国語は 40 字以内）にする | 説明文の幅を 40em にする |
+| [WCAG 2.2：2.5.8 Target Size (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html) | 押せる部品は 24×24px 以上にする。文の中のリンクと、周りに十分な間隔がある部品は例外 | 押せる範囲の大きさ |
 
 ## 2. 画面の構成
 
@@ -166,10 +172,13 @@ content script がページの中に出す表示（`extension/content/overlay.js
 | 区画 | `card`、`card-header`、`card-body` |
 | 一覧 | `list-group`、`list-group-flush`、`list-group-item` |
 | 主な操作（1 区画に 1 つ） | `btn btn-primary` |
+| 一覧の行ごとに繰り返す主な操作（サイドパネルとまとめフローの行の［実行］） | `btn btn-sm btn-outline-primary` |
 | そのほかの操作 | `btn` |
 | 元に戻せない操作（削除など） | 最初のボタンは `btn btn-ghost-danger`、確認の中の確定のボタンは `btn btn-danger` |
 | 一覧の行の中の操作 | `btn-sm` を付ける |
 | 入力欄 | `form-label`、`form-control`、`form-select` |
+| 区画と入力欄の説明文 | `lm-hint`（`base.css`）。本文と同じ大きさで、色だけを薄くします |
+| 途中で折り返さない文字（日時） | `lm-nowrap`（`base.css`） |
 | 知らせ（誤り・警告） | `extension/shared/ui.js` の `showNotice`（`alert` を使います） |
 | 成功の知らせ | `extension/shared/ui.js` の `showToast`。表示欄は `<div id="toast" class="lm-toast-region" role="status" aria-live="polite">` |
 | 入力欄の誤り | `extension/shared/ui.js` の `showFieldError`（`is-invalid` と `invalid-feedback` を使います） |
@@ -179,6 +188,10 @@ content script がページの中に出す表示（`extension/content/overlay.js
 | 常に表示する案内（操作できない理由と対処など、#22） | `alert alert-info lm-guide`（`base.css`）。操作の結果ではないため、「5. 知らせと誤りの表示場所」の知らせには含めません（「要素ごとの見た目」） |
 
 - 1 つの区画に `btn-primary` は 1 つだけ置きます。どれを押せばよいかを、色で示すためです。
+  区画は、カードと、カードの中の入力フォーム（実行の速度、定期実行、JSON の編集など）です。入力フォームの
+  確定のボタン（［速度を保存］［定期実行を保存］［JSON を保存］など）は `btn-primary` にします。
+- 一覧の行ごとに同じ主な操作を繰り返す場合は、塗りつぶしではなく枠の `btn-outline-primary` にします。
+  塗りつぶしのボタンが縦に並ぶと、区画の中で最も重要な操作がどれかを色で示せなくなるためです。
 
 ### ボタンの並び（#112）
 
@@ -242,6 +255,27 @@ HTML に書いた並び（`lm-buttons`）は、`test/button-order.test.js` で 1
     重要な案内はコールアウトです。
   - M3 Expressive のうち、形の変化や動きによる強調は採り入れません。業務の道具として、落ち着いた見た目を保つためです。
 
+### 配置と余白（#133）
+
+- **項目名は入力欄の上に置き、常に表示します。** 書き方の説明は、項目名と入力欄の間に `lm-hint` で置き、
+  入力欄の `aria-describedby` で結び付けます。項目名の中に括弧書きで説明を足しません。項目名が長くなり、
+  入力欄を探しにくくなるためです。
+- **例は説明文に「例：」を付けて書き、placeholder に書きません。** placeholder は入力を始めると消え、
+  入力済みの値と見分けにくいためです。既定値も placeholder で示さず、説明文に書きます（例：実行の速度）。
+  検索欄だけは、画面の上で項目名を省き（`visually-hidden` の項目名は置きます）、placeholder に同じ文を書きます。
+  検索欄であることが、形と位置から分かるためです。
+- **余白は、関係の近さで使い分けます。** 項目名と説明の間は 4px、説明と入力欄の間は 8px、入力欄のまとまりどうしの
+  間は 16px、区画どうしの間は管理画面で 16px、サイドパネルで 12px です。入力フォームと、その下のタブや区画の
+  間も 16px 空けます。関係するものが近く、別のまとまりが離れて見えるようにするためです。
+- **説明文の 1 行は、全角 40 字前後までにします。** `lm-hint`、`lm-panel-note`、案内（コールアウト）の文、
+  免責事項の箇条書きに `max-width: 40em` を指定します。画面の幅が広くても、行が長くなりすぎないようにするためです。
+  1 行で終わる補足（詳細の日時の行など）は対象外です。
+- **文と部品は左に寄せます。** 中央寄せは使いません。行の始まりがそろい、目で追いやすいためです。
+  見出しの帯の操作と、カードの 1 行目の操作は右端に置きます（「ボタンの並び」の 6）。
+- **押せる部品は 24×24px 以上にします。** 小さい文字の開閉の見出し（`summary`）には上下の余白を足します。
+  文の中のリンクと、項目名を含む `label` で押せる範囲を広げたチェックボックスは例外です。
+- **日時は途中で折り返しません**（`lm-nowrap`）。幅が狭いサイドパネルで、日付と時刻が別の行に分かれないようにするためです。
+
 ## 4. 色・余白・文字
 
 - **色**：Tabler の CSS 変数（`--tblr-primary`、`--tblr-danger`、`--tblr-secondary` など）だけを使い、
@@ -249,6 +283,9 @@ HTML に書いた並び（`lm-buttons`）は、`test/button-order.test.js` で 1
 - **コントラスト**：文字と背景のコントラスト比を 4.5:1 以上にします。Tabler の標準の知らせの色は、
   明るい表示で基準に届かないもの（黄色で約 2:1）があるため、`base.css` で文字色を調整しています。
   色を変えたときは、作業環境の Chromium で両方の表示の文字色と背景色を取得し、比を計算して確認します。
+  見出しの帯、選んだ一覧の行、マウスを重ねた一覧の行は背景が一段濃いため、補足の文字（`lm-sub`、件数）を
+  本文の色に寄せて濃くしています。赤いボタン、赤い文字のボタン、暗い表示の青い枠のボタン、灰色の枠なしボタンを
+  押したときの色も、Tabler の標準では基準に届かないため、`base.css` で調整しています。
 - **余白**：4px の倍数（4、8、12、16、24px。rem では 0.25、0.5、0.75、1、1.5）だけを使います。
   区画どうしの間は、サイドパネルで 12px、管理画面で 16px です。
   カードの本文と一覧の 1 行の上下の余白は、両画面で 12px です（Tabler の標準の 20px を `base.css` で上書き）。
@@ -260,7 +297,7 @@ HTML に書いた並び（`lm-buttons`）は、`test/button-order.test.js` で 1
   | 詳細の見出し | 管理画面の詳細のフロー名 | 20px | （なし） | 700 | `lm-detail-name` |
   | 区画見出し | カードの見出し、タブ、詳細の中の節（「手順」など） | 16px（タブは 15px） | 14px | 700（タブは 600） | `card-title`、`lm-tabs`、`lm-block-title` |
   | 項目名 | 一覧のフロー名、入力欄の項目名 | 15px（項目名は 14px） | 14px | 600 | `lm-item-name`、`lm-flow-name`、`form-label` |
-  | 本文 | 説明、手順の説明、ボタン、入力欄 | 14px | 13px | 400 | （指定なし） |
+  | 本文 | 説明、手順の説明、ボタン、入力欄 | 14px | 13px | 400 | （指定なし）。説明文は `lm-hint` |
   | 補足 | 日時、件数、サイト、注記、小さいボタン | 12px | 12px | 400 | `lm-sub`、`btn-sm` |
 
   サイドパネルは幅が狭く、大きい文字では 1 行に入る文字数が減り、フロー名の折り返しが増えるため、

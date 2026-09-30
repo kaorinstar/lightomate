@@ -139,11 +139,19 @@ export function showToast(
  */
 export function showFieldError(control, feedback, text) {
   control.classList.toggle('is-invalid', Boolean(text));
+  // 説明文（aria-describedby で指した説明）は残し、誤りの表示だけを加えたり外したりします。
+  const ids = (control.getAttribute('aria-describedby') ?? '')
+    .split(/\s+/)
+    .filter((id) => id && id !== feedback.id);
   if (text) {
     control.setAttribute('aria-invalid', 'true');
-    control.setAttribute('aria-describedby', feedback.id);
+    ids.push(feedback.id);
   } else {
     control.removeAttribute('aria-invalid');
+  }
+  if (ids.length) {
+    control.setAttribute('aria-describedby', ids.join(' '));
+  } else {
     control.removeAttribute('aria-describedby');
   }
   feedback.textContent = text;

@@ -18,7 +18,7 @@ body {
 }
 
 .lm-panel-note {
-  max-width: 60rem;
+  max-width: 40em;
   margin: 0 0 1rem;
   color: var(--tblr-secondary);
 }
@@ -164,6 +164,7 @@ body {
 /* まとめフローの行の中に開く、実行する値の入力欄です（#7）。フローごとの欄の間と、ボタンの上に余白を置きます。 */
 .lm-batch-row .lm-run-form {
   margin-top: 0.5rem;
+  margin-bottom: 0;
 }
 
 .lm-batch-row .lm-run-fields + .lm-run-fields {
@@ -338,6 +339,7 @@ body {
 
 /* 選んだフローを開く・実行するときの、値の入力欄です（#43）。手順の一覧と区別するため、枠で囲みます。 */
 .lm-run-form {
+  margin-bottom: 1rem;
   padding: 1rem;
   border: 1px solid var(--tblr-primary);
   border-radius: var(--tblr-border-radius);
@@ -443,6 +445,7 @@ body {
 
 /* 免責事項（#109）です。項目の間を空け、1 項目ずつ読めるようにします。 */
 .lm-disclaimer {
+  max-width: 40em;
   margin: 0;
   padding-left: 1.25rem;
 }
