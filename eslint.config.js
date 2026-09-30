@@ -30,7 +30,8 @@ const networkProperties = [
 ].map((entry) => ({ ...entry, message: 'content script から外部へ送信しません（SECURITY.md）。' }));
 
 export default [
-  { ignores: ['node_modules/'] },
+  // 同梱した外部のファイル（scripts/vendor.js）は、配布元のまま置くため検査しません。
+  { ignores: ['node_modules/', 'extension/vendor/'] },
   js.configs.recommended,
   {
     rules: noDynamicCode,

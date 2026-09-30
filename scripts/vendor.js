@@ -19,6 +19,21 @@ const FONT_PACKAGE = '@fontsource-variable/noto-sans-jp';
 /** 書体を複写する先のフォルダーです。リポジトリからの相対パスです。 */
 export const FONT_DIR = 'extension/vendor/noto-sans-jp';
 
+/**
+ * ブロックの編集画面（#9）の Blockly です。本体、日本語の文言、画像と音のファイル、ライセンスを同梱します。
+ * 基本のブロック（blocks_compressed.js）は使わないため、同梱しません。手順ごとのブロックは
+ * extension/shared/blocks.js で定めます。
+ */
+const BLOCKLY_PACKAGE = 'blockly';
+
+/** Blockly を複写する先のフォルダーです。リポジトリからの相対パスです。 */
+export const BLOCKLY_DIR = 'extension/vendor/blockly';
+
+/** 作り直すフォルダーです。版が変わって不要になったファイルが残らないようにします。 */
+export const REBUILT_DIRS = [FONT_DIR, BLOCKLY_DIR];
+
+const blocklyMedia = readdirSync(`${root}node_modules/${BLOCKLY_PACKAGE}/media`).sort();
+
 const fontFiles = readdirSync(`${root}node_modules/${FONT_PACKAGE}/files`)
   .filter((name) => name.endsWith('-wght-normal.woff2'))
   .sort();
@@ -35,11 +50,22 @@ export const VENDOR_FILES = [
     from: `${FONT_PACKAGE}/files/${name}`,
     to: `${FONT_DIR}/files/${name}`,
   })),
+  {
+    from: `${BLOCKLY_PACKAGE}/blockly_compressed.js`,
+    to: `${BLOCKLY_DIR}/blockly_compressed.js`,
+  },
+  { from: `${BLOCKLY_PACKAGE}/msg/ja.js`, to: `${BLOCKLY_DIR}/msg/ja.js` },
+  { from: `${BLOCKLY_PACKAGE}/LICENSE`, to: `${BLOCKLY_DIR}/LICENSE` },
+  ...blocklyMedia.map((name) => ({
+    from: `${BLOCKLY_PACKAGE}/media/${name}`,
+    to: `${BLOCKLY_DIR}/media/${name}`,
+  })),
 ];
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  // 版が変わって不要になったファイルが残らないよう、書体のフォルダーは作り直します。
-  rmSync(root + FONT_DIR, { recursive: true, force: true });
+  for (const dir of REBUILT_DIRS) {
+    rmSync(root + dir, { recursive: true, force: true });
+  }
   for (const { from, to } of VENDOR_FILES) {
     mkdirSync(dirname(root + to), { recursive: true });
     copyFileSync(`${root}node_modules/${from}`, root + to);
