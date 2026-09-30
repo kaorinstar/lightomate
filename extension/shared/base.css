@@ -588,6 +588,11 @@ div.lm-hint {
   line-height: 1;
 }
 
+/* 注意（黄）の案内は、知らせ（.lm-notice.alert-warning）と同じく「!」にします（#141）。 */
+.lm-guide.alert-warning .lm-guide-title::before {
+  content: '!';
+}
+
 .lm-guide-title:only-child {
   margin-bottom: 0 !important;
   font-weight: 400;

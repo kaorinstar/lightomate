@@ -728,8 +728,9 @@ async function render() {
       run.disabled = noFirstPage || Boolean(common);
     }
     const reason = row.querySelector('.lm-flow-reason');
-    if (reason instanceof HTMLElement) {
-      reason.textContent = noFirstPage ? NO_FIRST_PAGE : '';
+    const reasonText = reason?.querySelector('.lm-guide-title');
+    if (reason instanceof HTMLElement && reasonText) {
+      reasonText.textContent = noFirstPage ? NO_FIRST_PAGE : '';
       reason.hidden = !noFirstPage;
     }
   }
@@ -1180,9 +1181,13 @@ function flowItem(stored) {
   actions.append(more);
   main.append(actions);
 
-  const reason = document.createElement('p');
-  reason.className = 'lm-flow-reason lm-sub';
+  // ［実行］を押せない理由です。フローの説明と区別できるよう、注意の案内（黄）として別の行に出します（#141）。
+  const reason = document.createElement('div');
+  reason.className = 'alert alert-warning lm-guide lm-flow-reason';
   reason.hidden = true;
+  const reasonText = document.createElement('p');
+  reasonText.className = 'lm-guide-title';
+  reason.append(reasonText);
   item.append(reason);
 
   if (menuOpen) {
