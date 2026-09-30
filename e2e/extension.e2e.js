@@ -277,3 +277,221 @@ test('定期実行：同じサイトの手動の実行が終わるまで待ち�
     await page.close();
   }
 });
+
+test('ブロックの編集画面：手順をブロックで表示し、値の変更を保存する。CSP の誤りを出さない（#9）', async () => {
+  const { extensionPage: page } = browser;
+  /** @type {string[]} */
+  const problems = [];
+  /** @param {import('playwright').ConsoleMessage} message */
+  const onConsole = (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') {
+      problems.push(message.text());
+    }
+  };
+  page.on('console', onConsole);
+  page.on('pageerror', (error) => problems.push(error.message));
+
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: 'ブロック',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/done.html` },
+      { type: 'wait', ms: 1000 },
+      {
+        type: 'if',
+        condition: { target: target('#done', 'h1', '完了'), exists: true },
+        then: [{ type: 'pause', note: '確認' }],
+      },
+    ],
+  };
+  await page.evaluate(
+    (flow) =>
+      chrome.storage.local.set({
+        flows: { blocks: { id: 'blocks', createdAt: '', updatedAt: '', flow } },
+      }),
+    flow,
+  );
+  const id = new URL(page.url()).host;
+  // 同じ画面の # だけを変えた移動では読み込み直さないため、読み込み直して選んだフローを開きます。
+  await page.goto(`chrome-extension://${id}/options/options.html#blocks`);
+  await page.reload();
+  await page.waitForFunction(
+    () =>
+      /** @type {any} */ (globalThis).Blockly?.getMainWorkspace()?.getAllBlocks(false).length > 0,
+  );
+
+  const count = await page.evaluate(
+    () => /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getAllBlocks(false).length,
+  );
+  assert.equal(count, 4);
+  assert.equal(await page.locator('#blocks-save').isDisabled(), true);
+
+  // 待機の秒数を変えて保存します。欄の編集と同じ変更を、Blockly の操作で行います。
+  await page.evaluate(() => {
+    const workspace = /** @type {any} */ (globalThis).Blockly.getMainWorkspace();
+    const wait = workspace
+      .getAllBlocks(false)
+      .find((/** @type {any} */ block) => block.type === 'lm_wait');
+    wait.setFieldValue(2.5, 'SECONDS');
+  });
+  await page.locator('#blocks-save').click();
+  const saved = await waitUntil(
+    () =>
+      page.evaluate(async () => {
+        const { flows } = await chrome.storage.local.get('flows');
+        return /** @type {{ blocks: { flow: Flow } }} */ (flows).blocks.flow.steps;
+      }),
+    (steps) => /** @type {any} */ (steps[1]).ms === 2500,
+  );
+  assert.deepEqual(saved, [flow.steps[0], { type: 'wait', ms: 2500 }, flow.steps[2]]);
+  assert.equal(await page.locator('#blocks-save').isDisabled(), true);
+
+  // つながっていないブロックがある場合は、保存せずに理由を表示します。
+  await page.evaluate(() => {
+    const workspace = /** @type {any} */ (globalThis).Blockly.getMainWorkspace();
+    const wait = workspace
+      .getAllBlocks(false)
+      .find((/** @type {any} */ block) => block.type === 'lm_wait');
+    wait.unplug(true);
+  });
+  await page.locator('#blocks-save').click();
+  await page.locator('#blocks-notice', { hasText: 'つながっていないブロック' }).waitFor();
+
+  // ［変更を取り消す］で、保存済みの手順に戻ります。
+  await page.locator('#blocks-revert').click();
+  const restored = await page.evaluate(
+    () => /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getTopBlocks(false).length,
+  );
+  assert.equal(restored, 1);
+  assert.equal(await page.locator('#blocks-save').isDisabled(), true);
+
+  page.off('console', onConsole);
+  assert.deepEqual(problems, []);
+});
+
+test('値の定義の編集：名前を変えて保存すると、手順の中の参照も変わる（#9）', async () => {
+  const { extensionPage: page } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: '値の定義',
+    origin: server.origin,
+    params: [{ name: 'keyword', label: '検索語', type: 'text' }],
+    steps: [{ type: 'navigate', cause: 'user', url: `${server.origin}/form.html?q={{keyword}}` }],
+  };
+  await page.evaluate(
+    (flow) =>
+      chrome.storage.local.set({
+        flows: { params: { id: 'params', createdAt: '', updatedAt: '', flow } },
+      }),
+    flow,
+  );
+  const id = new URL(page.url()).host;
+  await page.goto(`chrome-extension://${id}/options/options.html#params`);
+  await page.reload();
+  await page.locator('#params-edit').click();
+  await page.locator('#params-rows [data-role="name"]').fill('word');
+  await page.locator('#params-add').click();
+  const added = page.locator('#params-rows fieldset').nth(1);
+  await added.locator('[data-role="name"]').fill('size');
+  await added.locator('[data-role="label"]').fill('サイズ');
+  await added.locator('[data-role="type"]').focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await added.locator('[data-role="options"]').fill('S、M、L');
+  await added.locator('[data-role="default"]').fill('M');
+  await page.locator('#params-save').click();
+
+  const saved = await waitUntil(
+    () =>
+      page.evaluate(async () => {
+        const { flows } = await chrome.storage.local.get('flows');
+        return /** @type {{ params: { flow: Flow } }} */ (flows).params.flow;
+      }),
+    (flow) => flow.params?.[0]?.name === 'word',
+  );
+  assert.deepEqual(saved.params, [
+    { name: 'word', label: '検索語', type: 'text' },
+    { name: 'size', label: 'サイズ', type: 'select', options: ['S', 'M', 'L'], default: 'M' },
+  ]);
+  assert.equal(/** @type {any} */ (saved.steps[0]).url, `${server.origin}/form.html?q={{word}}`);
+  assert.equal(await page.locator('#params-form').isHidden(), true);
+});
+
+test('保存したフロー：一覧で押したフローの画面に切り替わり、ボタンとブラウザーの［戻る］で一覧に戻る（#9）', async () => {
+  const { extensionPage: page } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: '画面の切り替え',
+    origin: server.origin,
+    steps: [{ type: 'navigate', cause: 'user', url: `${server.origin}/form.html` }],
+  };
+  await page.evaluate(
+    (flow) =>
+      chrome.storage.local.set({
+        flows: { view: { id: 'view', createdAt: '', updatedAt: '', flow } },
+      }),
+    flow,
+  );
+  const id = new URL(page.url()).host;
+  await page.goto(`chrome-extension://${id}/options/options.html`);
+  await page.reload();
+  const list = page.locator('#flow-list');
+  const editor = page.locator('#editor');
+  await list.getByText('画面の切り替え').click();
+  await editor.waitFor({ state: 'visible' });
+  assert.equal(await list.isHidden(), true);
+  assert.match(page.url(), /#view$/);
+
+  // ［← フローの一覧に戻る］で一覧に戻り、開いていたフローの行にフォーカスが戻ります。
+  await page.locator('#back-to-list').click();
+  await list.waitFor({ state: 'visible' });
+  assert.equal(await editor.isHidden(), true);
+  await waitUntil(
+    () => page.evaluate(() => globalThis.document.activeElement?.textContent ?? ''),
+    (text) => text.includes('画面の切り替え'),
+  );
+
+  // ブラウザーの［戻る］でも一覧に戻ります。
+  await list.getByText('画面の切り替え').click();
+  await editor.waitFor({ state: 'visible' });
+  await page.goBack();
+  await list.waitFor({ state: 'visible' });
+  assert.equal(await editor.isHidden(), true);
+});
+
+test('必ず止まる場所：一覧で押したサイトの入力欄に切り替わり、ボタンとブラウザーの［戻る］で一覧に戻る（#9）', async () => {
+  const { extensionPage: page } = browser;
+  await page.evaluate(() =>
+    chrome.storage.local.set({
+      stopRules: { 'https://shop.example.com': { selectors: ['#buy'], paths: [] } },
+    }),
+  );
+  const id = new URL(page.url()).host;
+  await page.goto(`chrome-extension://${id}/options/options.html?tab=stop-rules`);
+  await page.reload();
+  const list = page.locator('#stop-list');
+  const form = page.locator('#stop-form');
+  await list.getByText('https://shop.example.com').click();
+  await form.waitFor({ state: 'visible' });
+  assert.equal(await list.isHidden(), true);
+  assert.equal(await page.locator('#stop-selectors').inputValue(), '#buy');
+  assert.equal(
+    await page.locator('#stop-form-heading').innerText(),
+    'https://shop.example.com の指定',
+  );
+
+  await page.locator('#stop-back').click();
+  await list.waitFor({ state: 'visible' });
+  assert.equal(await form.isHidden(), true);
+
+  await page.locator('#stop-clear').click();
+  await form.waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#stop-form-heading').innerText(), '新しいサイトの指定');
+  await page.goBack();
+  await list.waitFor({ state: 'visible' });
+  assert.equal(await form.isHidden(), true);
+});

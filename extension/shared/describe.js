@@ -219,23 +219,28 @@ const PARAM_TYPE_LABELS = {
 };
 
 /**
- * 実行時に入力するパラメータの説明です。種類と既定値を、人が読む形にします。
+ * 実行時に入力するパラメータを、表の 1 行に出す項目にします（#9）。
  * @param {import('./params.js').Param} param
- * @returns {string} 例：「年月・既定値は前月」
+ * @returns {{ label: string, reference: string, type: string, defaultValue: string }}
+ *   例：{ label: '対象月', reference: '{{month}}', type: '年月', defaultValue: '前月' }
  */
-export function describeParam(param) {
+export function paramColumns(param) {
   const type = PARAM_TYPE_LABELS[param.type];
   const choices = param.type === 'select' && param.options ? `（${param.options.join('、')}）` : '';
-  if (param.default === undefined || param.default === '') {
-    return `${type}${choices}・既定値なし`;
-  }
-  const value =
-    param.default === '@previous-month'
-      ? '前月'
-      : param.default === '@current-month'
-        ? '今月'
-        : param.default;
-  return `${type}${choices}・既定値は${value}`;
+  const defaultValue =
+    param.default === undefined || param.default === ''
+      ? 'なし'
+      : param.default === '@previous-month'
+        ? '前月'
+        : param.default === '@current-month'
+          ? '今月'
+          : param.default;
+  return {
+    label: param.label,
+    reference: `{{${param.name}}}`,
+    type: `${type}${choices}`,
+    defaultValue,
+  };
 }
 
 /**

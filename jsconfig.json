@@ -18,5 +18,6 @@
     "e2e/*.js",
     "scripts/**/*.js",
     "eslint.config.js"
-  ]
+  ],
+  "exclude": ["extension/vendor"]
 }

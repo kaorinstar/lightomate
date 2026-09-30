@@ -7,6 +7,10 @@
     <link rel="stylesheet" href="../vendor/noto-sans-jp/wght.css" />
     <link rel="stylesheet" href="../shared/base.css" />
     <link rel="stylesheet" href="options.css" />
+    <!-- ブロックの編集画面（#9）の Blockly です。見た目の指定を CSP の範囲で適用するため、先に blockly-styles.js を読み込みます。 -->
+    <script src="blockly-styles.js"></script>
+    <script src="../vendor/blockly/blockly_compressed.js"></script>
+    <script src="../vendor/blockly/msg/ja.js"></script>
     <script type="module" src="options.js"></script>
   </head>
   <!--
@@ -74,8 +78,13 @@
         </button>
       </div>
 
-      <section id="panel-flows" class="lm-layout" role="tabpanel" aria-labelledby="tab-flows">
-        <nav class="card lm-list" aria-labelledby="list-heading">
+      <section
+        id="panel-flows"
+        class="lm-views lm-view-list"
+        role="tabpanel"
+        aria-labelledby="tab-flows"
+      >
+        <nav class="card lm-list" id="flow-list" aria-labelledby="list-heading">
           <div class="card-header lm-card-header">
             <h2 id="list-heading" class="card-title">
               保存したフロー<span class="lm-count" id="flow-count"></span>
@@ -152,8 +161,10 @@
         </nav>
 
         <div class="lm-detail">
-          <div id="placeholder" class="card card-body lm-empty">
-            左の一覧からフローを選ぶと、手順と実行時に入力する値を表示します。
+          <!-- フローを開くと、一覧に替えて詳細（手順のブロックなど）を画面の幅いっぱいに表示します（#9）。
+               このボタンで一覧に戻ります。ブラウザーの［戻る］でも戻れます。 -->
+          <div class="lm-detail-tools">
+            <button type="button" class="btn btn-sm" id="back-to-list">← フローの一覧に戻る</button>
           </div>
 
           <section id="editor" class="card" hidden aria-labelledby="editor-heading">
@@ -276,14 +287,91 @@
               >
                 <section id="params-section" class="lm-block" aria-labelledby="params-heading">
                   <h3 id="params-heading" class="lm-block-title">実行時に入力する値</h3>
-                  <dl id="params" class="lm-params"></dl>
+                  <div class="table-responsive lm-params" id="params">
+                    <table class="table table-vcenter mb-0">
+                      <thead>
+                        <tr>
+                          <th scope="col">表示名</th>
+                          <th scope="col">手順での書き方（押すとコピー）</th>
+                          <th scope="col">種類</th>
+                          <th scope="col">既定値</th>
+                        </tr>
+                      </thead>
+                      <tbody id="params-body"></tbody>
+                    </table>
+                  </div>
+                  <p id="params-empty" class="lm-hint mb-2" hidden>
+                    実行時に入力する値はありません。
+                  </p>
+                  <div class="lm-buttons" id="params-buttons">
+                    <button type="button" class="btn btn-sm" id="params-edit">
+                      値の定義を編集
+                    </button>
+                  </div>
+                  <p id="params-edit-notice" hidden></p>
+                  <form id="params-form" class="lm-params-form" novalidate hidden>
+                    <div class="lm-hint">
+                      <p>
+                        実行するたびに入力する値を定めます。手順の中では {{名前}}
+                        と書くと、入力した値に置き換わります。
+                      </p>
+                      <ul>
+                        <li>名前を変えると、手順の中の {{名前}} も合わせて変わります。</li>
+                        <li>既定値を決めておくと、入力を空にしたときにその値を使います。</li>
+                      </ul>
+                    </div>
+                    <div id="params-rows" class="lm-param-rows"></div>
+                    <button type="button" class="btn btn-sm mt-2" id="params-add">値を追加</button>
+                    <div class="lm-buttons mt-3">
+                      <button type="submit" class="btn btn-primary" id="params-save">
+                        値の定義を保存
+                      </button>
+                      <button type="button" class="btn" id="params-cancel">キャンセル</button>
+                    </div>
+                    <p id="params-notice" hidden></p>
+                  </form>
                 </section>
 
                 <section class="lm-block" aria-labelledby="steps-heading">
                   <h3 id="steps-heading" class="lm-block-title">
                     手順<span class="lm-count" id="step-count"></span>
                   </h3>
-                  <ol id="steps" class="lm-step-list"></ol>
+                  <div class="lm-hint">
+                    <p>
+                      ブロックを並べ替えて、手順を変えます。［手順を保存］を押すまで保存しません。
+                    </p>
+                    <ul>
+                      <li>
+                        追加：左の一覧から、ページを開く・待つ・一時停止・PDF
+                        の保存・タブを閉じる、を足せます。
+                      </li>
+                      <li>
+                        「秒待つ」：その位置だけで、決めた秒数を待ちます。［実行速度］タブの間隔（手順と手順の間に毎回入る待ち時間）に加えて待ちます。
+                      </li>
+                      <li>
+                        クリックや入力：記録するか、既存のブロックを右クリックして［複製］し、置きたい場所へ動かします。
+                      </li>
+                      <li>
+                        キーボード：ブロックを選んで M キーで動かし始め、矢印キーで動かし、Enter
+                        キーで決めます。
+                      </li>
+                    </ul>
+                  </div>
+                  <div
+                    id="blocks"
+                    class="lm-blocks"
+                    role="region"
+                    aria-label="手順のブロック"
+                  ></div>
+                  <div class="lm-buttons mt-3" id="blocks-buttons">
+                    <button type="button" class="btn btn-primary" id="blocks-save" disabled>
+                      手順を保存
+                    </button>
+                    <button type="button" class="btn" id="blocks-revert" disabled>
+                      変更を取り消す
+                    </button>
+                  </div>
+                  <p id="blocks-notice" hidden></p>
                 </section>
               </div>
 
@@ -301,6 +389,9 @@
                       <li>1 秒以上、60 秒以下で入力します。</li>
                       <li>片方だけ入力すると、両方に同じ値を入れます。</li>
                       <li>両方を空欄にすると、既定の 1 秒です。</li>
+                      <li>
+                        特定の場所だけ長く待つ場合は、［手順］タブの「秒待つ」ブロックを使います。その場所では、この間隔に加えて待ちます。
+                      </li>
                     </ul>
                   </div>
                   <div class="lm-speed-row">
@@ -524,7 +615,8 @@
           </ul>
         </div>
 
-        <div class="lm-layout">
+        <!-- 一覧で押すか［新しいサイト］を押すと、一覧に替えて入力欄を表示します（#9。［保存したフロー］と同じ形）。 -->
+        <div class="lm-views lm-view-list" id="stop-views">
           <div class="card lm-list">
             <div class="card-header lm-card-header">
               <h2 class="card-title">指定したサイト</h2>
@@ -536,71 +628,74 @@
             <div id="stop-list" class="list-group list-group-flush"></div>
           </div>
 
-          <form
-            id="stop-form"
-            class="card lm-detail"
-            novalidate
-            aria-labelledby="stop-form-heading"
-          >
-            <div class="card-header">
-              <h2 id="stop-form-heading" class="card-title">サイトごとの指定</h2>
+          <div class="lm-detail">
+            <div class="lm-detail-tools">
+              <button type="button" class="btn btn-sm" id="stop-back">
+                ← 指定したサイトの一覧に戻る
+              </button>
             </div>
-            <div class="card-body">
-              <div class="mb-3">
-                <label class="form-label mb-1" for="stop-origin">サイト</label>
-                <p class="lm-hint mb-2" id="stop-origin-hint">
-                  https:// または http://
-                  から始まる、サイトの先頭の部分（オリジン）です。例：https://www.amazon.co.jp
-                </p>
-                <input
-                  type="text"
-                  class="form-control"
-                  id="stop-origin"
-                  aria-describedby="stop-origin-hint"
-                  list="stop-origins"
-                />
-                <div class="invalid-feedback" id="stop-origin-feedback"></div>
-                <datalist id="stop-origins"></datalist>
+            <form id="stop-form" class="card" novalidate aria-labelledby="stop-form-heading">
+              <div class="card-header">
+                <h2 id="stop-form-heading" class="card-title">サイトごとの指定</h2>
               </div>
-              <div class="mb-3">
-                <label class="form-label mb-1" for="stop-selectors">止める要素</label>
-                <p class="lm-hint mb-2" id="stop-selectors-hint">
-                  CSS セレクター（ページの要素を指す書き方）を、1 行に 1 件書きます。例：#placeOrder
-                </p>
-                <textarea
-                  id="stop-selectors"
-                  aria-describedby="stop-selectors-hint"
-                  class="form-control lm-code"
-                  rows="4"
-                  spellcheck="false"
-                ></textarea>
-                <div class="invalid-feedback" id="stop-selectors-feedback"></div>
+              <div class="card-body">
+                <div class="mb-3">
+                  <label class="form-label mb-1" for="stop-origin">サイト</label>
+                  <p class="lm-hint mb-2" id="stop-origin-hint">
+                    https:// または http://
+                    から始まる、サイトの先頭の部分（オリジン）です。例：https://www.amazon.co.jp
+                  </p>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="stop-origin"
+                    aria-describedby="stop-origin-hint"
+                    list="stop-origins"
+                  />
+                  <div class="invalid-feedback" id="stop-origin-feedback"></div>
+                  <datalist id="stop-origins"></datalist>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label mb-1" for="stop-selectors">止める要素</label>
+                  <p class="lm-hint mb-2" id="stop-selectors-hint">
+                    CSS セレクター（ページの要素を指す書き方）を、1 行に 1
+                    件書きます。例：#placeOrder
+                  </p>
+                  <textarea
+                    id="stop-selectors"
+                    aria-describedby="stop-selectors-hint"
+                    class="form-control lm-code"
+                    rows="4"
+                    spellcheck="false"
+                  ></textarea>
+                  <div class="invalid-feedback" id="stop-selectors-feedback"></div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label mb-1" for="stop-paths">止める画面</label>
+                  <p class="lm-hint mb-2" id="stop-paths-hint">
+                    URL のパス（サイトの先頭の部分より後ろ）を、1 行に 1 件書きます。*
+                    は任意の文字列です。例：/checkout/*
+                  </p>
+                  <textarea
+                    id="stop-paths"
+                    aria-describedby="stop-paths-hint"
+                    class="form-control lm-code"
+                    rows="4"
+                    spellcheck="false"
+                  ></textarea>
+                  <div class="invalid-feedback" id="stop-paths-feedback"></div>
+                </div>
+                <div class="lm-buttons" id="stop-buttons">
+                  <button type="submit" class="btn btn-primary">このサイトの指定を保存</button>
+                  <button type="button" class="btn btn-ghost-danger" id="stop-delete">
+                    このサイトの指定を削除
+                  </button>
+                </div>
+                <div id="stop-confirm" hidden></div>
+                <p id="stop-notice" hidden></p>
               </div>
-              <div class="mb-3">
-                <label class="form-label mb-1" for="stop-paths">止める画面</label>
-                <p class="lm-hint mb-2" id="stop-paths-hint">
-                  URL のパス（サイトの先頭の部分より後ろ）を、1 行に 1 件書きます。*
-                  は任意の文字列です。例：/checkout/*
-                </p>
-                <textarea
-                  id="stop-paths"
-                  aria-describedby="stop-paths-hint"
-                  class="form-control lm-code"
-                  rows="4"
-                  spellcheck="false"
-                ></textarea>
-                <div class="invalid-feedback" id="stop-paths-feedback"></div>
-              </div>
-              <div class="lm-buttons" id="stop-buttons">
-                <button type="submit" class="btn btn-primary">このサイトの指定を保存</button>
-                <button type="button" class="btn btn-ghost-danger" id="stop-delete">
-                  このサイトの指定を削除
-                </button>
-              </div>
-              <div id="stop-confirm" hidden></div>
-              <p id="stop-notice" hidden></p>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
       </section>
 

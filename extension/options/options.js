@@ -28,8 +28,17 @@ import {
   saveStopRule,
 } from '../common/stop-rules-store.js';
 import { listHistory, onHistoryChanged } from '../common/history-store.js';
-import { describeParam, describeStep, formatDateTime, stepKindLabel } from '../shared/describe.js';
-import { flattenSteps, outlineSteps } from '../shared/control-flow.js';
+import { formatDateTime, paramColumns } from '../shared/describe.js';
+import { flattenSteps } from '../shared/control-flow.js';
+import { createBlockEditor } from './block-editor.js';
+import { paramFieldset, readParamRows, showParamRowErrors } from './param-form.js';
+import {
+  describeParamSaveErrors,
+  paramRowErrors,
+  paramsFromRows,
+  renameParamReferences,
+  rowsFromParams,
+} from '../shared/param-edit.js';
 import {
   flowOrigins,
   formatFlowJson,
@@ -108,7 +117,6 @@ const elements = {
   searchMode: /** @type {HTMLSelectElement} */ (byId('search-mode')),
   noMatch: byId('no-match'),
   newFlow: byId('new'),
-  placeholder: byId('placeholder'),
   editor: byId('editor'),
   editorHeading: byId('editor-heading'),
   editorOrigin: byId('editor-origin'),
@@ -134,7 +142,6 @@ const elements = {
   renameInput: /** @type {HTMLInputElement} */ (byId('rename-input')),
   renameFeedback: byId('rename-feedback'),
   renameCancel: byId('rename-cancel'),
-  paramsSection: byId('params-section'),
   speedForm: /** @type {HTMLFormElement} */ (byId('speed-form')),
   intervalMin: /** @type {HTMLInputElement} */ (byId('interval-min')),
   intervalMax: /** @type {HTMLInputElement} */ (byId('interval-max')),
@@ -155,8 +162,21 @@ const elements = {
   scheduleSave: /** @type {HTMLButtonElement} */ (byId('schedule-save')),
   scheduleNotice: byId('schedule-notice'),
   params: byId('params'),
+  paramsBody: byId('params-body'),
+  paramsEmpty: byId('params-empty'),
+  paramsButtons: byId('params-buttons'),
+  paramsEdit: /** @type {HTMLButtonElement} */ (byId('params-edit')),
+  paramsEditNotice: byId('params-edit-notice'),
+  paramsForm: /** @type {HTMLFormElement} */ (byId('params-form')),
+  paramsRows: byId('params-rows'),
+  paramsAdd: /** @type {HTMLButtonElement} */ (byId('params-add')),
+  paramsCancel: /** @type {HTMLButtonElement} */ (byId('params-cancel')),
+  paramsNotice: byId('params-notice'),
   stepCount: byId('step-count'),
-  steps: byId('steps'),
+  blocks: byId('blocks'),
+  blocksSave: /** @type {HTMLButtonElement} */ (byId('blocks-save')),
+  blocksRevert: /** @type {HTMLButtonElement} */ (byId('blocks-revert')),
+  blocksNotice: byId('blocks-notice'),
   jsonNotice: byId('json-notice'),
   jsonFeedback: byId('json-feedback'),
   json: /** @type {HTMLTextAreaElement} */ (byId('json')),
@@ -248,6 +268,9 @@ const notices = [
   elements.scheduleNotice,
   elements.allSitesNotice,
   elements.backupNotice,
+  elements.blocksNotice,
+  elements.paramsEditNotice,
+  elements.paramsNotice,
 ];
 
 /**
@@ -269,6 +292,293 @@ const fieldFeedbacks = [
 
 /** 編集中のフローの id です。URL の # 以降にも書き、再読み込みしても同じフローを開きます。 */
 let selectedId = decodeURIComponent(location.hash.slice(1));
+
+// ---- 手順のブロック（#9） ----
+
+/** ［手順］タブのブロックの編集画面です。 */
+const blockEditor = createBlockEditor(elements.blocks, { onChange: updateBlockButtons });
+
+/**
+ * ブロックに表示している手順（保存済みの内容）です。JSON の文字列で持ち、保存済みのフローと比べて、
+ * ほかの場所（［JSON］タブなど）で手順が変わったかを判定します。
+ */
+let loadedSteps = '';
+
+/** ［JSON］タブの編集欄に、保存していない変更があるかです。 */
+let jsonDirty = false;
+
+elements.json.addEventListener('input', () => {
+  jsonDirty = true;
+});
+
+/**
+ * 保存していない変更の有無に合わせて、［手順を保存］［変更を取り消す］を押せるようにします。
+ * @param {boolean} dirty
+ */
+function updateBlockButtons(dirty) {
+  elements.blocksSave.disabled = !dirty;
+  elements.blocksRevert.disabled = !dirty;
+}
+
+/**
+ * ブロックに、保存済みのフローの手順を表示し直します。
+ * @param {import('../shared/flow.js').Step[]} steps
+ */
+function loadBlocks(steps) {
+  loadedSteps = JSON.stringify(steps);
+  blockEditor.load(steps);
+}
+
+elements.blocksSave.addEventListener('click', async () => {
+  clearNotices();
+  const stored = await getFlow(selectedId);
+  if (!stored) {
+    return;
+  }
+  const { steps, error } = blockEditor.steps();
+  if (error) {
+    showNotice(elements.blocksNotice, error, 'error');
+    return;
+  }
+  const flow = { ...stored.flow, steps };
+  const result = await saveFlow(flow, selectedId);
+  if (!result.ok) {
+    showNotice(
+      elements.blocksNotice,
+      `形式に誤りがあるため、保存しませんでした。\n${result.errors.join('\n')}`,
+      'error',
+    );
+    return;
+  }
+  loadedSteps = JSON.stringify(steps);
+  blockEditor.markSaved();
+  showSavedJson({ ...flow, name: result.name });
+  showToast(elements.toast, '手順を保存しました。');
+});
+
+/**
+ * ［手順］タブで保存したフローを、［JSON］タブの編集欄にも表示します。
+ * ［JSON］タブに保存していない編集がある場合は、その編集を消さないよう入れ替えません。
+ * @param {import('../shared/flow.js').Flow} flow
+ */
+function showSavedJson(flow) {
+  if (!jsonDirty) {
+    elements.json.value = JSON.stringify(orderFlow(flow), null, 2);
+  }
+}
+
+// ---- 実行時に入力する値の定義（#9） ----
+
+/**
+ * 値の定義の入力欄を開くか閉じます。開いている間は［値の定義を編集］を隠します（#112）。
+ * @param {import('../shared/params.js').Param[] | null} params 開く場合は、入力欄に入れる定義
+ */
+function showParamsForm(params) {
+  elements.paramsForm.hidden = params === null;
+  elements.paramsButtons.hidden = params !== null;
+  // 入力欄と同じ内容の一覧は、編集している間は隠します。
+  elements.params.classList.toggle('d-none', params !== null);
+  elements.paramsEmpty.classList.toggle('d-none', params !== null);
+  elements.paramsRows.replaceChildren(
+    ...(params ? rowsFromParams(params).map((row, index) => paramFieldset(row, index)) : []),
+  );
+}
+
+elements.paramsEdit.addEventListener('click', async () => {
+  clearNotices();
+  // 値の定義を保存すると、手順の中の参照も書き換えるため、ブロックの保存していない変更と両立しません。
+  if (blockEditor.dirty) {
+    showNotice(
+      elements.paramsEditNotice,
+      '手順のブロックに保存していない変更があります。先に［手順を保存］か［変更を取り消す］を押してください。',
+      'warning',
+    );
+    return;
+  }
+  const stored = await getFlow(selectedId);
+  if (stored) {
+    showParamsForm(stored.flow.params ?? []);
+    elements.paramsRows.querySelector('input')?.focus();
+  }
+});
+
+elements.paramsAdd.addEventListener('click', () => {
+  const index = elements.paramsRows.querySelectorAll('fieldset').length;
+  const row = { originalName: '', name: '', label: '', type: 'text', options: '', default: '' };
+  const fieldset = paramFieldset(row, index);
+  elements.paramsRows.append(fieldset);
+  fieldset.querySelector('input')?.focus();
+});
+
+elements.paramsCancel.addEventListener('click', () => {
+  clearNotices();
+  showParamsForm(null);
+  elements.paramsEdit.focus();
+});
+
+elements.paramsForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearNotices();
+  const stored = await getFlow(selectedId);
+  if (!stored) {
+    return;
+  }
+  const rows = readParamRows(elements.paramsRows);
+  // 値ごと・欄ごとの誤りは、その欄の直下に出します。「値 2」の見出しで、どの値かが分かります。
+  if (showParamRowErrors(elements.paramsRows, paramRowErrors(rows))) {
+    return;
+  }
+  const { params, renames } = paramsFromRows(rows);
+  let steps = stored.flow.steps;
+  for (const { from, to } of renames) {
+    steps = renameParamReferences(steps, from, to);
+  }
+  /** @type {import('../shared/flow.js').Flow} */
+  const flow = { ...stored.flow, steps };
+  if (params.length > 0) {
+    flow.params = params;
+  } else {
+    delete flow.params;
+  }
+  const result = await saveFlow(flow, selectedId);
+  if (!result.ok) {
+    showNotice(elements.paramsNotice, describeParamSaveErrors(result.errors), 'error');
+    return;
+  }
+  showParamsForm(null);
+  showSavedJson({ ...flow, name: result.name });
+  showToast(elements.toast, '値の定義を保存しました。');
+});
+
+elements.blocksRevert.addEventListener('click', async () => {
+  clearNotices();
+  const stored = await getFlow(selectedId);
+  if (stored) {
+    loadBlocks(stored.flow.steps);
+  }
+});
+
+/**
+ * ブロックに保存していない変更がある場合に、破棄してよいかを、押したボタンの直下で確かめます。
+ * 変更がない場合と、破棄してよい場合は true を返します。
+ * @param {Element} anchor 押したボタン（確認は、その直後に出します）
+ * @param {string} action 破棄した後に行う操作の名前（例：「別のフローを開く」）
+ * @returns {Promise<boolean>}
+ */
+async function confirmDiscardBlocks(anchor, action) {
+  if (!blockEditor.dirty) {
+    return true;
+  }
+  const holder = document.createElement('div');
+  anchor.after(holder);
+  const ok = await confirmInline(holder, {
+    message: `手順のブロックに保存していない変更があります。変更を破棄して${action}と、元に戻せません。`,
+    confirmLabel: `破棄して${action}`,
+    danger: true,
+  });
+  holder.remove();
+  return ok;
+}
+
+// ---- 一覧の画面とフローの画面の切り替え（#9） ----
+// フローを開くと、一覧に替えてフローの詳細を画面の幅いっぱいに表示します。開くときに履歴を 1 件積むため、
+// ブラウザーの［戻る］でも一覧に戻れます。
+
+const flowsPanel = byId('panel-flows');
+const backToList = /** @type {HTMLButtonElement} */ (byId('back-to-list'));
+
+/**
+ * 一覧の画面と、フローの画面（詳細か、JSON からの追加）を切り替えます。
+ * @param {boolean} detail フローの画面にする場合は true
+ */
+function showDetailView(detail) {
+  const changed = flowsPanel.classList.contains('lm-view-detail') !== detail;
+  flowsPanel.classList.toggle('lm-view-detail', detail);
+  flowsPanel.classList.toggle('lm-view-list', !detail);
+  if (!changed) {
+    return;
+  }
+  window.scrollTo(0, 0);
+  if (detail) {
+    // 隠していた間は大きさが 0 のため、表示した後にブロックの表示の大きさを合わせ直します。
+    blockEditor.resize();
+    // 押した一覧の行は隠れるため、フォーカスを戻るボタンに移します。
+    backToList.focus();
+  }
+}
+
+/** 画面を離れる確認を出しているかです。 */
+let confirmingLeave = false;
+
+backToList.addEventListener('click', async () => {
+  if (confirmingLeave) {
+    return;
+  }
+  confirmingLeave = true;
+  const ok = await confirmDiscardBlocks(backToList.parentElement ?? backToList, '一覧に戻る');
+  confirmingLeave = false;
+  if (!ok) {
+    return;
+  }
+  const previous = selectedId;
+  if (history.state?.lmDetail) {
+    // フローを開いたときに積んだ履歴を戻します。popstate で一覧を表示します。
+    blockEditor.markSaved();
+    history.back();
+  } else {
+    select('');
+    focusFlowRow(previous);
+  }
+});
+
+// ブラウザーの［戻る］［進む］で、URL の # に合わせてフローを開くか一覧に戻ります。
+window.addEventListener('popstate', async () => {
+  const id = decodeURIComponent(location.hash.slice(1));
+  if (id === selectedId) {
+    return;
+  }
+  if (blockEditor.dirty) {
+    // 保存していない変更がある間は、画面を変えずに確認を出します。URL は今のフローに戻します。
+    // 確認をすでに出している場合は、2 つ目を出しません。
+    const target = id;
+    history.pushState({ lmDetail: true }, '', `#${encodeURIComponent(selectedId)}`);
+    if (confirmingLeave) {
+      return;
+    }
+    confirmingLeave = true;
+    const ok = await confirmDiscardBlocks(backToList.parentElement ?? backToList, '移動する');
+    confirmingLeave = false;
+    if (!ok) {
+      return;
+    }
+    blockEditor.markSaved();
+    select(target);
+    return;
+  }
+  const previous = selectedId;
+  select(id, { history: 'none' });
+  if (!id) {
+    focusFlowRow(previous);
+  }
+});
+
+/**
+ * 一覧に戻ったときに、開いていたフローの行にフォーカスを戻します。キーボードで続けて操作するためです。
+ * @param {string} id
+ */
+function focusFlowRow(id) {
+  requestAnimationFrame(() => {
+    const input = elements.flows.querySelector(`input[data-flow-id="${CSS.escape(id)}"]`);
+    input?.closest('.lm-flow-row')?.querySelector('button')?.focus();
+  });
+}
+
+// 保存していない変更がある状態で管理画面を閉じる場合は、Chrome の確認を出します。
+window.addEventListener('beforeunload', (event) => {
+  if (blockEditor.dirty) {
+    event.preventDefault();
+  }
+});
 
 elements.version.textContent = chrome.runtime.getManifest().version;
 followColorScheme(document.documentElement, matchMedia('(prefers-color-scheme: dark)'));
@@ -316,7 +626,8 @@ function selectTab(name, focus = false) {
   } else {
     url.searchParams.set('tab', current.dataset.tab ?? '');
   }
-  history.replaceState(null, '', url);
+  // 一覧から開いた画面の履歴（#9）を残すため、履歴の状態は引き継ぎます。
+  history.replaceState(history.state, '', url);
 }
 
 for (const [index, tab] of tabs.entries()) {
@@ -365,6 +676,24 @@ function selectDetailTab(name, focus = false) {
     tab.tabIndex = selected ? 0 : -1;
     byId(tab.getAttribute('aria-controls') ?? '').hidden = !selected;
   }
+  if (detailTab === 'steps') {
+    // 隠していた間は大きさを測れないため、表示したときに合わせ直します。
+    blockEditor.resize();
+    if (jsonDirty) {
+      showNotice(
+        elements.blocksNotice,
+        '［JSON］タブに保存していない編集があります。ここで［手順を保存］を押すと、その編集は保存されません。',
+        'warning',
+      );
+    }
+  }
+  if (detailTab === 'json' && blockEditor.dirty) {
+    showNotice(
+      elements.jsonNotice,
+      '［手順］タブのブロックに保存していない変更があります。ここで［JSON を保存］を押すと、その変更は破棄されます。',
+      'warning',
+    );
+  }
   if (focus) {
     current.focus();
   }
@@ -393,7 +722,7 @@ selectDetailTab('steps');
 elements.newFlow.addEventListener('click', () => {
   select('');
   elements.importer.hidden = false;
-  elements.placeholder.hidden = true;
+  showDetailView(true);
   elements.importJson.focus();
 });
 
@@ -438,6 +767,9 @@ elements.save.addEventListener('click', async () => {
     );
     return;
   }
+  jsonDirty = false;
+  // JSON で保存した手順を、ブロックにも表示します。ブロックの保存していない変更は破棄します（切り替えたときに知らせています）。
+  loadBlocks(/** @type {import('../shared/flow.js').Flow} */ (flow).steps);
   const { name } = /** @type {{ name: string }} */ (flow);
   if (result.name === name) {
     showToast(elements.toast, '保存しました。');
@@ -1946,6 +2278,42 @@ elements.stopClear.addEventListener('click', () => {
   editStopRule('', { selectors: [], paths: [] });
 });
 
+// 一覧の画面と入力欄の画面を切り替えます（#9。［保存したフロー］のタブと同じ形）。入力欄を開くときに
+// 履歴を 1 件積むため、ブラウザーの［戻る］でも一覧に戻れます。
+
+const stopViews = byId('stop-views');
+const stopBack = /** @type {HTMLButtonElement} */ (byId('stop-back'));
+const stopHeading = byId('stop-form-heading');
+
+/**
+ * 指定したサイトの一覧の画面に戻ります。直前に開いていたサイトの行（新しいサイトの場合は［新しいサイト］）に
+ * フォーカスを戻します。
+ */
+function showStopList() {
+  const origin = stopViews.dataset.origin ?? '';
+  stopViews.classList.replace('lm-view-detail', 'lm-view-list');
+  delete stopViews.dataset.origin;
+  clearNotices();
+  const row = [...elements.stopList.querySelectorAll('button')].find(
+    (button) => button.dataset.origin === origin,
+  );
+  (row ?? elements.stopClear).focus();
+}
+
+stopBack.addEventListener('click', () => {
+  if (history.state?.lmStop) {
+    history.back();
+  } else {
+    showStopList();
+  }
+});
+
+window.addEventListener('popstate', () => {
+  if (stopViews.classList.contains('lm-view-detail') && !history.state?.lmStop) {
+    showStopList();
+  }
+});
+
 elements.stopDelete.addEventListener('click', () => {
   clearNotices();
   onDeleteStopRule().catch((error) => showNotice(elements.stopNotice, String(error), 'error'));
@@ -2048,7 +2416,7 @@ async function onDeleteStopRule() {
     showNotice(elements.stopNotice, `削除できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
-  editStopRule('', { selectors: [], paths: [] });
+  stopBack.click();
   showToast(elements.toast, `${origin} の指定を削除しました。`);
 }
 
@@ -2070,14 +2438,21 @@ function selectorSyntaxErrors(selectors) {
 }
 
 /**
- * 指定を入力欄に表示します。
- * @param {string} origin
+ * 指定を入力欄に表示し、一覧に替えて入力欄の画面を表示します。
+ * @param {string} origin 空の文字列の場合は、新しいサイトの指定です
  * @param {{ selectors: string[], paths: string[] }} rule
  */
 function editStopRule(origin, rule) {
   for (const [control, feedback] of fieldFeedbacks) {
     showFieldError(control, feedback, '');
   }
+  stopHeading.textContent = origin ? `${origin} の指定` : '新しいサイトの指定';
+  if (!stopViews.classList.contains('lm-view-detail')) {
+    history.pushState({ ...history.state, lmStop: true }, '', location.href);
+    stopViews.classList.replace('lm-view-list', 'lm-view-detail');
+    window.scrollTo(0, 0);
+  }
+  stopViews.dataset.origin = origin;
   elements.stopOrigin.value = origin;
   elements.stopSelectors.value = rule.selectors.join('\n');
   elements.stopPaths.value = rule.paths.join('\n');
@@ -2094,6 +2469,7 @@ async function renderStopRules() {
       count.className = 'lm-sub';
       count.textContent = `要素 ${rule.selectors.length} 件・画面 ${rule.paths.length} 件`;
       const button = listButton(origin, count);
+      button.dataset.origin = origin;
       button.addEventListener('click', () => {
         clearNotices();
         getStopRule(origin)
@@ -2115,12 +2491,19 @@ async function renderStopRules() {
 }
 
 /**
- * 編集するフローを選びます。空の文字列の場合は、どれも選びません。
+ * 編集するフローを選びます。空の文字列の場合は、どれも選ばずに一覧の画面に戻ります。
  * @param {string} id
+ * @param {{ history?: 'push' | 'replace' | 'none' }} [options] history：URL の履歴の扱い。
+ *   一覧からフローを開くときは push にし、ブラウザーの［戻る］で一覧に戻れるようにします
  */
-function select(id) {
+function select(id, { history: mode = 'replace' } = {}) {
   selectedId = id;
-  history.replaceState(null, '', id ? `#${encodeURIComponent(id)}` : location.pathname);
+  const url = id ? `#${encodeURIComponent(id)}` : location.pathname;
+  if (mode === 'push') {
+    history.pushState({ lmDetail: true }, '', url);
+  } else if (mode === 'replace') {
+    history.replaceState(id ? history.state : null, '', url);
+  }
   elements.importer.hidden = true;
   // 別のフローを選んだら、前のフローへの確認と誤りの表示を消します。
   for (const container of [elements.importConfirm, elements.editorConfirm]) {
@@ -2130,6 +2513,7 @@ function select(id) {
   clearNotices();
   showRenameForm(false);
   hideRunForm();
+  showParamsForm(null);
   // 別のフローを選んだら、JSON の編集欄ではなく内容の表示から見せます。ほかのタブは選んだままにし、
   // フローを見比べられるようにします（#132）。
   if (detailTab === 'json') {
@@ -2189,16 +2573,23 @@ async function render() {
 
   const stored = selectedId ? await getFlow(selectedId) : undefined;
   elements.editor.hidden = !stored;
-  elements.placeholder.hidden = Boolean(stored) || !elements.importer.hidden;
+  showDetailView(Boolean(stored) || !elements.importer.hidden);
   if (stored && elements.editor.dataset.id !== stored.id) {
     // 編集中の内容を上書きしないよう、別のフローを選んだときだけ JSON を入れ替えます。
     elements.editor.dataset.id = stored.id;
     setMoreOpen(false);
     elements.json.value = JSON.stringify(orderFlow(stored.flow), null, 2);
+    jsonDirty = false;
+    loadBlocks(stored.flow.steps);
     fillSpeedFields(stored.flow);
     await fillScheduleFields(stored.id);
   }
   if (stored) {
+    // ほかの場所（［JSON］タブ、別の画面）で手順が変わった場合は、ブロックを保存済みの内容に合わせます。
+    // ブロックに保存していない変更がある間は、その変更を消さないよう入れ替えません。
+    if (!blockEditor.dirty && JSON.stringify(stored.flow.steps) !== loadedSteps) {
+      loadBlocks(stored.flow.steps);
+    }
     renderDetail(stored);
     await renderSchedule(stored);
     await renderRunButtons(stored.flow);
@@ -2241,62 +2632,69 @@ function renderDetail({ flow, createdAt, updatedAt }) {
     }),
   );
 
-  elements.paramsSection.hidden = inputs === 0;
-  elements.params.replaceChildren(
-    ...params.flatMap((param) => definition(param.label, describeParam(param))),
-    ...secrets.flatMap(({ step, index }) =>
-      definition(
+  elements.params.hidden = inputs === 0;
+  elements.paramsEmpty.hidden = inputs > 0;
+  elements.paramsBody.replaceChildren(
+    ...params.map((param) => {
+      const { label, reference, type, defaultValue } = paramColumns(param);
+      return paramTableRow([label, reference, type, defaultValue]);
+    }),
+    // パスワードなど、値を記録しない入力です。名前がないため、手順での書き方は空欄にします。
+    ...secrets.map(({ step, index }) =>
+      paramTableRow([
         `${step.type === 'input' ? step.target.label : ''}（手順 ${index + 1}）`,
-        '値は記録していません。実行するときに入力します',
-      ),
+        '―',
+        '記録しない値（実行するときに入力）',
+        'なし',
+      ]),
     ),
   );
 
   elements.stepCount.textContent = String(flattened.length);
-  elements.steps.replaceChildren(
-    ...outlineSteps(flow.steps).map((row) => {
-      const kind = document.createElement('span');
-      kind.className = 'lm-kind';
-      const text = document.createElement('span');
-      text.className = 'lm-step-text';
-      const item = document.createElement('li');
-      item.className = 'lm-step';
-      item.style.setProperty('--lm-depth', String(row.depth));
-      if (row.kind === 'else') {
-        // if の条件を満たさない場合の手順の始まりです。番号は付けません。
-        kind.textContent = 'それ以外';
-        text.textContent = '条件を満たさない場合';
-      } else {
-        const { step } = row;
-        item.dataset.number = String(row.number + 1);
-        kind.textContent = stepKindLabel(step);
-        // 種類は前に表示しているため、説明の先頭の「クリック：」などは省きます。
-        const description = describeStep(step);
-        text.textContent = description.includes('：')
-          ? description.replace(/^[^：]+：/, '')
-          : 'ここで止まります。続きは人が操作します。';
-        if (step.type === 'pause') {
-          item.classList.add('lm-step-pause');
-        }
-      }
-      item.append(kind, text);
-      return item;
-    }),
-  );
 }
 
 /**
- * 実行時に入力する値の一覧の、1 項目（名前と説明）です。
- * @param {string} term
- * @param {string} description
- * @returns {HTMLElement[]}
+ * 実行時に入力する値の表の 1 行です。2 列目（手順での書き方）は、コードの書式で表示します。
+ * @param {string[]} cells 表示名、手順での書き方、種類、既定値
+ * @returns {HTMLTableRowElement}
  */
-function definition(term, description) {
-  const dt = document.createElement('dt');
-  dt.textContent = term;
-  const dd = document.createElement('dd');
-  dd.textContent = description;
-  return [dt, dd];
+function paramTableRow(cells) {
+  const row = document.createElement('tr');
+  for (const [index, text] of cells.entries()) {
+    const cell = document.createElement('td');
+    if (index === 1 && text.startsWith('{{')) {
+      // 押すとコピーします。ブロックの欄に貼り付けて使うためです。ダブルクリックでも同じく動きます。
+      const code = document.createElement('code');
+      code.textContent = text;
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'btn btn-sm btn-ghost-secondary lm-copy-ref';
+      copy.title = '押すとコピーします';
+      copy.setAttribute('aria-label', `${text} をコピー`);
+      copy.append(code);
+      copy.addEventListener('click', async () => {
+        clearNotices();
+        try {
+          await navigator.clipboard.writeText(text);
+          showToast(
+            elements.toast,
+            `${text} をコピーしました。手順のブロックの欄に貼り付けて使えます。`,
+          );
+        } catch (error) {
+          showNotice(
+            elements.paramsEditNotice,
+            `コピーできませんでした。${String(error)}`,
+            'error',
+          );
+        }
+      });
+      cell.append(copy);
+    } else {
+      cell.textContent = text;
+    }
+    row.append(cell);
+  }
+  return row;
 }
 
 /**
@@ -2327,7 +2725,12 @@ function flowListItem(stored) {
   detail.textContent = `手順 ${flattenSteps(stored.flow.steps).length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
   const button = listButton(stored.flow.name, detail);
   button.className = 'list-group-item-action lm-flow-open';
-  button.addEventListener('click', () => select(stored.id));
+  button.addEventListener('click', async () => {
+    if (stored.id !== selectedId && !(await confirmDiscardBlocks(row, '別のフローを開く'))) {
+      return;
+    }
+    select(stored.id, { history: 'push' });
+  });
 
   const row = document.createElement('div');
   row.className = 'list-group-item lm-flow-row';

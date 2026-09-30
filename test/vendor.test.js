@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FONT_DIR, VENDOR_FILES } from '../scripts/vendor.js';
+import { FONT_DIR, REBUILT_DIRS, VENDOR_FILES } from '../scripts/vendor.js';
 
 const root = new URL('../', import.meta.url);
 
@@ -23,25 +23,27 @@ test('同梱したファイルが、node_modules の同じ版のファイルと�
   );
 });
 
-test('書体のフォルダーに、複写する一覧にないファイルが残っていない', () => {
-  const expected = VENDOR_FILES.filter(({ to }) => to.startsWith(`${FONT_DIR}/`))
-    .map(({ to }) => to.slice(FONT_DIR.length + 1))
-    .sort();
-  const actual = readdirSync(new URL(`${FONT_DIR}/`, root), {
-    recursive: true,
-    withFileTypes: true,
-  })
-    .filter((entry) => entry.isFile())
-    .map((entry) =>
-      relative(fileURLToPath(new URL(FONT_DIR, root)), join(entry.parentPath, entry.name)),
-    )
-    .sort();
-  assert.deepEqual(
-    actual,
-    expected,
-    '`npm run vendor` を実行し、複写したファイルをコミットしてください。',
-  );
-});
+for (const dir of REBUILT_DIRS) {
+  test(`${dir} に、複写する一覧にないファイルが残っていない`, () => {
+    const expected = VENDOR_FILES.filter(({ to }) => to.startsWith(`${dir}/`))
+      .map(({ to }) => to.slice(dir.length + 1))
+      .sort();
+    const actual = readdirSync(new URL(`${dir}/`, root), {
+      recursive: true,
+      withFileTypes: true,
+    })
+      .filter((entry) => entry.isFile())
+      .map((entry) =>
+        relative(fileURLToPath(new URL(dir, root)), join(entry.parentPath, entry.name)),
+      )
+      .sort();
+    assert.deepEqual(
+      actual,
+      expected,
+      '`npm run vendor` を実行し、複写したファイルをコミットしてください。',
+    );
+  });
+}
 
 test('書体の CSS が参照するファイルは、すべて同梱している', () => {
   const css = readFileSync(new URL(`${FONT_DIR}/wght.css`, root), 'utf8');
