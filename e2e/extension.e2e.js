@@ -702,3 +702,92 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
   assert.equal(loop.steps[0].target.scope, 'item');
   await site.close();
 });
+
+test('値を入れる：右クリックのメニューから、キーボードだけで保存先に読み取りの名前を入れて保存する（#147）', async () => {
+  const { extensionPage: page } = browser;
+  const target = { selectors: ['#order-id'], tag: 'span', label: '注文番号' };
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: '値を入れる',
+    origin: server.origin,
+    params: [{ name: 'month', label: '対象月', type: 'month' }],
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/picker.html` },
+      { type: 'extract', target, name: 'orderNo' },
+      { type: 'savePdf', path: 'Lightomate/' },
+    ],
+  };
+  await page.evaluate(
+    (flow) =>
+      chrome.storage.local.set({
+        flows: { values: { id: 'values', createdAt: '', updatedAt: '', flow } },
+      }),
+    flow,
+  );
+  const id = new URL(page.url()).host;
+  await page.bringToFront();
+  await page.goto(`chrome-extension://${id}/options/options.html#values`);
+  await page.reload();
+  await page.waitForFunction(
+    () =>
+      /** @type {any} */ (globalThis).Blockly?.getMainWorkspace()?.getAllBlocks(false).length > 0,
+  );
+
+  // PDF の保存のブロックを選び、Ctrl + Enter キーでメニューを開いて、先頭の［値を入れる］を Enter キーで押します。
+  await page.locator('#blocks').scrollIntoViewIfNeeded();
+  const point = await page.evaluate(() => {
+    const workspace = /** @type {any} */ (globalThis).Blockly.getMainWorkspace();
+    const block = workspace
+      .getAllBlocks(true)
+      .find((/** @type {any} */ b) => b.type === 'lm_savePdf');
+    const rect = block.getSvgRoot().getBoundingClientRect();
+    return { x: rect.x + 12, y: rect.y + 10 };
+  });
+  await page.mouse.click(point.x, point.y);
+  await page.keyboard.press('Control+Enter');
+  await page.getByRole('menuitem', { name: /^値を入れる/ }).waitFor();
+  await page.keyboard.press('Enter');
+
+  // 一覧には、パラメータ、前の読み取りの名前、決まった値が出て、最初の値にフォーカスが移ります。
+  const panel = page.locator('#blocks-values');
+  await panel.waitFor();
+  assert.equal(
+    await page.evaluate(() =>
+      globalThis.document.activeElement?.textContent?.startsWith('{{month}}'),
+    ),
+    true,
+  );
+  for (const text of ['{{month.year}}', '{{orderNo}}', '{{run.yyyy}}']) {
+    assert.equal(
+      await panel
+        .getByRole('button', { name: new RegExp(`^${text.replace(/[{}.]/g, '\\$&')}`) })
+        .count(),
+      1,
+      text,
+    );
+  }
+
+  // Tab キーで「{{orderNo}}」まで移り、Enter キーで入れます。
+  for (let i = 0; i < 10; i += 1) {
+    const focused = await page.evaluate(() => globalThis.document.activeElement?.textContent ?? '');
+    if (focused.startsWith('{{orderNo}}')) {
+      break;
+    }
+    await page.keyboard.press('Tab');
+  }
+  await page.keyboard.press('Enter');
+  await panel.waitFor({ state: 'hidden' });
+  await page.locator('.lm-toast').getByText('「{{orderNo}}」を保存先の末尾に入れました').waitFor();
+
+  await page.locator('#blocks-save').click();
+  const saved = await waitUntil(
+    () =>
+      page.evaluate(async () => {
+        const { flows } = await chrome.storage.local.get('flows');
+        return /** @type {{ values: { flow: Flow } }} */ (flows).values.flow;
+      }),
+    (flow) => /** @type {any} */ (flow.steps[2]).path !== 'Lightomate/',
+  );
+  assert.equal(/** @type {any} */ (saved.steps[2]).path, 'Lightomate/{{orderNo}}');
+});

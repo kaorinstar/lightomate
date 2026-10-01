@@ -351,12 +351,33 @@
                         1 行を押します。
                       </li>
                       <li>
+                        保存先や入力する値に、パラメータや読み取った値（{{名前}}）を入れる：ブロックを右クリックし、［値を入れる］を押して、一覧から選びます。
+                      </li>
+                      <li>
                         キーボード：ブロックを選んで M キーで動かし始め、矢印キーで動かし、Enter
                         キーで決めます。右クリックのメニューは Ctrl + Enter キーで開きます。
                       </li>
                     </ul>
                   </div>
                   <p id="blocks-pick-notice" hidden></p>
+                  <div
+                    id="blocks-values"
+                    class="lm-values alert alert-info"
+                    role="region"
+                    aria-labelledby="blocks-values-title"
+                    hidden
+                  >
+                    <p id="blocks-values-title" class="fw-bold mb-1"></p>
+                    <p class="mb-2">押した値を、欄の文字の末尾に入れます。</p>
+                    <fieldset id="blocks-values-fields" class="mb-2" hidden>
+                      <legend class="form-label">入れる欄</legend>
+                      <div id="blocks-values-field-options"></div>
+                    </fieldset>
+                    <div id="blocks-values-list"></div>
+                    <div class="lm-buttons mt-2">
+                      <button type="button" class="btn" id="blocks-values-close">閉じる</button>
+                    </div>
+                  </div>
                   <div
                     id="blocks"
                     class="lm-blocks"

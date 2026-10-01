@@ -179,6 +179,12 @@ const elements = {
   blocksRevert: /** @type {HTMLButtonElement} */ (byId('blocks-revert')),
   blocksNotice: byId('blocks-notice'),
   blocksPickNotice: byId('blocks-pick-notice'),
+  blocksValues: byId('blocks-values'),
+  blocksValuesTitle: byId('blocks-values-title'),
+  blocksValuesFields: byId('blocks-values-fields'),
+  blocksValuesFieldOptions: byId('blocks-values-field-options'),
+  blocksValuesList: byId('blocks-values-list'),
+  blocksValuesClose: /** @type {HTMLButtonElement} */ (byId('blocks-values-close')),
   jsonNotice: byId('json-notice'),
   jsonFeedback: byId('json-feedback'),
   json: /** @type {HTMLTextAreaElement} */ (byId('json')),
@@ -303,6 +309,11 @@ const blockEditor = createBlockEditor(elements.blocks, {
   onChange: updateBlockButtons,
   onPick: (blockId, field) => {
     startPick(blockId, field).catch((error) =>
+      showNotice(elements.blocksPickNotice, String(error), 'error'),
+    );
+  },
+  onInsert: (blockId) => {
+    openValues(blockId).catch((error) =>
       showNotice(elements.blocksPickNotice, String(error), 'error'),
     );
   },
@@ -433,11 +444,159 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   }
 });
 
+// ---- 値を入れる（#147） ----
+
+/** 値の一覧のまとまりの見出しです。 */
+const VALUE_GROUP_LABELS = {
+  param: '実行時に入力する値（パラメータ）',
+  extract: '前の「読み取り」で覚えた値',
+  builtin: '決まった値',
+};
+
+/**
+ * ブロックの欄に入れられる値の一覧を、ブロックの編集画面の直上に出します。
+ * 欄が複数あるブロックでは、入れる欄を選べるようにします。最初の値のボタンにフォーカスを移します。
+ * @param {string} blockId
+ */
+async function openValues(blockId) {
+  clearNotices();
+  const target = blockEditor.valueTarget(blockId);
+  const stored = await getFlow(selectedId);
+  if (!target || target.fields.length === 0 || !stored) {
+    return;
+  }
+  const params = stored.flow.params ?? [];
+  elements.blocksValuesTitle.textContent = `値を入れる：${target.label}`;
+  elements.blocksValuesFields.hidden = target.fields.length < 2;
+  elements.blocksValuesFieldOptions.replaceChildren(
+    ...target.fields.map((field, index) => {
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.className = 'form-check-input';
+      input.name = 'blocks-values-field';
+      input.id = `blocks-values-field-${index}`;
+      input.value = String(index);
+      input.checked = index === 0;
+      input.addEventListener('change', () => renderValues(blockId, target.fields[index], params));
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.htmlFor = input.id;
+      label.textContent = field.label;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-check form-check-inline';
+      wrapper.append(input, label);
+      return wrapper;
+    }),
+  );
+  renderValues(blockId, target.fields[0], params);
+  valuesBlockId = blockId;
+  elements.blocksValues.hidden = false;
+  elements.blocksValues.scrollIntoView({ block: 'nearest' });
+  (elements.blocksValuesList.querySelector('button') ?? elements.blocksValuesClose).focus();
+}
+
+/**
+ * 欄に入れられる値の一覧を表示し直します。値のまとまりごとに見出しを付けます。
+ * @param {string} blockId
+ * @param {import('../shared/block-values.js').ValueField} field
+ * @param {import('../shared/params.js').Param[]} params
+ */
+function renderValues(blockId, field, params) {
+  const values = blockEditor.insertableValues(blockId, field.kind, params);
+  if (values.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'mb-0';
+    empty.textContent =
+      'この欄に入れられる値はありません。この欄に使えるのは、実行時に入力する値（パラメータ）だけです。パラメータは、［値の定義を編集］で追加できます。';
+    elements.blocksValuesList.replaceChildren(empty);
+    return;
+  }
+  elements.blocksValuesList.replaceChildren(
+    ...Object.entries(VALUE_GROUP_LABELS).flatMap(([group, heading]) => {
+      const items = values.filter((value) => value.group === group);
+      if (items.length === 0) {
+        return [];
+      }
+      const title = document.createElement('p');
+      title.className = 'lm-values-group';
+      title.textContent = heading;
+      const list = document.createElement('ul');
+      list.className = 'lm-values-list';
+      list.setAttribute('aria-label', heading);
+      list.append(
+        ...items.map((value) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'btn btn-sm';
+          const code = document.createElement('code');
+          code.textContent = value.text;
+          const note = document.createElement('span');
+          note.className = 'lm-sub';
+          note.textContent = value.label;
+          button.append(code, ' ', note);
+          button.addEventListener('click', () => insertValue(blockId, field, value.text));
+          const item = document.createElement('li');
+          item.append(button);
+          return item;
+        }),
+      );
+      return [title, list];
+    }),
+  );
+}
+
+/**
+ * 値を欄の末尾に入れ、一覧を閉じます。
+ * @param {string} blockId
+ * @param {import('../shared/block-values.js').ValueField} field
+ * @param {string} text
+ */
+function insertValue(blockId, field, text) {
+  closeValues();
+  if (!blockEditor.appendToField(blockId, field.field, text)) {
+    showNotice(
+      elements.blocksPickNotice,
+      '値を入れる前にブロックが削除されたため、入れませんでした。',
+      'error',
+    );
+    return;
+  }
+  blockEditor.focusBlock(blockId);
+  showToast(
+    elements.toast,
+    `「${text}」を${field.label}の末尾に入れました。保存するには［手順を保存］を押してください。`,
+  );
+}
+
+/** 値の一覧を出しているブロックです。閉じた後に、このブロックへフォーカスを戻します。 */
+let valuesBlockId = '';
+
+/** 値の一覧を閉じます。 */
+function closeValues() {
+  elements.blocksValues.hidden = true;
+  elements.blocksValuesList.replaceChildren();
+  elements.blocksValuesFieldOptions.replaceChildren();
+}
+
+elements.blocksValuesClose.addEventListener('click', () => {
+  closeValues();
+  blockEditor.focusBlock(valuesBlockId);
+});
+
+elements.blocksValues.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeValues();
+    blockEditor.focusBlock(valuesBlockId);
+  }
+});
+
 /**
  * ブロックに、保存済みのフローの手順を表示し直します。
  * @param {import('../shared/flow.js').Step[]} steps
  */
 function loadBlocks(steps) {
+  closeValues();
   loadedSteps = JSON.stringify(steps);
   blockEditor.load(steps);
 }

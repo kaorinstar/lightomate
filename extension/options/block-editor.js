@@ -2,6 +2,7 @@
 // Blockly（extension/vendor/blockly/）は、options.html で通常のスクリプトとして先に読み込み、
 // グローバルの Blockly を使います。ブロックの定義と、手順との変換は extension/shared/blocks.js にあります。
 
+import { insertableValues, valueFields } from '../shared/block-values.js';
 import {
   NOT_PICKED,
   PICK_FIELDS,
@@ -26,6 +27,13 @@ let registered = false;
  * @type {(blockId: string, field: 'TARGET' | 'NEXT') => void}
  */
 let onPickFromMenu = () => {};
+
+/**
+ * 右クリックのメニューの［値を入れる］を押したときに呼ぶ処理です（#147）。［ページで選ぶ］と同じく、
+ * 編集画面を作るときに差し替えます。
+ * @type {(blockId: string) => void}
+ */
+let onInsertFromMenu = () => {};
 
 /** 画像と音のファイルの場所です。options.html からの相対パスです。 */
 const MEDIA = '../vendor/blockly/media/';
@@ -126,6 +134,34 @@ function register() {
       },
     });
   }
+
+  // 右クリックのメニューから、文字の欄に使える値（{{名前}}）を入れます（#147）。
+  Blockly.ContextMenuRegistry.registry.register({
+    id: 'lm_insert_value',
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    weight: 0,
+    displayText: '値を入れる',
+    /** @param {any} scope */
+    preconditionFn(scope) {
+      const block = scope.block;
+      return !block.isInFlyout && blockValueFields(block).length > 0 ? 'enabled' : 'hidden';
+    },
+    /** @param {any} scope */
+    callback(scope) {
+      onInsertFromMenu(scope.block.id);
+    },
+  });
+}
+
+/**
+ * ブロックの、値を入れられる欄です（#147）。条件のブロックでは、条件の種類で欄が変わります。
+ * @param {any} block
+ * @returns {import('../shared/block-values.js').ValueField[]}
+ */
+function blockValueFields(block) {
+  return valueFields(block.type, {
+    COND: block.getField('COND') ? block.getFieldValue('COND') : undefined,
+  });
 }
 
 /**
@@ -184,14 +220,19 @@ function theme(container) {
  * @param {{
  *   onChange: (dirty: boolean) => void,
  *   onPick?: (blockId: string, field: 'TARGET' | 'NEXT') => void,
+ *   onInsert?: (blockId: string) => void,
  * }} options
  *   onChange：保存していない変更の有無が変わったとき。
  *   onPick：右クリックのメニューの［ページで選ぶ］を押したとき（#139）
+ *   onInsert：右クリックのメニューの［値を入れる］を押したとき（#147）
  */
-export function createBlockEditor(container, { onChange, onPick }) {
+export function createBlockEditor(container, { onChange, onPick, onInsert }) {
   register();
   if (onPick) {
     onPickFromMenu = onPick;
+  }
+  if (onInsert) {
+    onInsertFromMenu = onInsert;
   }
   const workspace = Blockly.inject(container, {
     renderer: RENDERER,
@@ -336,6 +377,66 @@ export function createBlockEditor(container, { onChange, onPick }) {
       setDirty(true);
       block.select();
       return true;
+    },
+
+    /**
+     * ブロックの、値を入れられる欄と、ブロックの表示の文字を返します（#147）。ブロックがない場合は null です。
+     * @param {string} blockId
+     * @returns {{ label: string, fields: import('../shared/block-values.js').ValueField[] } | null}
+     */
+    valueTarget(blockId) {
+      const block = workspace.getBlockById(blockId);
+      if (!block || block.isInFlyout) {
+        return null;
+      }
+      const text = String(block.toString());
+      return {
+        label: text.length > 40 ? `${text.slice(0, 40)}…` : text,
+        fields: blockValueFields(block),
+      };
+    },
+
+    /**
+     * ブロックの欄に入れられる値の一覧です（#147）。
+     * @param {string} blockId
+     * @param {'path' | 'template'} kind
+     * @param {import('../shared/params.js').Param[]} params
+     */
+    insertableValues(blockId, kind, params) {
+      return insertableValues(
+        Blockly.serialization.workspaces.save(workspace),
+        blockId,
+        kind,
+        params,
+      );
+    },
+
+    /**
+     * ブロックの欄の文字の末尾に、値を足します（#147）。保存は［手順を保存］で行います。
+     * @param {string} blockId
+     * @param {string} field
+     * @param {string} text
+     * @returns {boolean} ブロックが見つかり、足せたか
+     */
+    appendToField(blockId, field, text) {
+      const block = workspace.getBlockById(blockId);
+      if (!block?.getField(field)) {
+        return false;
+      }
+      block.setFieldValue(`${block.getFieldValue(field) ?? ''}${text}`, field);
+      setDirty(true);
+      return true;
+    },
+
+    /**
+     * ブロックにフォーカスを戻します（#147）。値の一覧を閉じた後、キーボードで続けて操作できるようにします。
+     * @param {string} blockId
+     */
+    focusBlock(blockId) {
+      const block = workspace.getBlockById(blockId);
+      if (block) {
+        Blockly.getFocusManager().focusNode(block);
+      }
     },
 
     /** 表示の大きさを合わせ直します。隠していた区画を表示したときに呼びます。 */
