@@ -177,6 +177,7 @@ const elements = {
   blocks: byId('blocks'),
   blocksSave: /** @type {HTMLButtonElement} */ (byId('blocks-save')),
   blocksRevert: /** @type {HTMLButtonElement} */ (byId('blocks-revert')),
+  blocksUnsaved: byId('blocks-unsaved'),
   blocksNotice: byId('blocks-notice'),
   blocksPickNotice: byId('blocks-pick-notice'),
   blocksValues: byId('blocks-values'),
@@ -337,12 +338,13 @@ elements.json.addEventListener('input', () => {
 });
 
 /**
- * 保存していない変更の有無に合わせて、［手順を保存］［変更を取り消す］を押せるようにします。
+ * 保存していない変更の有無に合わせて、［手順を保存］［変更を取り消す］を押せるようにし、未保存の表示を出します。
  * @param {boolean} dirty
  */
 function updateBlockButtons(dirty) {
   elements.blocksSave.disabled = !dirty;
   elements.blocksRevert.disabled = !dirty;
+  elements.blocksUnsaved.hidden = !dirty;
 }
 
 // ---- ページで要素を選ぶ（#139） ----

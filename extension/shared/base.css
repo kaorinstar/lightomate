@@ -349,6 +349,37 @@ div.lm-hint {
   margin-top: 0.125rem;
 }
 
+/*
+ * 箇条書きの先頭の見出しの語です（#150）。利用者は文を読み通さず、目立つ語と行の始まりを拾い読みするため、
+ * 見出しの語だけを太字にし、本文の色で示します。ボタン名は［ ］で区別するため、太字にしません。
+ */
+:is(.lm-hint, .lm-panel-note, .lm-disclaimer) strong {
+  color: var(--tblr-body-color);
+  font-weight: 600;
+}
+
+/* 使う回数の少ない説明を畳む欄です（#150）。見出しは押せる範囲を 24px 以上にします。 */
+.lm-more {
+  margin-top: 0.25rem;
+}
+
+.lm-more > summary {
+  padding: 0.125rem 0;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.lm-more > ul {
+  margin: 0.25rem 0 0;
+  padding-inline-start: 1.25rem;
+}
+
+/* 保存していない変更があることを、保存のボタンの横に示します（#150）。色だけで伝えないよう「!」を付けます。 */
+.lm-unsaved::before {
+  content: '! ';
+  font-weight: 700;
+}
+
 /* 補足の文字です。見出し・本文・補足の 3 段階のうち、最も小さいものです。 */
 .lm-sub {
   color: var(--tblr-secondary);
