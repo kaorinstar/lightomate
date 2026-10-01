@@ -920,12 +920,12 @@ test('実行中の枠：枠の文字の下に、今行っている手順を表�
   }
 });
 
-test('一時停止：最後の手順の実行中に［一時停止］を押すと、終える前に一時停止し、［再開］で完了する（#160）', async () => {
+test('一時停止：「待つ」の途中で［一時停止］を押すと、その場で一時停止し、［再開］で残りの時間を待ってから完了する（#160）', async () => {
   const { extensionPage } = browser;
   /** @type {Flow} */
   const flow = {
     schemaVersion: 12,
-    name: '最後の一時停止',
+    name: '待つの途中の一時停止',
     origin: server.origin,
     steps: [
       { type: 'navigate', cause: 'user', url: `${server.origin}/done.html` },
@@ -945,44 +945,39 @@ test('一時停止：最後の手順の実行中に［一時停止］を押す�
     });
   }, flow);
   assert.equal(started.ok, true);
-  /** @returns {Promise<string | undefined>} */
-  const status = () =>
+  /** @returns {Promise<{ status?: string, stepIndex?: number, midStep?: boolean } | undefined>} */
+  const state = () =>
     extensionPage.evaluate(
       async (key) =>
-        /** @type {{ status?: string } | undefined} */ (
+        /** @type {{ status?: string, stepIndex?: number, midStep?: boolean } | undefined} */ (
           (await chrome.storage.session.get(key))[key]
-        )?.status,
+        ),
       `run/${started.runId}`,
     );
 
-  // 最後の手順（待つ）の途中で［一時停止］を押します。
-  await waitUntil(
-    async () => {
-      const state = await extensionPage.evaluate(
-        async (key) =>
-          /** @type {{ status?: string, stepIndex?: number } | undefined} */ (
-            (await chrome.storage.session.get(key))[key]
-          ),
-        `run/${started.runId}`,
-      );
-      return state?.status === 'running' && state.stepIndex === 1;
-    },
-    (ready) => ready,
-  );
+  // 最後の手順（4 秒待つ）の途中で［一時停止］を押します。
+  await waitUntil(state, (value) => value?.status === 'running' && value.stepIndex === 1);
   await extensionPage.evaluate(
     (runId) => chrome.runtime.sendMessage({ kind: 'runner/pause', runId }),
     started.runId,
   );
-  // 完了せずに一時停止し、その状態が続きます。
-  assert.equal(await waitUntil(status, (value) => value === 'paused'), 'paused');
+  // 完了せずに「待つ」の手順の途中で一時停止し、その状態が続きます。
+  const paused = await waitUntil(state, (value) => value?.status === 'paused');
+  assert.equal(paused?.stepIndex, 1);
+  assert.equal(paused?.midStep, true);
   await new Promise((resolve) => setTimeout(resolve, 2000));
-  assert.equal(await status(), 'paused');
+  assert.equal((await state())?.status, 'paused');
 
-  // ［再開］を押すと完了します。
+  // ［再開］を押すと、残りの時間を待ってから完了します。すぐには完了しません。
+  const resumedAt = Date.now();
   await extensionPage.evaluate(
     (runId) => chrome.runtime.sendMessage({ kind: 'runner/resume', runId }),
     started.runId,
   );
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const running = await state();
+  assert.equal(running?.status, 'running');
+  assert.equal(running?.midStep, undefined);
   const history = await waitUntil(
     () =>
       extensionPage.evaluate(async () => {
@@ -994,6 +989,7 @@ test('一時停止：最後の手順の実行中に［一時停止］を押す�
     (entries) => entries.length > 0,
   );
   assert.equal(history[0].status, 'done');
+  assert.ok(Date.now() - resumedAt >= 1500, '再開の後、残りの時間を待たずに完了しました。');
   for (const page of pagesAt('/done.html')) {
     await page.close();
   }

@@ -99,6 +99,8 @@ import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../sh
  *   halted は、確定ボタンの手前、または最後の一時停止の手順で実行を終えたことを示します（#29）。
  * @property {string} [error] 失敗した理由。halted の場合は、止まった理由の説明です。
  * @property {string} [note] 一時停止の手順で止まった場合の、その手順の説明（note）です。
+ * @property {boolean} [midStep] 待つ（wait）の手順の途中で一時停止した場合に true です（#160）。再開すると、
+ *   その手順の残りの時間を待ってから続けます。
  * @property {number} [schemaVersion] 実行しているフローの形式の版。実行履歴に記録します（#93）
  * @property {'schedule'} [trigger] 定期実行（#22）で始めた場合に 'schedule' です。通知と実行履歴に使います
  * @property {string} startedAt
@@ -1209,7 +1211,10 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             await checkAuthAfterNavigation(runId, flow, tabId, last.step, pc);
           }
         } else if (step.type === 'wait') {
-          await waitWithStopCheck(runId, step.ms);
+          // 途中で一時停止を求められた場合は、その場で一時停止し、再開すると残りの時間を待ちます（#160）。
+          await waitWithPause(runId, step.ms, () =>
+            pauseRun(runId, flow, tabId, { ...position(), midStep: true }),
+          );
         } else if (step.type === 'closeTab') {
           // 新しいタブを閉じ、開く前のタブに戻ります（#20）。
           if (opener === undefined) {
@@ -1758,7 +1763,7 @@ async function isPauseRequested(runId) {
  * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
- * @param {{ stepIndex: number, items: number[] | undefined, loops: ('item' | 'round')[] | undefined, page: number | undefined }} next 再開したときに
+ * @param {{ stepIndex: number, items: number[] | undefined, loops: ('item' | 'round')[] | undefined, page: number | undefined, midStep?: boolean }} next 再開したときに
  *   実行する手順の番号と、繰り返しの何件目か（ページ送りでは何ページ目か）
  * @param {string} [note] 一時停止の手順の説明
  */
@@ -1775,6 +1780,9 @@ async function pauseRun(runId, flow, tabId, next, note) {
     if (watch) {
       watch.active = true;
     }
+  }
+  if (next.midStep) {
+    await updateRunState(runId, { midStep: undefined });
   }
 }
 
@@ -2538,10 +2546,33 @@ async function waitWithStopCheck(runId, ms) {
   for (let rest = ms; rest > 0; rest = deadline - Date.now()) {
     await throwIfStopRequested(runId);
     // 一時停止を求められた場合は、待つのをやめます（#37）。止まっている間に十分な時間が経つためです。
+    // 「待つ」の手順は waitWithPause で待ち、再開した後に残りの時間を待ちます（#160）。
     if (await isPauseRequested(runId)) {
       return;
     }
     await sleep(Math.min(rest, STOP_CHECK_INTERVAL_MS));
+  }
+  await throwIfStopRequested(runId);
+}
+
+/**
+ * 「待つ」の手順の時間だけ待ちます（#160）。途中で一時停止を求められた場合は pause で一時停止し、再開した後に
+ * 残りの時間を待ちます。止まっていた時間は、待った時間に数えません。待っている間も停止の指示を確かめます。
+ * @param {string} runId
+ * @param {number} ms
+ * @param {() => Promise<void>} pause
+ */
+async function waitWithPause(runId, ms, pause) {
+  let rest = ms;
+  while (rest > 0) {
+    await throwIfStopRequested(runId);
+    if (await isPauseRequested(runId)) {
+      await pause();
+      continue;
+    }
+    const started = Date.now();
+    await sleep(Math.min(rest, STOP_CHECK_INTERVAL_MS));
+    rest -= Date.now() - started;
   }
   await throwIfStopRequested(runId);
 }
