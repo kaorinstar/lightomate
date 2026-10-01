@@ -264,3 +264,25 @@ test('ページに出す文は、手順の番号と繰り返しの何件目か�
   assert.equal(long.length, PAGE_STEP_MAX_LENGTH);
   assert.ok(long.endsWith('…'));
 });
+
+test('すべての手順を終えた後と、「待つ」の途中の一時停止の文（#160）', () => {
+  const run = { flowName: '月次', status: 'paused', stepIndex: 2, total: 2 };
+  assert.equal(
+    runStatusText(run, undefined),
+    '「月次」は、すべての手順を終えた後で一時停止しています。［再開］を押すと完了します。',
+  );
+  assert.equal(
+    runDetailText(run, undefined),
+    'すべての手順を終えた後で一時停止しています。［再開］を押すと完了します。',
+  );
+  // 「待つ」の途中の一時停止は、再開すると残りの時間を待つことを示します。
+  assert.equal(
+    runDetailText({ ...run, stepIndex: 1, midStep: true }, { type: 'wait', ms: 150000 }),
+    '手順 2 / 2（150 秒待つ）の途中で一時停止しています。［再開］を押すと、残りの時間を待ってから続けます。',
+  );
+  // 途中の手順の前の一時停止は、これまでどおりです。
+  assert.match(
+    runDetailText({ ...run, stepIndex: 1 }, { type: 'wait', ms: 1000 }),
+    /^手順 2 \/ 2 の前で一時停止しています/,
+  );
+});

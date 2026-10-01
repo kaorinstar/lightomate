@@ -114,7 +114,7 @@ export function pageStepText(run, step) {
  * 実行の状態の説明です。サイドパネルの「フローの実行」に表示します。
  * @param {{
  *   flowName: string, status: string, stepIndex: number, total: number, error?: string, note?: string,
- *   items?: number[], loops?: ('item' | 'round')[], page?: number,
+ *   items?: number[], loops?: ('item' | 'round')[], page?: number, midStep?: boolean,
  * }} run 実行の状態（background/runner.js の RunState）
  * @param {Step | undefined} step 実行中、または止まった手順。一時停止中は、次に実行する手順です。
  * @returns {string}
@@ -131,6 +131,15 @@ export function runStatusText(run, step) {
     case 'pausing':
       return `「${run.flowName}」は、実行中の手順が終わった時点で一時停止します。${where}`;
     case 'paused': {
+      // すべての手順を終えた後の一時停止です（#160）。［再開］を押すと完了します。
+      if (run.stepIndex >= run.total) {
+        return `「${run.flowName}」は、すべての手順を終えた後で一時停止しています。${run.note ?? ''}［再開］を押すと完了します。`;
+      }
+      // 「待つ」の手順の途中の一時停止です（#160）。［再開］を押すと、残りの時間を待ってから続けます。
+      if (run.midStep) {
+        const current = step ? `（${describeStep(step)}）` : '';
+        return `「${run.flowName}」は ${number}${current}の途中で一時停止しています。［再開］を押すと、残りの時間を待ってから続けます。`;
+      }
       const next = step ? `（次の手順：${describeStep(step)}）` : '';
       return `「${run.flowName}」は ${number} の前で一時停止しています${next}。${run.note ?? ''}続ける場合は［再開］を押してください。`;
     }
@@ -199,7 +208,7 @@ export function runStatusTone(status) {
  * 実行の進み具合と止まった理由の文です。フロー名は、カードの 1 行目に出すため含めません（#7）。
  * 完了した場合は、状態の印だけで足りるため、空の文字列を返します。
  * @param {{ flowName: string, status: string, stepIndex: number, total: number, items?: number[],
- *   page?: number, loops?: ('item' | 'round')[], error?: string, note?: string }} run
+ *   page?: number, loops?: ('item' | 'round')[], error?: string, note?: string, midStep?: boolean }} run
  * @param {Step | undefined} step stepIndex の手順
  * @returns {string}
  */
@@ -214,6 +223,15 @@ export function runDetailText(run, step) {
     case 'pausing':
       return `${where}。この手順が終わった時点で一時停止します。`;
     case 'paused': {
+      // すべての手順を終えた後の一時停止です（#160）。［再開］を押すと完了します。
+      if (run.stepIndex >= run.total) {
+        return `すべての手順を終えた後で一時停止しています。${run.note ?? ''}［再開］を押すと完了します。`;
+      }
+      // 「待つ」の手順の途中の一時停止です（#160）。［再開］を押すと、残りの時間を待ってから続けます。
+      if (run.midStep) {
+        const current = step ? `（${describeStep(step)}）` : '';
+        return `${number}${current}の途中で一時停止しています。［再開］を押すと、残りの時間を待ってから続けます。`;
+      }
       const next = step ? `（次の手順：${describeStep(step)}）` : '';
       return `${number} の前で一時停止しています${next}。${run.note ?? ''}続ける場合は［再開］を押してください。`;
     }
