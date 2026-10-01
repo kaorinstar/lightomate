@@ -599,7 +599,7 @@ Chrome の翻訳で表示の文字が置き換わると、文字の条件の結�
 | `label` | 入力欄に表示する説明。 |
 | `type` | 種類。`text`（文字列）、`number`（数値）、`select`（選択肢）、`month`（年月）のいずれかです。 |
 | `options` | 選択肢の一覧。`type` が `select` の場合に必須です。 |
-| `default` | 既定値。省略できます。年月では `@current-month`（今月）と `@previous-month`（前月）も使えます。実行した日から計算します。 |
+| `default` | 既定値。省略できます。年月では `@current-month`（今月）、`@previous-month`（前月）、`@month-before-last`（前々月、#163）も使えます。実行した日から計算します。 |
 
 入力欄を空にした場合は既定値を使います。既定値もない場合は実行できません。
 
