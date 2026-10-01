@@ -193,17 +193,23 @@ test('ブロックの一覧の、要素を必要としないブロックは、�
   );
   assert.deepEqual(
     steps.map((step) => step.type),
-    ['navigate', 'wait', 'pause', 'savePdf', 'closeTab'],
+    ['navigate', 'wait', 'pause', 'savePdf', 'closeTab', 'break'],
   );
+  // 繰り返しを終える手順（#162）は、繰り返しの内側にだけ書けるため、while の中に入れて確かめます。
+  const condition = { target: { selectors: ['#a'], tag: 'span', label: '注文日' }, exists: true };
   const flow = {
-    schemaVersion: 12,
+    schemaVersion: 13,
     name: 'テスト',
     origin: 'https://shop.example.com',
     steps: steps.map((step) =>
-      step.type === 'navigate' ? { ...step, url: 'https://shop.example.com/' } : step,
+      step.type === 'navigate'
+        ? { ...step, url: 'https://shop.example.com/' }
+        : step.type === 'break'
+          ? { type: 'while', condition, steps: [step] }
+          : step,
     ),
   };
-  assert.deepEqual(validateFlow(flow), []);
+  assert.deepEqual(validateFlow(/** @type {any} */ (flow)), []);
 });
 
 test('ブロックの一覧の、要素を必要とするブロックは、要素を選ぶまで保存できず、選ぶと形式の検証を通る（#139）', () => {

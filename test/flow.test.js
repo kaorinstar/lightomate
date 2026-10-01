@@ -14,6 +14,7 @@ import {
   validateStep,
   withInterval,
   withMinimumInterval,
+  withSteps,
 } from '../extension/shared/flow.js';
 
 const target = { selectors: ['#login'], tag: 'button', label: 'ログイン', text: 'ログイン' };
@@ -52,9 +53,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜11 のフローは、そのまま版 12 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 12);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
+test('版 1〜12 のフローは、そのまま版 13 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 13);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -917,7 +918,7 @@ test('条件には、種類を 1 つだけ書ける（#103）', () => {
     validateStep({ type: 'if', condition: { target: inRow, contain: 'a' }, then: [] }),
     [
       'condition に、使えない項目（contain）があります。',
-      'condition には、exists、contains、equals、month、from と to のどれか 1 種類だけを書いてください。',
+      'condition には、exists、contains、equals、month、before、from と to のどれか 1 種類だけを書いてください。',
     ],
   );
 });
@@ -1147,4 +1148,81 @@ test('download.path の参照は、パラメータか前の手順の extract の
     name: 'orderNumber',
   };
   assert.deepEqual(validateFlow({ ...validFlow, steps: [...validFlow.steps, extract, click] }), []);
+});
+
+test('break と before の条件は、版 13 のフローの繰り返しの内側で検証を通る（#162）', () => {
+  const date = { selectors: ['.date'], tag: 'span', label: '注文日', scope: 'item' };
+  const loop = {
+    type: 'forEach',
+    items: { selectors: ['tr'], tag: 'tr', label: '行' },
+    steps: [
+      {
+        type: 'if',
+        condition: { target: date, before: '{{month}}' },
+        then: [{ type: 'break' }],
+      },
+    ],
+  };
+  const params = [{ name: 'month', label: '対象月', type: 'month' }];
+  assert.deepEqual(validateFlow({ ...validFlow, params, steps: [loop] }), []);
+  // while の内側にも書けます。
+  const whileLoop = {
+    type: 'while',
+    condition: { target: { selectors: ['#more'], tag: 'button', label: 'もっと' }, exists: true },
+    steps: [{ type: 'break' }],
+  };
+  assert.deepEqual(validateFlow({ ...validFlow, steps: [whileLoop] }), []);
+  const old = validateFlow({ ...validFlow, schemaVersion: 12, params, steps: [loop] }).join('\n');
+  assert.match(old, /before/);
+  assert.match(old, /break/);
+});
+
+test('break は、繰り返しの外には書けない（#162）', () => {
+  const outside = validateFlow({ ...validFlow, steps: [{ type: 'break' }] });
+  assert.match(outside.join('\n'), /break は、forEach か while の内側の手順にだけ書けます。/);
+  const inIf = validateFlow({
+    ...validFlow,
+    steps: [
+      {
+        type: 'if',
+        condition: { target, exists: true },
+        then: [{ type: 'break' }],
+      },
+    ],
+  });
+  assert.match(inIf.join('\n'), /break は、forEach か while の内側の手順にだけ書けます。/);
+});
+
+test('before の値は、年月の形式かパラメータの参照だけを受け付ける（#162）', () => {
+  for (const before of ['2026-9', '2026-09-01', '']) {
+    const errors = validateStep({
+      type: 'if',
+      condition: { target, before },
+      then: [],
+    });
+    assert.ok(errors.length > 0, before);
+  }
+});
+
+test('withSteps は、手順を入れ替えたフローを現在の版にして返し、元のフローは変えない（#162）', () => {
+  const old = /** @type {import('../extension/shared/flow.js').Flow} */ ({
+    ...validFlow,
+    schemaVersion: 12,
+  });
+  const loop = {
+    type: 'while',
+    condition: { target: { selectors: ['#more'], tag: 'button', label: 'もっと' }, exists: true },
+    steps: [{ type: 'break' }],
+  };
+  // 版 12 のまま break を加えると誤りになるため、ブロックで保存するときは版を上げます。
+  assert.notDeepEqual(validateFlow({ ...old, steps: [loop] }), []);
+  const changed = withSteps(
+    old,
+    /** @type {import('../extension/shared/flow.js').Step[]} */ ([loop]),
+  );
+  assert.equal(changed.schemaVersion, SCHEMA_VERSION);
+  assert.deepEqual(changed.steps, [loop]);
+  assert.deepEqual(validateFlow(changed), []);
+  assert.equal(old.schemaVersion, 12);
+  assert.equal(old.steps, validFlow.steps);
 });
