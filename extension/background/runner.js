@@ -1247,6 +1247,8 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
                 ? Promise.resolve()
                 : checkAuthAfterNavigation(runId, flow, tabId, step, navigatePc),
           );
+          // 次にページを操作する手順まで、枠のない時間ができないよう、移動の後すぐに枠を表示します（#154）。
+          await showRunningFrame(flow, tabId);
           documentBefore = await getDocumentId(tabId);
         } else if (step.type === 'savePdf') {
           await checkAuthScreen(runId, flow, tabId, step, expectedUrl);
@@ -1817,6 +1819,34 @@ async function showPausedFrame(flow, tabId, url) {
   } catch {
     // 読み込めないページ（エラーの画面など）では、アイコンの文字だけで示します。
   }
+}
+
+/**
+ * 実行中の枠と文字を、ページに表示します（#154）。ページの移動の後に呼び出します。
+ * 枠は content script を読み込んだ時点で表示します。ページを操作する手順の前にだけ読み込むと、ページの移動の直後から
+ * 次の操作までの間（「待つ」や「一時停止」の手順など）は、枠が表示されないためです。
+ * フローのサイト（extraOrigins を含む、#41）のページにだけ表示します。そのほかのサイトには、スクリプトを読み込む許可がないためです。
+ * 読み込めない場合は、枠を出さずに続けます。同じページに 2 回読み込んでも、枠と受け取りは 1 つだけです。
+ * @param {Flow} flow
+ * @param {number} tabId
+ */
+async function showRunningFrame(flow, tabId) {
+  const url = await chrome.tabs.get(tabId).then(
+    (tab) => tab.url,
+    () => undefined,
+  );
+  if (!url || !isWebUrl(url) || !flowOrigins(flow).includes(new URL(url).origin)) {
+    return;
+  }
+  // ダイアログが開いていると読み込みが終わらないため、待つのは短い時間だけにします（#88）。
+  await Promise.race([
+    chrome.scripting
+      .executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES })
+      .catch(() => {
+        // 読み込めないページ（エラーの画面など）では、アイコンの文字だけで示します。
+      }),
+    sleep(PAGE_MESSAGE_TIMEOUT_MS),
+  ]);
 }
 
 /**

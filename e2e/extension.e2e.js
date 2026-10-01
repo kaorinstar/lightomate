@@ -799,3 +799,50 @@ test('値を入れる：右クリックのメニューから、キーボード�
   );
   assert.equal(/** @type {any} */ (saved.steps[2]).path, 'Lightomate/invoice_{{orderNo}}.pdf');
 });
+
+test('実行中の枠：ページの移動の直後の「待つ」の間も、ページに実行中の枠を表示する（#154）', async () => {
+  const { extensionPage } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: '枠',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/done.html` },
+      { type: 'wait', ms: 3000 },
+      { type: 'navigate', cause: 'user', url: `${server.origin}/picker.html` },
+      { type: 'wait', ms: 3000 },
+    ],
+  };
+  const run = runFlow(extensionPage, flow);
+
+  /**
+   * 実行のタブが、パスのページを表示し、そのページに実行中の枠があるまで待ちます。
+   * @param {string} pathname
+   */
+  const frameShownAt = (pathname) =>
+    waitUntil(
+      async () => {
+        const [page] = pagesAt(pathname);
+        return page
+          ? page
+              .evaluate(() => globalThis.document.querySelectorAll('lightomate-status').length)
+              .catch(() => 0)
+          : 0;
+      },
+      (count) => count > 0,
+    );
+  // 最初のページを開いた後の「待つ」の間と、次のページへ移動した後の「待つ」の間の両方で、枠を表示します。
+  assert.equal(await frameShownAt('/done.html'), 1);
+  assert.equal(await frameShownAt('/picker.html'), 1);
+
+  const entry = await run;
+  assert.equal(entry.status, 'done');
+  // 実行が終わると、枠を消します。
+  const [page] = pagesAt('/picker.html');
+  assert.equal(
+    await page.evaluate(() => globalThis.document.querySelectorAll('lightomate-status').length),
+    0,
+  );
+  await page.close();
+});
