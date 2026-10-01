@@ -14,6 +14,7 @@ import {
   validateStep,
   withInterval,
   withMinimumInterval,
+  withSteps,
 } from '../extension/shared/flow.js';
 
 const target = { selectors: ['#login'], tag: 'button', label: 'ログイン', text: 'ログイン' };
@@ -1201,4 +1202,27 @@ test('before の値は、年月の形式かパラメータの参照だけを受�
     });
     assert.ok(errors.length > 0, before);
   }
+});
+
+test('withSteps は、手順を入れ替えたフローを現在の版にして返し、元のフローは変えない（#162）', () => {
+  const old = /** @type {import('../extension/shared/flow.js').Flow} */ ({
+    ...validFlow,
+    schemaVersion: 12,
+  });
+  const loop = {
+    type: 'while',
+    condition: { target: { selectors: ['#more'], tag: 'button', label: 'もっと' }, exists: true },
+    steps: [{ type: 'break' }],
+  };
+  // 版 12 のまま break を加えると誤りになるため、ブロックで保存するときは版を上げます。
+  assert.notDeepEqual(validateFlow({ ...old, steps: [loop] }), []);
+  const changed = withSteps(
+    old,
+    /** @type {import('../extension/shared/flow.js').Step[]} */ ([loop]),
+  );
+  assert.equal(changed.schemaVersion, SCHEMA_VERSION);
+  assert.deepEqual(changed.steps, [loop]);
+  assert.deepEqual(validateFlow(changed), []);
+  assert.equal(old.schemaVersion, 12);
+  assert.equal(old.steps, validFlow.steps);
 });
