@@ -609,3 +609,23 @@ body {
 .lm-param-field .form-label {
   margin-bottom: 0.25rem;
 }
+
+/* ブロックの欄に入れる値の一覧です（#147）。ブロックの編集画面の直上に出します。 */
+.lm-values {
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+}
+
+.lm-values-group {
+  margin: 0.5rem 0 0.25rem;
+  font-weight: 600;
+}
+
+.lm-values-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
