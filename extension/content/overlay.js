@@ -14,7 +14,8 @@
  * @param {string} text 左上に表示する文字
  * @param {string} color 枠と文字の背景の色
  * @param {string} textColor 文字の色。背景の色の上で読める色を指定します。
- * @returns {HTMLElement} 表示を消すときに remove() を呼ぶ要素
+ * @returns {HTMLElement & { setDetail: (detail: string) => void }} 表示を消すときに remove() を呼ぶ要素。
+ *   setDetail で、文字の下に添える 2 行目（実行中の手順、#156）を置き換えます。空の文字列では 2 行目を隠します
  */
 function showStatusOverlay(text, color, textColor) {
   // 前の実行が残した表示（「ここから手で操作してください」など）は、新しい表示に置き換えます（#13）。
@@ -38,6 +39,12 @@ function showStatusOverlay(text, color, textColor) {
       background: ${color}; color: ${textColor}; pointer-events: none;
       font: bold 13px/1.4 system-ui, sans-serif;
     }
+    /* 実行中の手順（#156）です。ページの内容を隠しすぎないよう、幅を抑えて 1 行に収めます。 */
+    .detail {
+      display: block; max-width: min(60vw, 480px); overflow: hidden;
+      white-space: nowrap; text-overflow: ellipsis; font-weight: normal;
+    }
+    .detail[hidden] { display: none; }
     /* 要素に直接指定したスタイル（all: initial）より優先させるため、!important を付けます。 */
     @media print { :host { display: none !important; } }
   `;
@@ -45,11 +52,23 @@ function showStatusOverlay(text, color, textColor) {
   frame.className = 'frame';
   const badge = document.createElement('div');
   badge.className = 'badge';
-  badge.textContent = text;
+  const title = document.createElement('span');
+  title.textContent = text;
+  const detail = document.createElement('span');
+  detail.className = 'detail';
+  detail.hidden = true;
+  badge.append(title, detail);
 
   shadow.append(style, frame, badge);
   document.documentElement.append(host);
-  return host;
+  // 文字だけを置き換えます。枠を作り直さないため、切り替わりで画面がちらつきません。
+  return Object.assign(host, {
+    /** @param {string} value */
+    setDetail(value) {
+      detail.textContent = value;
+      detail.hidden = value === '';
+    },
+  });
 }
 
 /**

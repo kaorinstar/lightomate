@@ -32,6 +32,11 @@
 
   let overlay = showStatusOverlay(...indicators.running);
 
+  /** 実行中の手順の文です（#156）。実行中の表示のときだけ、枠の文字の下に添えます。 */
+  let stepText = '';
+  /** 今の表示です。 */
+  let indicator = 'running';
+
   /**
    * 枠と文字を、指定した表示に置き換えます。
    * @param {unknown} name
@@ -40,6 +45,8 @@
     if (name === 'running' || name === 'paused' || name === 'handOver') {
       overlay.remove();
       overlay = showStatusOverlay(...indicators[name]);
+      indicator = name;
+      overlay.setDetail(name === 'running' ? stepText : '');
     }
   }
 
@@ -77,6 +84,14 @@
     }
     if (message?.kind === 'runner/indicator') {
       showIndicator(message.indicator);
+      return false;
+    }
+    // 実行中の手順の文です（#156）。手順を始めるたびと、このスクリプトを読み込んだ直後に届きます。
+    if (message?.kind === 'runner/step-text') {
+      stepText = typeof message.text === 'string' ? message.text : '';
+      if (indicator === 'running') {
+        overlay.setDetail(stepText);
+      }
       return false;
     }
     if (message?.kind === 'runner/finish') {

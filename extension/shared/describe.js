@@ -58,6 +58,58 @@ export function describeStep(step) {
   }
 }
 
+/** 実行中のページの枠に表示する、手順の文の長さの上限です（#156）。 */
+export const PAGE_STEP_MAX_LENGTH = 60;
+
+/**
+ * 実行中のページの枠に表示する、手順の短い説明です（#156）。
+ * ページの上に出すため、手順の種類と要素の名前だけにします。入力する値、選ぶ値、URL、保存先、条件の値は出しません。
+ * @param {Step} step
+ * @returns {string}
+ */
+export function describeStepForPage(step) {
+  switch (step.type) {
+    case 'navigate':
+      return step.cause === 'user' ? 'ページを開く' : 'ページの移動を待つ';
+    case 'click':
+      return `クリック：${step.target.label}`;
+    case 'input':
+      return `入力：${step.target.label}`;
+    case 'select':
+      return `選択：${step.target.label}`;
+    case 'pause':
+      return '一時停止';
+    case 'savePdf':
+      return 'PDF を保存';
+    case 'extract':
+      return `読み取り：${step.target.label}`;
+    case 'wait':
+      return `${step.ms / 1000} 秒待つ`;
+    case 'closeTab':
+      return 'タブを閉じて、元のタブに戻る';
+    case 'if':
+      return `条件：「${step.condition.target.label}」を確かめる`;
+    case 'forEach':
+      return `繰り返し：「${step.items.label}」の各行`;
+    case 'while':
+      return `繰り返し：「${step.condition.target.label}」を確かめる`;
+  }
+}
+
+/**
+ * 実行中のページの枠に表示する文です（#156）。手順の番号と、手順の短い説明です。
+ * 上限の長さを超える場合は、末尾を「…」にします。
+ * @param {{ stepIndex: number, total: number, items?: number[], loops?: ('item' | 'round')[], page?: number }} run
+ * @param {Step | undefined} step stepIndex の手順
+ * @returns {string}
+ */
+export function pageStepText(run, step) {
+  const item = itemText(run.items, run.page, run.loops);
+  const number = `手順 ${run.stepIndex + 1} / ${run.total}${item ? `（${item}）` : ''}`;
+  const text = step ? `${number}：${describeStepForPage(step)}` : number;
+  return text.length > PAGE_STEP_MAX_LENGTH ? `${text.slice(0, PAGE_STEP_MAX_LENGTH - 1)}…` : text;
+}
+
 /**
  * 実行の状態の説明です。サイドパネルの「フローの実行」に表示します。
  * @param {{

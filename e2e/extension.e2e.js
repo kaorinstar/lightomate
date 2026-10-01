@@ -846,3 +846,76 @@ test('実行中の枠：ページの移動の直後の「待つ」の間も、�
   );
   await page.close();
 });
+
+/**
+ * ページの実行中の枠（lightomate-status）の文字を返します。枠は閉じた Shadow DOM の中にあり、ページのスクリプトからは
+ * 読めないため、Chrome DevTools Protocol の DOM.getDocument（pierce）で読みます。
+ * @param {import('playwright').Page} page
+ * @returns {Promise<string>}
+ */
+async function statusOverlayText(page) {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { root } = await session.send('DOM.getDocument', { depth: -1, pierce: true });
+    /** @type {string[]} */
+    const texts = [];
+    /**
+     * @param {any} node
+     * @param {boolean} inside
+     */
+    const visit = (node, inside) => {
+      const here = inside || node.nodeName === 'LIGHTOMATE-STATUS';
+      if (here && node.nodeType === 3) {
+        texts.push(node.nodeValue);
+      }
+      for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])]) {
+        visit(child, here);
+      }
+    };
+    visit(root, false);
+    return texts.join(' ');
+  } finally {
+    await session.detach();
+  }
+}
+
+test('実行中の枠：枠の文字の下に、今行っている手順を表示する。入力する値や URL は表示しない（#156）', async () => {
+  const { extensionPage } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: '手順の表示',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/picker.html` },
+      { type: 'wait', ms: 3000 },
+      { type: 'extract', target: target('#clicked', 'p', '押した結果'), name: 'clicked' },
+      { type: 'wait', ms: 3000 },
+    ],
+  };
+  const run = runFlow(extensionPage, flow);
+
+  /**
+   * 実行のタブの枠の文字が、条件を満たすまで待ちます。
+   * @param {(text: string) => boolean} done
+   */
+  const overlayText = (done) =>
+    waitUntil(async () => {
+      const [page] = pagesAt('/picker.html');
+      return page ? statusOverlayText(page).catch(() => '') : '';
+    }, done);
+
+  // ページを開いた直後の「待つ」と、ページを操作した後の「待つ」の両方で、手順を表示します。
+  const first = await overlayText((text) => text.includes('手順 2 / 4'));
+  assert.match(first, /▶ 実行中（Lightomate）/);
+  assert.match(first, /手順 2 \/ 4：3 秒待つ/);
+  assert.ok(!first.includes(server.origin), first);
+  const second = await overlayText((text) => text.includes('手順 4 / 4'));
+  assert.match(second, /手順 4 \/ 4：3 秒待つ/);
+
+  const entry = await run;
+  assert.equal(entry.status, 'done');
+  for (const page of pagesAt('/picker.html')) {
+    await page.close();
+  }
+});
