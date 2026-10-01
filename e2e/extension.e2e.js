@@ -919,3 +919,82 @@ test('実行中の枠：枠の文字の下に、今行っている手順を表�
     await page.close();
   }
 });
+
+test('一時停止：最後の手順の実行中に［一時停止］を押すと、終える前に一時停止し、［再開］で完了する（#160）', async () => {
+  const { extensionPage } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: '最後の一時停止',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/done.html` },
+      { type: 'wait', ms: 4000 },
+    ],
+  };
+  const started = await extensionPage.evaluate(async (flow) => {
+    await chrome.storage.local.remove('history');
+    await chrome.storage.local.set({
+      flows: { last: { id: 'last', createdAt: '', updatedAt: '', flow } },
+    });
+    return chrome.runtime.sendMessage({
+      kind: 'runner/start',
+      flowId: 'last',
+      params: {},
+      secrets: {},
+    });
+  }, flow);
+  assert.equal(started.ok, true);
+  /** @returns {Promise<string | undefined>} */
+  const status = () =>
+    extensionPage.evaluate(
+      async (key) =>
+        /** @type {{ status?: string } | undefined} */ (
+          (await chrome.storage.session.get(key))[key]
+        )?.status,
+      `run/${started.runId}`,
+    );
+
+  // 最後の手順（待つ）の途中で［一時停止］を押します。
+  await waitUntil(
+    async () => {
+      const state = await extensionPage.evaluate(
+        async (key) =>
+          /** @type {{ status?: string, stepIndex?: number } | undefined} */ (
+            (await chrome.storage.session.get(key))[key]
+          ),
+        `run/${started.runId}`,
+      );
+      return state?.status === 'running' && state.stepIndex === 1;
+    },
+    (ready) => ready,
+  );
+  await extensionPage.evaluate(
+    (runId) => chrome.runtime.sendMessage({ kind: 'runner/pause', runId }),
+    started.runId,
+  );
+  // 完了せずに一時停止し、その状態が続きます。
+  assert.equal(await waitUntil(status, (value) => value === 'paused'), 'paused');
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  assert.equal(await status(), 'paused');
+
+  // ［再開］を押すと完了します。
+  await extensionPage.evaluate(
+    (runId) => chrome.runtime.sendMessage({ kind: 'runner/resume', runId }),
+    started.runId,
+  );
+  const history = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { history } = await chrome.storage.local.get('history');
+        return /** @type {import('../extension/shared/history.js').HistoryEntry[]} */ (
+          history ?? []
+        );
+      }),
+    (entries) => entries.length > 0,
+  );
+  assert.equal(history[0].status, 'done');
+  for (const page of pagesAt('/done.html')) {
+    await page.close();
+  }
+});

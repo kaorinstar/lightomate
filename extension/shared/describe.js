@@ -131,6 +131,10 @@ export function runStatusText(run, step) {
     case 'pausing':
       return `「${run.flowName}」は、実行中の手順が終わった時点で一時停止します。${where}`;
     case 'paused': {
+      // すべての手順を終えた後の一時停止です（#160）。［再開］を押すと完了します。
+      if (run.stepIndex >= run.total) {
+        return `「${run.flowName}」は、すべての手順を終えた後で一時停止しています。${run.note ?? ''}［再開］を押すと完了します。`;
+      }
       const next = step ? `（次の手順：${describeStep(step)}）` : '';
       return `「${run.flowName}」は ${number} の前で一時停止しています${next}。${run.note ?? ''}続ける場合は［再開］を押してください。`;
     }
@@ -214,6 +218,10 @@ export function runDetailText(run, step) {
     case 'pausing':
       return `${where}。この手順が終わった時点で一時停止します。`;
     case 'paused': {
+      // すべての手順を終えた後の一時停止です（#160）。［再開］を押すと完了します。
+      if (run.stepIndex >= run.total) {
+        return `すべての手順を終えた後で一時停止しています。${run.note ?? ''}［再開］を押すと完了します。`;
+      }
       const next = step ? `（次の手順：${describeStep(step)}）` : '';
       return `${number} の前で一時停止しています${next}。${run.note ?? ''}続ける場合は［再開］を押してください。`;
     }

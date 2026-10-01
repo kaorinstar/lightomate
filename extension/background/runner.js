@@ -1343,6 +1343,17 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
         await waitWithStopCheck(runId, pickDelay(stepInterval(flow)));
       }
     }
+    // 最後の手順の実行中に［一時停止］を押された場合は、終える前に一時停止します（#160）。次の手順がないため、
+    // 手順の初めの確かめが行われず、一時停止せずに完了していました。［再開］を押すと完了にします。
+    await throwIfStopRequested(runId);
+    if (await isPauseRequested(runId)) {
+      await pauseRun(runId, flow, tabId, {
+        stepIndex: total,
+        items: undefined,
+        loops: undefined,
+        page: undefined,
+      });
+    }
     await finishRun(runId, {
       status: 'done',
       stepIndex: total - 1,
