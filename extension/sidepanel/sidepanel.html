@@ -2,7 +2,11 @@
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
+    <!-- CSS の読み込み前の背景も、OS の設定に合わせます（#148）。 -->
+    <meta name="color-scheme" content="light dark" />
     <title>Lightomate</title>
+    <!-- 暗い表示の OS で一瞬明るく表示されないよう、最初の描画より前に表示の色を決めます（#148）。 -->
+    <script src="../shared/color-scheme.js"></script>
     <link rel="stylesheet" href="../vendor/tabler/tabler.min.css" />
     <link rel="stylesheet" href="../vendor/noto-sans-jp/wght.css" />
     <link rel="stylesheet" href="../shared/base.css" />

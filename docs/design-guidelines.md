@@ -365,7 +365,9 @@ HTML に書いた並び（`lm-buttons`）は、`test/button-order.test.js` で 1
   通常の太さで表示されるためです。Tabler の見出しは 500 のため、
   `base.css` で 700 に上書きしています。区画見出しの帯（`card-header`）は、内容より一段濃い背景にします。
   画面を変えたときは、撮影した画像をぼかして見ても、見出しが先に目に入るかを確かめます。
-- **暗い表示**：OS の設定に従います（`extension/shared/ui.js` の `followColorScheme`）。
+- **暗い表示**：OS の設定に従います（`extension/shared/ui.js` の `followColorScheme`）。最初の描画の色は、
+  `head` の先頭で読み込む `extension/shared/color-scheme.js` で決めます。モジュールで決めると、暗い表示の OS でも
+  一瞬明るく表示されるためです（#148）。新しい画面を追加するときも、同じ位置で読み込みます。
 
 ## 5. 知らせと誤りの表示場所
 
