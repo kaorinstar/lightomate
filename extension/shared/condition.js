@@ -14,7 +14,7 @@
 export const CONDITION_KINDS = /** @type {const} */ ({
   exists: ['exists'],
   text: ['contains', 'equals'],
-  date: ['month', 'from', 'to'],
+  date: ['month', 'before', 'from', 'to'],
 });
 
 /** 年月（YYYY-MM）の形式です。 */
@@ -93,7 +93,7 @@ export function conditionKind(condition) {
   if ('contains' in condition || 'equals' in condition) {
     return 'text';
   }
-  if ('month' in condition || 'from' in condition || 'to' in condition) {
+  if ('month' in condition || 'before' in condition || 'from' in condition || 'to' in condition) {
     return 'date';
   }
   return 'exists';
@@ -114,6 +114,9 @@ export function describeCondition(condition) {
   }
   if ('month' in condition) {
     return `${label}が ${condition.month} の日付の場合`;
+  }
+  if ('before' in condition) {
+    return `${label}が ${condition.before} より前の日付の場合`;
   }
   if ('from' in condition || 'to' in condition) {
     const from = 'from' in condition ? condition.from : '';
@@ -234,6 +237,16 @@ export function evaluateCondition(condition, text, translated) {
       };
     }
     return { ok: true, met: parsed.date.startsWith(`${condition.month}-`) };
+  }
+  // 指定した月の 1 日より前の日付かです（#162）。YYYY-MM-DD の文字の順は日付の順と同じため、文字で比べます。
+  if ('before' in condition) {
+    if (!MONTH_VALUE_PATTERN.test(condition.before)) {
+      return {
+        ok: false,
+        error: `条件の月（${condition.before}）が、2026-09 の形式ではありません。`,
+      };
+    }
+    return { ok: true, met: parsed.date < `${condition.before}-01` };
   }
   const from = 'from' in condition ? condition.from : undefined;
   const to = 'to' in condition ? condition.to : undefined;

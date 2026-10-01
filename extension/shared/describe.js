@@ -45,6 +45,8 @@ export function describeStep(step) {
       return `${step.ms / 1000} 秒待つ`;
     case 'closeTab':
       return 'タブを閉じて、元のタブに戻る';
+    case 'break':
+      return '繰り返しを終える';
     case 'if':
       return `条件：${describeCondition(step.condition)}`;
     case 'forEach':
@@ -87,6 +89,8 @@ export function describeStepForPage(step) {
       return `${step.ms / 1000} 秒待つ`;
     case 'closeTab':
       return 'タブを閉じて、元のタブに戻る';
+    case 'break':
+      return '繰り返しを終える';
     case 'if':
       return `条件：「${step.condition.target.label}」を確かめる`;
     case 'forEach':
@@ -272,6 +276,8 @@ export function stepKindLabel(step) {
       return '待機';
     case 'closeTab':
       return 'タブを閉じる';
+    case 'break':
+      return '繰り返しを終える';
     case 'if':
       return '条件';
     case 'forEach':

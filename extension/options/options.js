@@ -47,6 +47,7 @@ import {
   orderFlow,
   replaceJsonFields,
   replaceJsonName,
+  withSteps,
 } from '../shared/flow.js';
 import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
 import { attachCombobox } from '../shared/combobox.js';
@@ -615,7 +616,7 @@ elements.blocksSave.addEventListener('click', async () => {
     showNotice(elements.blocksNotice, error, 'error');
     return;
   }
-  const flow = { ...stored.flow, steps };
+  const flow = withSteps(stored.flow, steps);
   const result = await saveFlow(flow, selectedId);
   if (!result.ok) {
     showNotice(

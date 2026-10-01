@@ -49,6 +49,7 @@ export const CONDITION_KINDS = /** @type {const} */ ([
   'contains',
   'equals',
   'month',
+  'before',
   'range',
 ]);
 
@@ -59,6 +60,7 @@ const CONDITION_LABELS = {
   contains: 'の文字が次を含む',
   equals: 'の文字が次と同じ',
   month: 'の日付が次の月',
+  before: 'の日付が次の月より前',
   range: 'の日付が次の期間',
 };
 
@@ -97,6 +99,14 @@ export function blockDefinitions() {
       message0: 'タブを閉じて元のタブに戻る',
       colour: BLOCK_COLOURS.page,
       ...statement,
+    },
+    {
+      // いちばん内側の繰り返しを途中で終えます（#162）。後に続く手順は行わないため、下にはつなげません。
+      type: 'lm_break',
+      message0: 'この繰り返しを終える',
+      colour: BLOCK_COLOURS.control,
+      previousStatement: null,
+      mutator: 'lm_step',
     },
     {
       type: 'lm_click',
@@ -293,6 +303,7 @@ export function toolbox() {
     { type: 'pause' },
     { type: 'savePdf' },
     { type: 'closeTab' },
+    { type: 'break' },
   ];
   /** @type {object[]} */
   const picked = [
@@ -509,6 +520,7 @@ function stepFields(step) {
     case 'pause':
       return { NOTE: step.note ?? '' };
     case 'closeTab':
+    case 'break':
       return {};
     case 'if':
       return conditionFields(step.condition);
@@ -549,6 +561,9 @@ function conditionFields(condition) {
   }
   if ('month' in condition) {
     return { TARGET: target, COND: 'month', VALUE: condition.month, VALUE2: '' };
+  }
+  if ('before' in condition) {
+    return { TARGET: target, COND: 'before', VALUE: condition.before, VALUE2: '' };
   }
   return { TARGET: target, COND: 'range', VALUE: condition.from ?? '', VALUE2: condition.to ?? '' };
 }
@@ -707,6 +722,8 @@ function conditionFromFields(original, fields) {
       return { target, equals: value };
     case 'month':
       return { target, month: value };
+    case 'before':
+      return { target, before: value };
     case 'range':
       return /** @type {Condition} */ ({
         target,

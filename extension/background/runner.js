@@ -1030,6 +1030,20 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
         ({ pc, frames } = advance(program, pc, frames));
         continue;
       }
+      if (instruction.op === 'break') {
+        // 繰り返しを途中で終え、繰り返しの後の手順へ進みます（#162）。ページ送りのある繰り返しでは、残りの
+        // ページを開きません。表示中のページはそのままです。
+        const depth = frames.findIndex((frame) => frame.startPc === instruction.startPc);
+        if (opener !== undefined && depth !== -1 && opener.depth > depth) {
+          throw new Error(
+            '繰り返しの行の中で開いた新しいタブを、閉じないまま繰り返しを終えようとしたため、停止しました。繰り返しを終える前に closeTab の手順を加えてください。',
+          );
+        }
+        await throwIfStopRequested(runId);
+        await updateRunState(runId, position());
+        ({ pc, frames } = advance(program, pc, frames));
+        continue;
+      }
       if (instruction.op === 'next' && opener !== undefined && opener.depth >= frames.length) {
         // 行の中で開いた新しいタブを閉じないまま、行の処理を終えた場合です（#20）。次の行を開いたタブで
         // 探すことになるため、停止します。

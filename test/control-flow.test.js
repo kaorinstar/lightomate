@@ -496,3 +496,39 @@ test('while の上限（max）の回数を終えても条件を満たす場合�
   assert.equal(whileLimitError(unlimited, { startPc: 0, index: 99, count: 0 }, 'x'), undefined);
   assert.ok(whileLimitError(unlimited, { startPc: 0, index: 100, count: 0 }, 'x'));
 });
+
+// 繰り返しを終える手順（break、#162）です。
+
+test('break は、最も内側の繰り返しを終え、その繰り返しの次の手順へ進む（#162）', () => {
+  const steps = [
+    forEach('注文', [ifStep('古い', true, [{ type: 'break' }]), wait('保存')]),
+    wait('後'),
+  ];
+  assert.deepEqual(simulate(steps, { counts: { 注文: 3 }, conditions: { 古い: true } }), ['後']);
+  assert.deepEqual(simulate(steps, { counts: { 注文: 2 }, conditions: { 古い: false } }), [
+    '保存@1',
+    '保存@2',
+    '後',
+  ]);
+});
+
+test('入れ子の繰り返しの break は、内側の繰り返しだけを終える（#162）', () => {
+  const steps = [
+    forEach('注文', [forEach('商品', [wait('商品'), { type: 'break' }]), wait('注文')]),
+  ];
+  assert.deepEqual(simulate(steps, { counts: { 注文: 2, 商品: 3 } }), [
+    '商品@1-1',
+    '注文@1',
+    '商品@2-1',
+    '注文@2',
+  ]);
+});
+
+test('while の中の break は、条件を満たしていても繰り返しを終える（#162）', () => {
+  const steps = [whileStep('次', [wait('押す'), { type: 'break' }]), wait('後')];
+  assert.deepEqual(simulate(steps, { rounds: { 次: 5 } }), ['押す@1', '後']);
+});
+
+test('繰り返しの外の break は、命令に変換できない（#162）', () => {
+  assert.throws(() => compileSteps([{ type: 'break' }]));
+});
