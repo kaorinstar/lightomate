@@ -50,6 +50,12 @@ content script がページの中に出す表示（`extension/content/overlay.js
 | [NN/g：Proximity Principle in Visual Design](https://www.nngroup.com/articles/gestalt-proximity/) | 近くに置いたものは関係があると受け取られる。関係するものを近づけ、別のまとまりを離す | 余白の大きさの使い分け |
 | [GOV.UK Design System：Layout](https://design-system.service.gov.uk/styles/layout/) | 本文の幅を読みやすい長さに制限する。内容は左に寄せる | 説明文の幅と左寄せ |
 | [WCAG 2.2：1.4.8 Visual Presentation](https://www.w3.org/WAI/WCAG22/Understanding/visual-presentation.html) | 文の 1 行の幅は 80 字以内（日本語・中国語・韓国語は 40 字以内）にする | 説明文の幅を 40em にする |
+| [NN/g：Text Scanning Patterns: Eyetracking Evidence](https://www.nngroup.com/articles/text-scanning-patterns-eyetracking/) | 利用者は文を読み通さず、目立つ語や作業に関係する語に飛ぶ。見出しだけを拾う読み方が最も効率がよい。段落を区切り、意味のある見出しと語の強調で支える | 箇条書きの見出しの語を太字にする（#150） |
+| [NN/g：F-Shaped Pattern of Reading on the Web](https://www.nngroup.com/articles/f-shaped-pattern-reading-web-content/) | 行の始まりと上部が最も読まれる。見出しは最初の 2 語で要点が分かるように書く | 見出しの語を短くし、項目の先頭に置く |
+| [GOV.UK：A to Z style guide「Bold」](https://guidance.publishing.service.gov.uk/writing-to-gov-uk-standards/style-guides/a-to-z-style-guide/) | 太字は少なく使う。多用すると、どこに注目すべきか分からなくなる | 太字は見出しの語だけにする |
+| [Microsoft Style Guide：Formatting text in instructions](https://learn.microsoft.com/en-us/style-guide/procedures-instructions/formatting-text-in-instructions) | 画面の中の文では、部品名の示し方（太字、引用符、言い回し）を 1 つに決めて一貫させる | ボタン名は［ ］で示し、太字にしない |
+| [NN/g：Banner Blindness Revisited](https://www.nngroup.com/articles/banner-blindness-old-and-new-findings/) | 派手な装飾や色の付いた背景の要素は、正当な内容でも読み飛ばされる | 説明を色の付いた枠で目立たせない |
+| [NN/g：Pop-ups and Adaptive Help](https://www.nngroup.com/articles/pop-up-adaptive-help/) | 説明は、それを使う操作の近くに置く。離れた説明は、覚えてから戻る負担になる | 操作に関わる注意を、その操作の横に置く |
 | [WCAG 2.2：2.5.8 Target Size (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html) | 押せる部品は 24×24px 以上にする。文の中のリンクと、周りに十分な間隔がある部品は例外 | 押せる範囲の大きさ |
 | [CoreUI 5.9.0 の CSS](https://cdn.jsdelivr.net/npm/@coreui/coreui@5.9.0/dist/css/coreui.css) | Bootstrap 5 の管理画面のテンプレート。内容の幅は `container-lg` などで上限を設ける。角丸 6px、カードの余白 16px、上部の帯に境界線、動きを減らす設定で `transition: none` | 内容の幅、余白、角丸、動き（「画面全体の配置」「4. 色・余白・文字」） |
 | [AdminLTE 4.9.1 の CSS](https://cdn.jsdelivr.net/npm/admin-lte@4.9.1/dist/css/adminlte.css) | Bootstrap 5 の管理画面のテンプレート。角丸 6px、カードの余白 16px、下部の上に 1px の境界線、案内（callout）は左に 0.25rem の線と薄い背景、色の変化 0.15 秒 | 下部の境界線、案内の形、動き |
@@ -294,6 +300,9 @@ HTML に書いた並び（`lm-buttons`）は、`test/button-order.test.js` で 1
   - 強調（色、太さ、囲み）は、1 つの区画で最も重要な 1 つの操作か情報だけに使います。主な操作は `btn-primary`、
     重要な案内はコールアウトです。
   - M3 Expressive のうち、形の変化や動きによる強調は採り入れません。業務の道具として、落ち着いた見た目を保つためです。
+  - 説明文の箇条書きの見出しの語の太字（「配置と余白」）は、この強調に含めません。拾い読みの手がかりであり、
+    操作や情報の重要度を示すものではないためです（#150）。
+  - ボタン名などの部品名は［ ］で示し、太字にしません。部品名の示し方を 1 つにそろえるためです。
 
 ### 配置と余白（#133）
 
@@ -310,6 +319,17 @@ HTML に書いた並び（`lm-buttons`）は、`test/button-order.test.js` で 1
 - **3 文以上になる説明は、要点の 1 文と箇条書きにします**（#137）。1 つの段落に文が続くと、どこに何が
   書いてあるかを探しにくいためです。項目ごとに見出しの語を付けられる場合は「登録：〜」のように書きます。
   手順の順番に意味がある場合だけ、番号付きの箇条書きにします。
+- **説明文は、読み通さなくても要点が分かる形にします**（#150）。利用者は文を読み通さず、行の始まりと
+  目立つ語を拾い読みします。説明の下に色の付いた部品（ブロックなど）が並ぶ場所では、なおさら読まれません。
+  - **見出しの語**：箇条書きの項目は、2〜6 字程度の見出しの語と「：」で始め、見出しの語だけを `<strong>` で
+    太字にします（`base.css` で本文の色にします）。拾い読みで、太字の語だけから内容の見当がつくようにします。
+  - **近くに置く**：特定の操作に関わる注意（例：［手順を保存］を押すまで保存しないこと）は、説明の先頭ではなく、
+    その操作の横に置きます。状態によって変わる注意は、その状態のときだけ出します。
+  - **畳む**：使う回数の少ない操作の説明（例：キーボード操作）は、`details` の開閉できる欄（`lm-more`）に移します。
+    読まれないと困る内容（免責事項など）は畳みません。
+  - **1 項目 2 文まで**：箇条書きの 1 項目は原則 1 文、長くても 2 文にします。最も重要な項目を先頭に置きます。
+  - 色の付いた枠で説明を目立たせることはしません。派手な装飾は、正当な内容でも読み飛ばされるためです。
+  - 見出しの語と項目の文の数は、`test/hint-scanning.test.js` で確かめます。
 - **説明文の 1 行は、全角 40 字前後までにします。** `lm-hint`、`lm-panel-note`、案内（コールアウト）の文、
   免責事項の箇条書きに `max-width: 40em` を指定します。画面の幅が広くても、行が長くなりすぎないようにするためです。
   1 行で終わる補足（詳細の日時の行など）は対象外です。
