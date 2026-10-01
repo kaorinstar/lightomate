@@ -24,7 +24,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -43,9 +43,11 @@ export const SCHEMA_VERSION = 12;
  * 版 11 は、版 10 に、クリックで開いた新しいタブでの実行（click の newTab）と、そのタブを閉じて元のタブに戻る
  * 手順（closeTab）を加えたものです（#20）。
  * 版 12 は、版 11 に、クリックで始まったダウンロードの保存先の指定（click の download）を加えたものです（#20）。
+ * 版 13 は、版 12 に、繰り返しを途中で終える手順（break）と、日付が指定した月より前かの条件（condition の
+ * before）を加えたものです（#162）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -60,6 +62,7 @@ const MIN_SCHEMA_VERSION = {
   forEach: 6,
   while: 9,
   closeTab: 11,
+  break: 13,
 };
 
 /** click の newTab を使える最も古い版です（#20）。 */
@@ -67,6 +70,9 @@ const NEW_TAB_MIN_SCHEMA_VERSION = 11;
 
 /** click の download を使える最も古い版です（#20）。 */
 const DOWNLOAD_MIN_SCHEMA_VERSION = 12;
+
+/** 日付が指定した月より前かの条件（before）を使える最も古い版です（#162）。 */
+const BEFORE_CONDITION_MIN_SCHEMA_VERSION = 13;
 
 /** 文字・日付による条件（contains、equals、month、from、to）を使える最も古い版です（#103）。 */
 const VALUE_CONDITION_MIN_SCHEMA_VERSION = 9;
@@ -152,6 +158,13 @@ export const MAX_TEXT_LENGTH = 2000;
  */
 
 /**
+ * いちばん内側の繰り返し（forEach、while）を途中で終え、繰り返しの後の手順へ進みます（#162）。版 13 で加えました。
+ * 繰り返しの内側にだけ書けます。ページ送りのある forEach では、残りのページを開かずに終えます。
+ * @typedef {object} BreakStep
+ * @property {'break'} type
+ */
+
+/**
  * 文字の入力です。secret が true の場合、値は記録しません。
  * @typedef {object} InputStep
  * @property {'input'} type
@@ -220,12 +233,14 @@ export const MAX_TEXT_LENGTH = 2000;
  * - 文字（contains、equals）：要素の表示の文字が、指定した文字を含むか、一致するかです（#103）。
  * - 日付（month、または from と to）：要素の表示の文字から読み取った日付が、指定した月（YYYY-MM）か、
  *   期間（YYYY-MM-DD、両端を含みます）に含まれるかです（#103）。
+ * - 日付が月より前（before）：読み取った日付が、指定した月（YYYY-MM）の 1 日より前かです（#162）。版 13 で加えました。
  * 文字と日付の値には、パラメータの参照（{{名前}}）を書けます。版 9 で加えました。
  * @typedef {{ target: Target } & (
  *   { exists: boolean } |
  *   { contains: string } |
  *   { equals: string } |
  *   { month: string } |
+ *   { before: string } |
  *   { from: string, to?: string } |
  *   { from?: string, to: string }
  * )} Condition
@@ -267,7 +282,7 @@ export const MAX_TEXT_LENGTH = 2000;
  */
 
 /**
- * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep | WaitStep | IfStep | ForEachStep | WhileStep | CloseTabStep} Step
+ * @typedef {NavigateStep | ClickStep | InputStep | SelectStep | PauseStep | SavePdfStep | ExtractStep | WaitStep | IfStep | ForEachStep | WhileStep | CloseTabStep | BreakStep} Step
  */
 
 /** @typedef {import('./params.js').Param} Param */
@@ -537,8 +552,9 @@ export function validateFlow(value) {
  * @param {number} depth if、forEach、while の入れ子の段数。最上位は 0 です
  * @param {boolean} inLoop forEach の内側か
  * @param {StepContext} context
+ * @param {boolean} [inRepeat] forEach か while の内側か。break を書けるかの判定に使います（#162）
  */
-function validateStepList(list, path, depth, inLoop, context) {
+function validateStepList(list, path, depth, inLoop, context, inRepeat = false) {
   const { errors, version, origins, params } = context;
   list.forEach((step, index) => {
     const at = `${path}[${index}]`;
@@ -617,6 +633,20 @@ function validateStepList(list, path, depth, inLoop, context) {
         `${at}: 文字と日付の条件（contains、equals、month、from、to）は、schemaVersion が ${VALUE_CONDITION_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
       );
     }
+    if (type === 'break' && !inRepeat) {
+      errors.push(`${at}: break は、forEach か while の内側の手順にだけ書けます。`);
+    }
+    if (
+      (type === 'if' || type === 'while') &&
+      isRecord(step.condition) &&
+      'before' in step.condition &&
+      version !== undefined &&
+      version < BEFORE_CONDITION_MIN_SCHEMA_VERSION
+    ) {
+      errors.push(
+        `${at}: 日付が月より前かの条件（before）は、schemaVersion が ${BEFORE_CONDITION_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+      );
+    }
     if (
       step.translated !== undefined &&
       version !== undefined &&
@@ -677,15 +707,15 @@ function validateStepList(list, path, depth, inLoop, context) {
       }
       if (type === 'if') {
         if (Array.isArray(step.then)) {
-          validateStepList(step.then, `${at}.then`, depth + 1, inLoop, context);
+          validateStepList(step.then, `${at}.then`, depth + 1, inLoop, context, inRepeat);
         }
         if (Array.isArray(step.else)) {
-          validateStepList(step.else, `${at}.else`, depth + 1, inLoop, context);
+          validateStepList(step.else, `${at}.else`, depth + 1, inLoop, context, inRepeat);
         }
       } else if (Array.isArray(step.steps)) {
         // while の内側は、行の内側で探す指定（scope）の対象となる行を変えないため、inLoop を引き継ぎます（#103）。
         const loop = type === 'forEach' ? true : inLoop;
-        validateStepList(step.steps, `${at}.steps`, depth + 1, loop, context);
+        validateStepList(step.steps, `${at}.steps`, depth + 1, loop, context, true);
       }
     }
   });
@@ -905,6 +935,7 @@ export function validateStep(step) {
       return validateWaitMs(step.ms);
 
     case 'closeTab':
+    case 'break':
       return [];
 
     case 'if': {
@@ -965,7 +996,7 @@ export function validateStep(step) {
 
     default:
       return [
-        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait、closeTab、if、forEach、while のいずれでもありません。',
+        '手順の種類（type）が navigate、click、input、select、pause、savePdf、extract、wait、closeTab、if、forEach、while、break のいずれでもありません。',
       ];
   }
 }
@@ -997,7 +1028,16 @@ function validateDownload(download) {
 }
 
 /** 条件に書ける項目です。target と、条件の種類ごとの項目です。 */
-const CONDITION_FIELDS = ['target', 'exists', 'contains', 'equals', 'month', 'from', 'to'];
+const CONDITION_FIELDS = [
+  'target',
+  'exists',
+  'contains',
+  'equals',
+  'month',
+  'before',
+  'from',
+  'to',
+];
 
 /**
  * if と while の条件を検証します（#6、#103）。
@@ -1020,11 +1060,12 @@ function validateCondition(condition) {
     'contains' in condition,
     'equals' in condition,
     'month' in condition,
+    'before' in condition,
     'from' in condition || 'to' in condition,
   ].filter(Boolean).length;
   if (kinds !== 1) {
     errors.push(
-      'condition には、exists、contains、equals、month、from と to のどれか 1 種類だけを書いてください。',
+      'condition には、exists、contains、equals、month、before、from と to のどれか 1 種類だけを書いてください。',
     );
     return errors;
   }
@@ -1036,10 +1077,13 @@ function validateCondition(condition) {
       errors.push(`condition.${name} が空か、文字列ではありません。`);
     }
   }
-  if ('month' in condition) {
-    const month = condition.month;
-    if (!isText(month) || (!hasReference(month) && !MONTH_VALUE_PATTERN.test(month))) {
-      errors.push('condition.month が、2026-09 の形式の年月か、パラメータの参照ではありません。');
+  for (const name of ['month', 'before']) {
+    const month = condition[name];
+    if (
+      name in condition &&
+      (!isText(month) || (!hasReference(month) && !MONTH_VALUE_PATTERN.test(month)))
+    ) {
+      errors.push(`condition.${name} が、2026-09 の形式の年月か、パラメータの参照ではありません。`);
     }
   }
   for (const name of ['from', 'to']) {
@@ -1094,7 +1138,7 @@ export function templateTexts(step) {
     case 'while':
       // 文字と日付の条件の値です（#103）。
       return isRecord(step.condition)
-        ? ['contains', 'equals', 'month', 'from', 'to'].flatMap((name) => {
+        ? ['contains', 'equals', 'month', 'before', 'from', 'to'].flatMap((name) => {
             const value = /** @type {Record<string, unknown>} */ (step.condition)[name];
             return typeof value === 'string' ? [value] : [];
           })

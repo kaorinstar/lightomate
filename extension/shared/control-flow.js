@@ -1,6 +1,7 @@
 // 条件分岐（if）と繰り返し（forEach）の手順を扱います（#6）。chrome.* は使いません。
 // 繰り返しの中でのページの移動と、ページ送り（forEach の nextPage）は #95 で加えました。
 // 条件を満たす間の繰り返し（while）は #103 で加えました。
+// 繰り返しを途中で終える手順（break）は #162 で加えました。
 //
 // フロー定義では、if、forEach、while の内側の手順を入れ子の一覧として書きます。実行の前に、入れ子の手順を
 // 「条件に応じて飛ぶ先」を持つ平らな命令の一覧（program）に変換します。実行は命令の番号（pc）を
@@ -45,7 +46,8 @@ export const MAX_PAGES_LIMIT = 50;
  *   { op: 'forEach', number: number, step: import('./flow.js').ForEachStep, endPc: number } |
  *   { op: 'next', startPc: number } |
  *   { op: 'while', number: number, step: import('./flow.js').WhileStep, endPc: number } |
- *   { op: 'loop', startPc: number }
+ *   { op: 'loop', startPc: number } |
+ *   { op: 'break', number: number, startPc: number }
  * )} Instruction
  */
 
@@ -162,12 +164,21 @@ export function compileSteps(steps) {
   /** @type {Instruction[]} */
   const program = [];
   let number = 0;
+  /** 囲んでいる繰り返し（forEach、while）の命令の番号です。外側から順です。break の飛び先に使います（#162）。 */
+  /** @type {number[]} */
+  const loops = [];
   /** @param {Step[]} items */
   const emit = (items) => {
     for (const step of items) {
       const own = number;
       number += 1;
-      if (step.type === 'if') {
+      if (step.type === 'break') {
+        const startPc = loops.at(-1);
+        if (startPc === undefined) {
+          throw new Error('break の手順が、forEach か while の内側にありません。');
+        }
+        program.push({ op: 'break', number: own, startPc });
+      } else if (step.type === 'if') {
         const instruction = { op: /** @type {const} */ ('if'), number: own, step, elsePc: -1 };
         program.push(instruction);
         emit(step.then);
@@ -184,14 +195,18 @@ export function compileSteps(steps) {
         const startPc = program.length;
         const instruction = { op: /** @type {const} */ ('forEach'), number: own, step, endPc: -1 };
         program.push(instruction);
+        loops.push(startPc);
         emit(step.steps);
+        loops.pop();
         program.push({ op: 'next', startPc });
         instruction.endPc = program.length;
       } else if (step.type === 'while') {
         const startPc = program.length;
         const instruction = { op: /** @type {const} */ ('while'), number: own, step, endPc: -1 };
         program.push(instruction);
+        loops.push(startPc);
         emit(step.steps);
+        loops.pop();
         program.push({ op: 'loop', startPc });
         instruction.endPc = program.length;
       } else {
@@ -219,6 +234,15 @@ export function advance(program, pc, frames, result) {
       return { pc: result === true ? pc + 1 : instruction.elsePc, frames };
     case 'jump':
       return { pc: instruction.to, frames };
+    case 'break': {
+      // いちばん内側の繰り返しの後へ飛び、その段と、それより内側の段の記録を除きます（#162）。
+      const loop = program[instruction.startPc];
+      const index = frames.findIndex((frame) => frame.startPc === instruction.startPc);
+      return {
+        pc: loop.op === 'forEach' || loop.op === 'while' ? loop.endPc : pc + 1,
+        frames: index === -1 ? frames : frames.slice(0, index),
+      };
+    }
     case 'while': {
       // 初めて判定する場合は、繰り返しの記録を加えます。loop から戻った場合は、記録がすでにあります。
       const top = frames.at(-1);

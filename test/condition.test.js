@@ -159,3 +159,23 @@ test('isDateValue は、YYYY-MM-DD の形式の存在する日付だけを受け
   assert.equal(isDateValue('2026-02-29'), false);
   assert.equal(isDateValue('2026-9-1'), false);
 });
+
+test('月より前の条件は、読み取った日付がその月の 1 日より前かを判定する（#162）', () => {
+  const condition = { target, before: '2026-09' };
+  assert.deepEqual(evaluateCondition(condition, '2026年8月31日', false), { ok: true, met: true });
+  assert.deepEqual(evaluateCondition(condition, '2025年12月31日', false), { ok: true, met: true });
+  assert.deepEqual(evaluateCondition(condition, '2026年9月1日', false), { ok: true, met: false });
+  assert.deepEqual(evaluateCondition(condition, '2026年10月1日', false), { ok: true, met: false });
+  // 1 月の前は、前の年の 12 月です。
+  assert.deepEqual(evaluateCondition({ target, before: '2026-01' }, '2025/12/31', false), {
+    ok: true,
+    met: true,
+  });
+  const invalid = evaluateCondition({ target, before: '2026-9' }, '2026/9/1', false);
+  assert.match(invalid.ok ? '' : invalid.error, /2026-09 の形式ではありません/);
+  assert.equal(conditionKind(condition), 'date');
+  assert.equal(
+    describeCondition({ target, before: '{{month}}' }),
+    '「注文日」が {{month}} より前の日付の場合',
+  );
+});

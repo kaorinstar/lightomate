@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 10,
+  "schemaVersion": 13,
   "name": "領収書（前月分）",
   "origin": "https://shop.example.com",
   "params": [{ "name": "month", "label": "対象月", "type": "month", "default": "@previous-month" }],
@@ -13,6 +13,19 @@
       "nextPage": { "selectors": ["a.next:not(.disabled)"], "tag": "a", "label": "次へ" },
       "maxPages": 12,
       "steps": [
+        {
+          "type": "if",
+          "condition": {
+            "target": {
+              "selectors": [".order-date"],
+              "tag": "span",
+              "label": "注文日",
+              "scope": "item"
+            },
+            "before": "{{month}}"
+          },
+          "then": [{ "type": "break" }]
+        },
         {
           "type": "if",
           "condition": {

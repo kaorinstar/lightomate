@@ -188,6 +188,68 @@ test('download を付けたクリックで、ファイルが指定した名前�
   }
 });
 
+test('繰り返しを終える：対象月より前の行で繰り返しを終え、次のページを開かずに次の手順へ進む（#162）', async () => {
+  const date = target('.order-date', 'span', '注文日', true);
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 13,
+    name: '繰り返しを終える',
+    origin: server.origin,
+    interval: { min: 1000, max: 1000 },
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/dated-orders.html` },
+      {
+        type: 'forEach',
+        items: target('tr.order-row', 'tr', '注文の行'),
+        nextPage: target('a.next', 'a', '次へ'),
+        // 2 ページ目を開こうとすると、ページ送りの上限で停止します。
+        maxPages: 1,
+        steps: [
+          { type: 'if', condition: { target: date, before: '2026-09' }, then: [{ type: 'break' }] },
+          {
+            type: 'if',
+            condition: { target: date, month: '2026-09' },
+            then: [
+              {
+                type: 'extract',
+                target: target('.order-number', 'span', '注文番号', true),
+                name: 'number',
+              },
+              {
+                type: 'savePdf',
+                path: 'Lightomate/前の月で終える/{{number}}.pdf',
+                onConflict: 'overwrite',
+              },
+            ],
+          },
+        ],
+      },
+      { type: 'savePdf', path: 'Lightomate/前の月で終える/後.pdf', onConflict: 'overwrite' },
+    ],
+  };
+
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.deepEqual(
+    await waitUntil(
+      async () =>
+        listFiles(browser.downloadDir).filter((file) =>
+          file.startsWith('Lightomate/前の月で終える/'),
+        ),
+      (files) => files.length >= 3,
+    ),
+    [
+      'Lightomate/前の月で終える/C-002.pdf',
+      'Lightomate/前の月で終える/C-003.pdf',
+      'Lightomate/前の月で終える/後.pdf',
+    ],
+  );
+  assert.deepEqual(pagesAt('/dated-orders-2.html'), [], '次のページが開かれています。');
+  for (const page of pagesAt('/dated-orders.html')) {
+    await page.close();
+  }
+});
+
 test('定期実行：同じサイトの手動の実行が終わるまで待ち、終わった後に背景のタブで実行する（#22）', async () => {
   const { extensionPage } = browser;
   /**
