@@ -591,7 +591,7 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
   };
 
   // 要素をまだ選んでいないブロックの説明（マウスを重ねると出る文）は、選ぶ方法を示します。右クリックのメニューには
-  // ［複製］があり、［インライン入力］はありません。メニューの項目の名前は、後ろにキーの組み合わせ（例：「複製 D」）が
+  // ［複製］があり、行の切り替えは見た目の変化を表す名前になっています。メニューの項目の名前は、後ろにキーの組み合わせ（例：「複製 D」）が
   // 付くため、先頭の一致で探します。
   const tooltip = await page.evaluate((blockId) => {
     const block = /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getBlockById(blockId);
@@ -608,7 +608,13 @@ test('要素の選択モード：ページで行と行の内側の要素を選�
   }, ids.loop);
   await page.mouse.click(loopBox.x, loopBox.y, { button: 'right' });
   await page.getByRole('menuitem', { name: /^複製/ }).waitFor();
-  assert.equal(await page.getByRole('menuitem', { name: 'インライン入力' }).count(), 0);
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const { Msg } = /** @type {any} */ (globalThis).Blockly;
+      return [Msg.INLINE_INPUTS, Msg.EXTERNAL_INPUTS];
+    }),
+    ['1 行にまとめて表示', '複数行に分けて表示'],
+  );
   await page.keyboard.press('Escape');
   await page.getByRole('menuitem', { name: /^複製/ }).waitFor({ state: 'hidden' });
 
