@@ -3,8 +3,11 @@
 // グローバルの Blockly を使います。ブロックの定義と、手順との変換は extension/shared/blocks.js にあります。
 
 import {
+  NOT_PICKED,
+  PICK_FIELDS,
   blockDefinitions,
   conditionUsesValues,
+  pickedStep,
   stepsToWorkspace,
   toolbox,
   workspaceToSteps,
@@ -16,6 +19,13 @@ import {
 const Blockly = /** @type {any} */ (globalThis).Blockly;
 
 let registered = false;
+
+/**
+ * 右クリックのメニューの［ページで選ぶ］を押したときに呼ぶ処理です（#139）。メニューは 1 回だけ登録するため、
+ * 編集画面を作るときに差し替えます。
+ * @type {(blockId: string, field: 'TARGET' | 'NEXT') => void}
+ */
+let onPickFromMenu = () => {};
 
 /** 画像と音のファイルの場所です。options.html からの相対パスです。 */
 const MEDIA = '../vendor/blockly/media/';
@@ -76,6 +86,63 @@ function register() {
     }
   }
   Blockly.blockRendering.register(RENDERER, Renderer);
+
+  // 要素を使うブロックには、ページで選ぶ方法を案内する説明（マウスを重ねると出る文）を付けます（#139）。
+  for (const type of Object.keys(PICK_FIELDS)) {
+    const definition = Blockly.Blocks[type];
+    const init = definition.init;
+    definition.init = function () {
+      init.call(this);
+      this.setTooltip(() => pickTooltip(this));
+    };
+  }
+
+  // 右クリックのメニューの文言です。Blockly の日本語の「重複」は、ブロックを写す操作に合わないため直します。
+  Blockly.Msg.DUPLICATE_BLOCK = '複製';
+  // 複数行のブロックを 1 行にまとめるか、行に分けるかの切り替え（Blockly の「インライン入力」「外部入力」）は、
+  // 見た目だけが変わり、保存もされず、使う場面がないため、メニューから外します（利用者の確認）。
+  if (Blockly.ContextMenuRegistry.registry.getItem('blockInline')) {
+    Blockly.ContextMenuRegistry.registry.unregister('blockInline');
+  }
+
+  // 右クリックのメニューから、要素の選択モードを始めます（#139）。キーボードでは、ブロックを選んで
+  // Ctrl + Enter キー（Mac では Command + Enter キー）でメニューを開きます（Blockly 13 の標準の操作）。
+  for (const field of /** @type {const} */ (['TARGET', 'NEXT'])) {
+    Blockly.ContextMenuRegistry.registry.register({
+      id: `lm_pick_${field}`,
+      scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+      weight: -1,
+      displayText: field === 'NEXT' ? '次のページへ進むボタンをページで選ぶ' : 'ページで選ぶ',
+      /** @param {any} scope */
+      preconditionFn(scope) {
+        const block = scope.block;
+        return !block.isInFlyout && (PICK_FIELDS[block.type] ?? []).includes(field)
+          ? 'enabled'
+          : 'hidden';
+      },
+      /** @param {any} scope */
+      callback(scope) {
+        onPickFromMenu(scope.block.id, field);
+      },
+    });
+  }
+}
+
+/**
+ * 要素を使うブロックの説明（マウスを重ねると出る文）です。まだ選んでいない欄があれば、選ぶ方法を示します。
+ * @param {any} block
+ * @returns {string}
+ */
+function pickTooltip(block) {
+  if (block.getFieldValue('TARGET') === NOT_PICKED) {
+    return block.type.startsWith('lm_forEach')
+      ? '右クリックして［ページで選ぶ］を押し、ページで、繰り返す一覧のどれか 1 行を押してください。'
+      : '右クリックして［ページで選ぶ］を押し、ページで、操作する要素を押してください。';
+  }
+  if (block.getField('NEXT') && block.getFieldValue('NEXT') === NOT_PICKED) {
+    return '右クリックして［次のページへ進むボタンをページで選ぶ］を押し、ページで、次のページへ進むボタンを押してください。';
+  }
+  return '選び直すには、右クリックして［ページで選ぶ］を押してください。';
 }
 
 /**
@@ -101,12 +168,31 @@ function theme(container) {
 }
 
 /**
+ * 要素を選べるブロックの情報です（#139）。
+ * @typedef {object} PickInfo
+ * @property {string} blockId
+ * @property {string} blockType
+ * @property {string} label ブロックの表示の文字
+ * @property {('TARGET' | 'NEXT')[]} fields 選べる欄
+ * @property {object[]} chain ブロックを囲む繰り返しの行の指定（外側から順）
+ * @property {string} [error] 選べない理由。囲む繰り返しの行をまだ選んでいない場合です
+ */
+
+/**
  * ブロックの編集画面を作ります。
  * @param {HTMLElement} container ブロックを表示する要素
- * @param {{ onChange: (dirty: boolean) => void }} options onChange：保存していない変更の有無が変わったとき
+ * @param {{
+ *   onChange: (dirty: boolean) => void,
+ *   onPick?: (blockId: string, field: 'TARGET' | 'NEXT') => void,
+ * }} options
+ *   onChange：保存していない変更の有無が変わったとき。
+ *   onPick：右クリックのメニューの［ページで選ぶ］を押したとき（#139）
  */
-export function createBlockEditor(container, { onChange }) {
+export function createBlockEditor(container, { onChange, onPick }) {
   register();
+  if (onPick) {
+    onPickFromMenu = onPick;
+  }
   const workspace = Blockly.inject(container, {
     renderer: RENDERER,
     theme: theme(container),
@@ -132,6 +218,43 @@ export function createBlockEditor(container, { onChange }) {
       setDirty(true);
     }
   });
+
+  /**
+   * ブロックの要素を選べるかと、選ぶときに使う情報を返します（#139）。
+   * @param {any} block
+   * @returns {PickInfo | null}
+   */
+  const pickInfo = (block) => {
+    const fields = block && !block.isInFlyout ? PICK_FIELDS[block.type] : undefined;
+    if (!block || !fields || block.workspace !== workspace) {
+      return null;
+    }
+    // 囲む繰り返しの行の指定を、外側から順に集めます。行の内側の要素（scope: item）を作るのに使います。
+    /** @type {object[]} */
+    const chain = [];
+    let error = '';
+    for (let parent = block.getSurroundParent(); parent; parent = parent.getSurroundParent()) {
+      if (parent.type === 'lm_forEach' || parent.type === 'lm_forEach_pages') {
+        const items = parent.lmState?.step?.items;
+        if (items) {
+          chain.unshift(items);
+        } else {
+          error =
+            '囲んでいる繰り返しの行をまだ選んでいません。先に繰り返しのブロックで行を選んでください。';
+        }
+      }
+    }
+    const text = String(block.toString());
+    const label = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+    return {
+      blockId: block.id,
+      blockType: block.type,
+      label,
+      fields,
+      chain,
+      ...(error ? { error } : {}),
+    };
+  };
 
   // 画面の色が変わったら（OS の設定の切り替え）、Blockly の配色も合わせます。
   new MutationObserver(() => workspace.setTheme(theme(container))).observe(
@@ -182,6 +305,37 @@ export function createBlockEditor(container, { onChange }) {
     /** 保存していない変更があるかです。 */
     get dirty() {
       return dirty;
+    },
+
+    /**
+     * ブロックの要素を選べるかと、選ぶときに使う情報を返します（#139）。
+     * @param {string} blockId
+     * @returns {PickInfo | null}
+     */
+    pickInfo(blockId) {
+      return pickInfo(workspace.getBlockById(blockId));
+    },
+
+    /**
+     * ページで選んだ結果をブロックに入れます（#139）。保存は［手順を保存］で行います。
+     * @param {string} blockId
+     * @param {'TARGET' | 'NEXT'} field
+     * @param {{ target?: { label: string }, items?: { label: string } }} result
+     * @returns {boolean} ブロックが見つかり、入れられたか
+     */
+    applyPick(blockId, field, result) {
+      const block = workspace.getBlockById(blockId);
+      if (!block) {
+        return false;
+      }
+      const step = pickedStep(block.type, block.lmState?.step, field, result);
+      block.lmState = { step };
+      const label =
+        (field === 'TARGET' && result.items ? result.items : result.target)?.label ?? '';
+      block.setFieldValue(label, field);
+      setDirty(true);
+      block.select();
+      return true;
     },
 
     /** 表示の大きさを合わせ直します。隠していた区画を表示したときに呼びます。 */

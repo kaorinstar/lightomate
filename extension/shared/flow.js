@@ -1161,11 +1161,12 @@ export function stepOrigin(flow, step) {
 }
 
 /**
+ * 要素の指定（target）の形を確かめます。要素の選択モード（#139）でページから届いた指定の確認にも使います。
  * @param {unknown} target
  * @param {string} [name] 誤りの説明に使う項目名
  * @returns {string[]}
  */
-function validateTarget(target, name = 'target') {
+export function validateTarget(target, name = 'target') {
   if (!isRecord(target)) {
     return [`${name} がオブジェクトではありません。`];
   }

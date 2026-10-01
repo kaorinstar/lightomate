@@ -35,6 +35,7 @@ import {
   startRun,
 } from './runner.js';
 import { registerScheduleEvents } from './scheduler.js';
+import { onPickerCommitted, onPickerResult, onPickerTabRemoved, startPicker } from './picker.js';
 
 // ツールバーのアイコンを押したときに、ポップアップではなくサイドパネルを開きます。
 // ポップアップはページをクリックした時点で閉じるため、記録中に開いたままにできないためです。
@@ -215,6 +216,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       );
       return true;
 
+    case 'picker/start':
+      // 要素の選択モード（#139）は、管理画面のブロックの［ページで選ぶ］から始めます。
+      if (!fromExtensionPage) {
+        return false;
+      }
+      startPicker(message, sender).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'picker/result':
+      // 選んだ要素の指定は、選択中のタブのページのスクリプトからだけ受け付けます（picker.js で照らし合わせます）。
+      onPickerResult(message, sender).catch((error) =>
+        console.error('選んだ要素を管理画面へ届けられませんでした。', error),
+      );
+      return false;
+
     case 'recording/step':
       addStep(message.step, sender, message.texts, message.matchedSelector, message.keys).catch(
         (error) => console.error('手順を記録できませんでした。', error),
@@ -228,6 +246,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.webNavigation.onCommitted.addListener((details) => {
   onCommitted(details).catch((error) => console.error('移動を記録できませんでした。', error));
+  onPickerCommitted(details).catch((error) =>
+    console.error('要素の選択を終えられませんでした。', error),
+  );
 });
 
 chrome.webNavigation.onDOMContentLoaded.addListener((details) => {
@@ -238,6 +259,9 @@ chrome.webNavigation.onDOMContentLoaded.addListener((details) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   onTabRemoved(tabId).catch((error) => console.error('記録を停止できませんでした。', error));
+  onPickerTabRemoved(tabId).catch((error) =>
+    console.error('要素の選択を終えられませんでした。', error),
+  );
 });
 
 /**

@@ -495,3 +495,210 @@ test('必ず止まる場所：一覧で押したサイトの入力欄に切り�
   await list.waitFor({ state: 'visible' });
   assert.equal(await form.isHidden(), true);
 });
+
+test('要素の選択モード：ページで行と行の内側の要素を選ぶとブロックに入り、リンクの移動もページの処理も起きない（#139）', async () => {
+  const { extensionPage: page } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 12,
+    name: '要素の選択',
+    origin: server.origin,
+    steps: [{ type: 'navigate', cause: 'user', url: `${server.origin}/picker.html` }],
+  };
+  await page.evaluate(
+    (flow) =>
+      chrome.storage.local.set({
+        flows: { picker: { id: 'picker', createdAt: '', updatedAt: '', flow } },
+      }),
+    flow,
+  );
+  // 選択モードは、サイトのタブのうち最後に使ったタブで始めます。前のテストのタブが残っていると、そのタブで
+  // 始まるため、サイトのタブを閉じてから、テスト用のページを開いておきます。
+  for (const other of browser.context.pages()) {
+    if (other.url().startsWith(server.origin)) {
+      await other.close();
+    }
+  }
+  const site = await browser.context.newPage();
+  await site.goto(`${server.origin}/picker.html`);
+
+  const id = new URL(page.url()).host;
+  await page.bringToFront();
+  await page.goto(`chrome-extension://${id}/options/options.html#picker`);
+  await page.reload();
+  await page.waitForFunction(
+    () =>
+      /** @type {any} */ (globalThis).Blockly?.getMainWorkspace()?.getAllBlocks(false).length > 0,
+  );
+
+  // ブロックの一覧から置いたのと同じ、要素をまだ選んでいない繰り返しとクリックのブロックをつなぎます。
+  const ids = await page.evaluate(() => {
+    const Blockly = /** @type {any} */ (globalThis).Blockly;
+    const workspace = Blockly.getMainWorkspace();
+    const [navigate] = workspace.getTopBlocks(true);
+    const loop = Blockly.serialization.blocks.append(
+      { type: 'lm_forEach', fields: { TARGET: '（ページで選ぶ）', MAX: 100 } },
+      workspace,
+    );
+    const click = Blockly.serialization.blocks.append(
+      { type: 'lm_click', fields: { TARGET: '（ページで選ぶ）' } },
+      workspace,
+    );
+    const extract = Blockly.serialization.blocks.append(
+      { type: 'lm_extract', fields: { TARGET: '（ページで選ぶ）', NAME: 'no' } },
+      workspace,
+    );
+    navigate.nextConnection.connect(loop.previousConnection);
+    loop.getInput('STEPS').connection.connect(click.previousConnection);
+    click.nextConnection.connect(extract.previousConnection);
+    return { loop: loop.id, click: click.id, extract: extract.id };
+  });
+
+  // 要素を選ぶ前に保存すると、選んでいないブロックがあることを知らせます。
+  await page.locator('#blocks-save').click();
+  await page.locator('#blocks-notice').getByText('要素をまだ選んでいないブロック').waitFor();
+
+  /**
+   * ブロックを右クリックし、メニューの［ページで選ぶ］を押して、テスト用のページで選択モードが始まるのを待ちます。
+   * keyboard を指定した場合は、利用者がキーボードで操作する場合と同じく、ブロックを押して選んだ後、
+   * Ctrl + Enter キーでメニューを開き、Enter キーで先頭の［ページで選ぶ］を押します。
+   * @param {string} blockId
+   * @param {{ keyboard?: boolean }} [options]
+   */
+  const startPick = async (blockId, { keyboard = false } = {}) => {
+    await page.bringToFront();
+    await page.locator('#blocks').scrollIntoViewIfNeeded();
+    const point = await page.evaluate((blockId) => {
+      const Blockly = /** @type {any} */ (globalThis).Blockly;
+      const rect = Blockly.getMainWorkspace()
+        .getBlockById(blockId)
+        .getSvgRoot()
+        .getBoundingClientRect();
+      return { x: rect.x + 12, y: rect.y + 10 };
+    }, blockId);
+    if (keyboard) {
+      await page.mouse.click(point.x, point.y);
+      await page.keyboard.press('Control+Enter');
+      await page.getByRole('menuitem', { name: /^ページで選ぶ/ }).waitFor();
+      await page.keyboard.press('Enter');
+    } else {
+      await page.mouse.click(point.x, point.y, { button: 'right' });
+      await page.getByRole('menuitem', { name: /^ページで選ぶ/ }).click();
+    }
+    await site.waitForFunction(
+      () => globalThis.document.querySelector('lightomate-picker') !== null,
+    );
+  };
+
+  // 要素をまだ選んでいないブロックの説明（マウスを重ねると出る文）は、選ぶ方法を示します。右クリックのメニューには
+  // ［複製］があり、1 行にまとめる切り替え（インライン入力）はありません。メニューの項目の名前は、後ろにキーの組み合わせ（例：「複製 D」）が
+  // 付くため、先頭の一致で探します。
+  const tooltip = await page.evaluate((blockId) => {
+    const block = /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getBlockById(blockId);
+    return typeof block.tooltip === 'function' ? block.tooltip() : block.tooltip;
+  }, ids.loop);
+  assert.match(tooltip, /右クリックして［ページで選ぶ］を押し/);
+  await page.locator('#blocks').scrollIntoViewIfNeeded();
+  const loopBox = await page.evaluate((blockId) => {
+    const rect = /** @type {any} */ (globalThis).Blockly.getMainWorkspace()
+      .getBlockById(blockId)
+      .getSvgRoot()
+      .getBoundingClientRect();
+    return { x: rect.x + 12, y: rect.y + 10 };
+  }, ids.loop);
+  await page.mouse.click(loopBox.x, loopBox.y, { button: 'right' });
+  await page.getByRole('menuitem', { name: /^複製/ }).waitFor();
+  assert.equal(
+    await page.evaluate(() =>
+      Boolean(
+        /** @type {any} */ (globalThis).Blockly.ContextMenuRegistry.registry.getItem('blockInline'),
+      ),
+    ),
+    false,
+  );
+  await page.keyboard.press('Escape');
+  await page.getByRole('menuitem', { name: /^複製/ }).waitFor({ state: 'hidden' });
+
+  // 1. 繰り返しの行：2 行目のセルを押し、行の確認で Enter を押して「はい」を選びます。
+  await startPick(ids.loop);
+  await site.locator('tbody tr:nth-child(2) .no').click();
+  await site.keyboard.press('Enter');
+  const loopState = await waitUntil(
+    () =>
+      page.evaluate(
+        (blockId) =>
+          /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getBlockById(blockId).lmState,
+        ids.loop,
+      ),
+    (state) => state?.step?.items !== undefined,
+  );
+  assert.deepEqual(loopState.step.items.selectors, [
+    'tr.invoice-row',
+    '#invoices > tbody > tr.invoice-row',
+  ]);
+
+  // 2. 行の内側のリンク：押してもリンクの移動も、ページのスクリプトの処理も起きません。
+  await startPick(ids.click);
+  await site.locator('tbody tr:nth-child(3) a.receipt').click();
+  const clickState = await waitUntil(
+    () =>
+      page.evaluate(
+        (blockId) =>
+          /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getBlockById(blockId).lmState,
+        ids.click,
+      ),
+    (state) => state?.step?.target !== undefined,
+  );
+  assert.equal(clickState.step.target.scope, 'item');
+  assert.equal(clickState.step.target.selectors[0], 'a.receipt');
+  assert.equal(new URL(site.url()).pathname, '/picker.html');
+  assert.equal(await site.locator('#clicked').textContent(), '押されていません');
+  assert.equal(
+    await site.evaluate(() => globalThis.document.querySelector('lightomate-picker')),
+    null,
+  );
+
+  // 3. 翻訳が差し込んだ font 要素を押しても、翻訳していないページにもある要素（td.no）を選びます。
+  await site.waitForFunction(() => globalThis.document.querySelector('td.no font font') !== null);
+  await startPick(ids.extract);
+  await site.locator('tbody tr:nth-child(1) td.no font font').click();
+  const extractState = await waitUntil(
+    () =>
+      page.evaluate(
+        (blockId) =>
+          /** @type {any} */ (globalThis).Blockly.getMainWorkspace().getBlockById(blockId).lmState,
+        ids.extract,
+      ),
+    (state) => state?.step?.target !== undefined,
+  );
+  assert.equal(extractState.step.target.tag, 'td');
+  assert.equal(extractState.step.target.selectors[0], 'td.no');
+  assert.ok(
+    extractState.step.target.selectors.every(
+      (/** @type {string} */ selector) => !selector.includes('font'),
+    ),
+  );
+
+  // 4. Esc キーでは、何も選ばずに終わります。キーボードでメニューを開いて始めます。
+  await startPick(ids.click, { keyboard: true });
+  await site.keyboard.press('Escape');
+  await page.locator('#blocks-pick-notice').getByText('要素の選択を取り消しました。').waitFor();
+
+  // 5. 保存すると、選んだ要素がフローに入ります。
+  await page.bringToFront();
+  await page.locator('#blocks-save').click();
+  const saved = await waitUntil(
+    () =>
+      page.evaluate(async () => {
+        const { flows } = await chrome.storage.local.get('flows');
+        return /** @type {{ picker: { flow: Flow } }} */ (flows).picker.flow;
+      }),
+    (flow) => flow.steps.length === 2,
+  );
+  const loop = /** @type {any} */ (saved.steps[1]);
+  assert.equal(loop.type, 'forEach');
+  assert.equal(loop.items.selectors[0], 'tr.invoice-row');
+  assert.equal(loop.steps[0].type, 'click');
+  assert.equal(loop.steps[0].target.scope, 'item');
+  await site.close();
+});
