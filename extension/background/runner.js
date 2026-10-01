@@ -649,6 +649,7 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
     runSteps(flow, resolved.steps, tabId, runId, pathValues).finally(() => {
       activeRuns.delete(runId);
       options.onEnd?.(runId);
+      notifyRunEnd();
     });
     return { ok: true, runId };
   } catch (error) {
@@ -657,7 +658,31 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
     redactions.delete(runId);
     savedFiles.delete(runId);
     retryCounts.delete(runId);
+    notifyRunEnd();
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * 実行が終わり、この Service Worker の実行中の一覧（activeRuns）から消えたときに呼ぶ処理です（#146）。
+ * @type {Set<() => void>}
+ */
+const runEndListeners = new Set();
+
+/**
+ * 実行が終わり、実行中の一覧から消えたときに呼ぶ処理を登録します（#146）。
+ * 状態の保存（chrome.storage.session）は、実行中の一覧から消える前に起きます。そのため、状態の変化だけを見ると、
+ * 終わった直後の実行と重なっていると判定することがあります。定期実行の待ちは、この知らせで確かめ直します。
+ * @param {() => void} listener
+ */
+export function onRunEnd(listener) {
+  runEndListeners.add(listener);
+}
+
+/** 実行が実行中の一覧から消えたことを知らせます。 */
+function notifyRunEnd() {
+  for (const listener of runEndListeners) {
+    listener();
   }
 }
 

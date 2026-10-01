@@ -259,7 +259,9 @@ test('定期実行：同じサイトの手動の実行が終わるまで待ち�
         );
       }),
     (entries) => entries.length >= 2,
-    60_000,
+    // 手動の実行（約 7 秒）と定期実行（約 2 秒）が終わるまでの時間です。待っている定期実行は、手動の実行の
+    // 終了の知らせで始めます。1 分ごとの alarm に頼ると、この時間を超えます（#146）。
+    30_000,
   );
   // 新しい順です。手動の実行が先に終わり、その後に定期実行が始まります。
   assert.deepEqual(
@@ -273,6 +275,9 @@ test('定期実行：同じサイトの手動の実行が終わるまで待ち�
     history[0].startedAt >= history[1].endedAt,
     '手動の実行の終了前に定期実行が始まりました。',
   );
+  // 手動の実行の終了から、数秒以内に定期実行が始まります（#146）。
+  const gap = Date.parse(history[0].startedAt) - Date.parse(String(history[1].endedAt));
+  assert.ok(gap < 10_000, `手動の実行の終了から定期実行の開始まで ${gap} ミリ秒かかりました。`);
   for (const page of pagesAt('/done.html')) {
     await page.close();
   }
