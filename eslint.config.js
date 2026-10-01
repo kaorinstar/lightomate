@@ -58,6 +58,11 @@ export default [
     languageOptions: { globals: globals['shared-node-browser'] },
   },
   {
+    // 表示の色を最初の描画より前に決めるスクリプト（#148）は、画面の head で通常のスクリプトとして読み込みます。
+    files: ['extension/shared/color-scheme.js'],
+    languageOptions: { sourceType: 'script', globals: globals.browser },
+  },
+  {
     // content script は ES モジュールとして読み込めないため、通常のスクリプトとして扱います。
     files: ['extension/content/**/*.js'],
     languageOptions: {
