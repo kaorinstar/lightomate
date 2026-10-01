@@ -65,6 +65,7 @@ import {
   whileLimitError,
 } from '../shared/control-flow.js';
 import { conditionKind, describeCondition, evaluateCondition } from '../shared/condition.js';
+import { pageStepText } from '../shared/describe.js';
 import { decideDialog } from '../shared/dialog.js';
 import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../shared/redirect.js';
 
@@ -215,6 +216,13 @@ const savedFiles = new Map();
  * @type {Map<string, number>}
  */
 const retryCounts = new Map();
+
+/**
+ * 実行ごとの、実行中のページの枠に表示している手順の文です（#156）。ページを移動すると枠が消えるため、
+ * ページにスクリプトを読み込み直した直後に、この文を送り直します。
+ * @type {Map<string, string>}
+ */
+const pageStepTexts = new Map();
 
 /**
  * 実行中のタブで開いたダイアログの状態です（#88）。実行ごとに 1 つ作ります。
@@ -469,6 +477,8 @@ async function injectContent(runId, tabId) {
     tabId,
     chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES }),
   );
+  // ページを移動した後に読み込んだスクリプトは、今の手順を知らないため、送り直します（#156）。
+  await sendPageStep(runId, tabId);
 }
 
 /**
@@ -525,6 +535,7 @@ async function finishRun(runId, update, step) {
   redactions.delete(runId);
   savedFiles.delete(runId);
   retryCounts.delete(runId);
+  pageStepTexts.delete(runId);
   // 操作の許可がないサイトのページでは、tabs の権限がないため URL を読めません（undefined）。
   const pageUrl =
     state && state.status !== 'done'
@@ -658,6 +669,7 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
     redactions.delete(runId);
     savedFiles.delete(runId);
     retryCounts.delete(runId);
+    pageStepTexts.delete(runId);
     notifyRunEnd();
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -1047,6 +1059,13 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
       retryCounts.set(runId, 0);
       // タブのページが移動すると、Chrome はそのタブ用のアイコンの文字を消します。手順ごとに設定し直します。
       await showRunBadge(tabId);
+      // ページの枠に、今の手順を表示します（#156）。スクリプトをまだ読み込んでいないページには届きませんが、
+      // 読み込んだ直後に送り直します（sendPageStep）。
+      pageStepTexts.set(
+        runId,
+        pageStepText({ ...position(), total }, stepAt(steps, currentNumber())),
+      );
+      await sendPageStep(runId, tabId);
 
       try {
         if (instruction.op === 'next') {
@@ -1248,7 +1267,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
                 : checkAuthAfterNavigation(runId, flow, tabId, step, navigatePc),
           );
           // 次にページを操作する手順まで、枠のない時間ができないよう、移動の後すぐに枠を表示します（#154）。
-          await showRunningFrame(flow, tabId);
+          await showRunningFrame(runId, flow, tabId);
           documentBefore = await getDocumentId(tabId);
         } else if (step.type === 'savePdf') {
           await checkAuthScreen(runId, flow, tabId, step, expectedUrl);
@@ -1827,10 +1846,11 @@ async function showPausedFrame(flow, tabId, url) {
  * 次の操作までの間（「待つ」や「一時停止」の手順など）は、枠が表示されないためです。
  * フローのサイト（extraOrigins を含む、#41）のページにだけ表示します。そのほかのサイトには、スクリプトを読み込む許可がないためです。
  * 読み込めない場合は、枠を出さずに続けます。同じページに 2 回読み込んでも、枠と受け取りは 1 つだけです。
+ * @param {string} runId
  * @param {Flow} flow
  * @param {number} tabId
  */
-async function showRunningFrame(flow, tabId) {
+async function showRunningFrame(runId, flow, tabId) {
   const url = await chrome.tabs.get(tabId).then(
     (tab) => tab.url,
     () => undefined,
@@ -1842,11 +1862,24 @@ async function showRunningFrame(flow, tabId) {
   await Promise.race([
     chrome.scripting
       .executeScript({ target: { tabId, frameIds: [0] }, files: CONTENT_FILES })
+      .then(() => sendPageStep(runId, tabId))
       .catch(() => {
         // 読み込めないページ（エラーの画面など）では、アイコンの文字だけで示します。
       }),
     sleep(PAGE_MESSAGE_TIMEOUT_MS),
   ]);
+}
+
+/**
+ * 実行中のページの枠に、今の手順の文を送ります（#156）。枠がないページには届きませんが、誤りにしません。
+ * @param {string} runId
+ * @param {number} tabId
+ */
+async function sendPageStep(runId, tabId) {
+  const text = pageStepTexts.get(runId);
+  if (text !== undefined) {
+    await sendToPageBriefly(tabId, { kind: 'runner/step-text', text });
+  }
 }
 
 /**

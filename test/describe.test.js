@@ -3,7 +3,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  PAGE_STEP_MAX_LENGTH,
   describeStep,
+  describeStepForPage,
+  pageStepText,
   paramColumns,
   runDetailText,
   runStatusLabel,
@@ -189,4 +192,75 @@ test('ダウンロードの保存先を指定したクリックの説明（#20�
     describeStep({ type: 'click', target, download: { path: 'L/{{n}}' } }),
     'クリック：PDF（ダウンロードを L/{{n}} に保存）',
   );
+});
+
+// ---- 実行中のページの枠に表示する手順（#156） ----
+
+test('ページに出す手順の文には、入力する値、選ぶ値、URL、保存先、条件の値を含めない', () => {
+  /** @type {[import('../extension/shared/flow.js').Step, string, string[]][]} */
+  const cases = [
+    [
+      { type: 'input', target: { ...target, label: 'メール' }, value: 'a@example.com' },
+      '入力：メール',
+      ['a@example.com'],
+    ],
+    [
+      { type: 'select', target: { ...target, label: '個数' }, values: ['2'], labels: ['2 個'] },
+      '選択：個数',
+      ['2 個'],
+    ],
+    [
+      { type: 'navigate', cause: 'user', url: 'https://example.com/secret?q=1' },
+      'ページを開く',
+      ['example.com'],
+    ],
+    [
+      { type: 'navigate', cause: 'page', url: 'https://example.com/next' },
+      'ページの移動を待つ',
+      ['example.com'],
+    ],
+    [{ type: 'savePdf', path: 'Lightomate/{{orderNo}}.pdf' }, 'PDF を保存', ['orderNo']],
+    [
+      { type: 'click', target, download: { path: 'Lightomate/{{orderNo}}' } },
+      'クリック：注文履歴',
+      ['orderNo'],
+    ],
+    [{ type: 'extract', target, name: 'orderNo' }, '読み取り：注文履歴', ['orderNo']],
+    [
+      { type: 'if', condition: { target, contains: '株式会社' }, then: [] },
+      '条件：「注文履歴」を確かめる',
+      ['株式会社'],
+    ],
+    [
+      { type: 'while', condition: { target, equals: '次へ' }, steps: [] },
+      '繰り返し：「注文履歴」を確かめる',
+      ['次へ'],
+    ],
+    [{ type: 'pause', note: '暗証番号を入力' }, '一時停止', ['暗証番号']],
+    [{ type: 'wait', ms: 150000 }, '150 秒待つ', []],
+  ];
+  for (const [step, expected, hidden] of cases) {
+    const text = describeStepForPage(step);
+    assert.equal(text, expected);
+    for (const value of hidden) {
+      assert.ok(!text.includes(value), `${expected} に ${value} が含まれています`);
+    }
+  }
+});
+
+test('ページに出す文は、手順の番号と繰り返しの何件目かを付け、長い文は末尾を「…」にする', () => {
+  assert.equal(
+    pageStepText({ stepIndex: 1, total: 2 }, { type: 'wait', ms: 150000 }),
+    '手順 2 / 2：150 秒待つ',
+  );
+  assert.equal(
+    pageStepText({ stepIndex: 4, total: 8, items: [2] }, { type: 'click', target }),
+    '手順 5 / 8（2 件目）：クリック：注文履歴',
+  );
+  const long = pageStepText(
+    { stepIndex: 0, total: 1 },
+    { type: 'click', target: { ...target, label: 'あ'.repeat(100) } },
+  );
+  assert.equal(long.length, PAGE_STEP_MAX_LENGTH);
+  assert.ok(long.endsWith('…'));
 });
