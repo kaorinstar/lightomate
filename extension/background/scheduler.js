@@ -26,7 +26,7 @@ import {
   schedulingProblems,
   shouldRun,
 } from '../shared/schedule.js';
-import { activeRunOrigins, listRunStates, startRun } from './runner.js';
+import { activeRunOrigins, listRunStates, onRunEnd, startRun } from './runner.js';
 
 /** @typedef {import('../shared/schedule.js').WaitingRun} WaitingRun */
 /** @typedef {import('../shared/flow.js').Flow} Flow */
@@ -100,6 +100,13 @@ export function registerScheduleEvents() {
     if (settled) {
       startWaiting().catch(() => {});
     }
+  });
+
+  // 実行が実行中の一覧（activeRunOrigins）から消えたときにも確かめ直します（#146）。状態の変化の知らせは、
+  // 実行中の一覧から消える前に届くため、その時点では重なっていると判定され、待つ一覧に戻る場合があります。
+  // この知らせがないと、次に確かめるのは 1 分ごとの alarm になり、最大で約 1 分遅れます。
+  onRunEnd(() => {
+    startWaiting().catch(() => {});
   });
 
   // Chrome の起動時にも Service Worker は起動しますが、念のため起動の知らせでも確かめます。
@@ -219,6 +226,7 @@ function startWaiting() {
     const session = await chrome.storage.session.get(null);
     // 状態を保存した実行だけと比べます。終わった直後の実行は、この Service Worker の変数（activeRunOrigins）に
     // 少しの間残るため、含めると始められません。始めたばかりの実行と重なった場合は、start が待つ一覧に戻します。
+    // 戻した場合も、終わった実行が変数から消えたときの知らせ（onRunEnd）で、もう一度確かめます（#146）。
     const next = pickWaiting(waiting, await listRunStates(), batchRunsFrom(session));
     if (!next) {
       return;
