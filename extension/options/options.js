@@ -553,7 +553,8 @@ function renderValues(blockId, field, params) {
  */
 function insertValue(blockId, field, text) {
   closeValues();
-  if (!blockEditor.appendToField(blockId, field.field, text)) {
+  const inserted = blockEditor.insertIntoField(blockId, field, text);
+  if (!inserted) {
     showNotice(
       elements.blocksPickNotice,
       '値を入れる前にブロックが削除されたため、入れませんでした。',
@@ -564,7 +565,7 @@ function insertValue(blockId, field, text) {
   blockEditor.focusBlock(blockId);
   showToast(
     elements.toast,
-    `「${text}」を${field.label}の末尾に入れました。保存するには［手順を保存］を押してください。`,
+    `「${text}」を${field.label}の${inserted.beforeExtension ? '拡張子の前' : '末尾'}に入れました。保存するには［手順を保存］を押してください。`,
   );
 }
 

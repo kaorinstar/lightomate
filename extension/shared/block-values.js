@@ -8,7 +8,7 @@
 
 import { conditionUsesValues } from './blocks.js';
 import { PARAM_NAME_PATTERN } from './params.js';
-import { BUILTIN_REFERENCES, RESERVED_NAMES } from './save-path.js';
+import { BUILTIN_REFERENCES, RESERVED_NAMES, fileExtension } from './save-path.js';
 
 /** @typedef {import('./blocks.js').BlockState} BlockState */
 /** @typedef {import('./blocks.js').WorkspaceState} WorkspaceState */
@@ -118,6 +118,23 @@ export function insertableValues(state, blockId, kind, params) {
     values.push({ text: `{{${reference}}}`, label: BUILTIN_LABELS[reference], group: 'builtin' });
   }
   return values;
+}
+
+/**
+ * 欄の文字に値を足した結果を返します。値は末尾に足します。ただし保存先が拡張子（.pdf など）で終わる場合は、
+ * 拡張子の前に入れます。拡張子の後に足すと、保存するときに拡張子がもう 1 つ付き、意図しない名前になるためです。
+ * @param {string} current 欄の今の文字
+ * @param {string} text 足す値（例：{{no}}）
+ * @param {'path' | 'template'} kind 欄の種類
+ * @returns {{ value: string, beforeExtension: boolean }}
+ */
+export function insertValueText(current, text, kind) {
+  const extension = kind === 'path' ? fileExtension(current) : '';
+  if (extension === '') {
+    return { value: `${current}${text}`, beforeExtension: false };
+  }
+  const stem = current.slice(0, -extension.length);
+  return { value: `${stem}${text}${extension}`, beforeExtension: true };
 }
 
 /**

@@ -715,7 +715,7 @@ test('値を入れる：右クリックのメニューから、キーボード�
     steps: [
       { type: 'navigate', cause: 'user', url: `${server.origin}/picker.html` },
       { type: 'extract', target, name: 'orderNo' },
-      { type: 'savePdf', path: 'Lightomate/' },
+      { type: 'savePdf', path: 'Lightomate/invoice_.pdf' },
     ],
   };
   await page.evaluate(
@@ -778,7 +778,10 @@ test('値を入れる：右クリックのメニューから、キーボード�
   }
   await page.keyboard.press('Enter');
   await panel.waitFor({ state: 'hidden' });
-  await page.locator('.lm-toast').getByText('「{{orderNo}}」を保存先の末尾に入れました').waitFor();
+  await page
+    .locator('.lm-toast')
+    .getByText('「{{orderNo}}」を保存先の拡張子の前に入れました')
+    .waitFor();
 
   await page.locator('#blocks-save').click();
   const saved = await waitUntil(
@@ -787,7 +790,7 @@ test('値を入れる：右クリックのメニューから、キーボード�
         const { flows } = await chrome.storage.local.get('flows');
         return /** @type {{ values: { flow: Flow } }} */ (flows).values.flow;
       }),
-    (flow) => /** @type {any} */ (flow.steps[2]).path !== 'Lightomate/',
+    (flow) => /** @type {any} */ (flow.steps[2]).path !== 'Lightomate/invoice_.pdf',
   );
-  assert.equal(/** @type {any} */ (saved.steps[2]).path, 'Lightomate/{{orderNo}}');
+  assert.equal(/** @type {any} */ (saved.steps[2]).path, 'Lightomate/invoice_{{orderNo}}.pdf');
 });

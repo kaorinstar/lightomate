@@ -2,7 +2,7 @@
 // Blockly（extension/vendor/blockly/）は、options.html で通常のスクリプトとして先に読み込み、
 // グローバルの Blockly を使います。ブロックの定義と、手順との変換は extension/shared/blocks.js にあります。
 
-import { insertableValues, valueFields } from '../shared/block-values.js';
+import { insertValueText, insertableValues, valueFields } from '../shared/block-values.js';
 import {
   NOT_PICKED,
   PICK_FIELDS,
@@ -412,20 +412,26 @@ export function createBlockEditor(container, { onChange, onPick, onInsert }) {
     },
 
     /**
-     * ブロックの欄の文字の末尾に、値を足します（#147）。保存は［手順を保存］で行います。
+     * ブロックの欄の文字に、値を足します（#147）。足す位置は insertValueText で決めます。
+     * 保存は［手順を保存］で行います。
      * @param {string} blockId
-     * @param {string} field
+     * @param {import('../shared/block-values.js').ValueField} field
      * @param {string} text
-     * @returns {boolean} ブロックが見つかり、足せたか
+     * @returns {{ beforeExtension: boolean } | null} ブロックが見つからない場合は null
      */
-    appendToField(blockId, field, text) {
+    insertIntoField(blockId, field, text) {
       const block = workspace.getBlockById(blockId);
-      if (!block?.getField(field)) {
-        return false;
+      if (!block?.getField(field.field)) {
+        return null;
       }
-      block.setFieldValue(`${block.getFieldValue(field) ?? ''}${text}`, field);
+      const result = insertValueText(
+        String(block.getFieldValue(field.field) ?? ''),
+        text,
+        field.kind,
+      );
+      block.setFieldValue(result.value, field.field);
       setDirty(true);
-      return true;
+      return { beforeExtension: result.beforeExtension };
     },
 
     /**

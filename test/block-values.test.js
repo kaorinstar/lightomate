@@ -2,7 +2,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { insertableValues, valueFields } from '../extension/shared/block-values.js';
+import {
+  insertValueText,
+  insertableValues,
+  valueFields,
+} from '../extension/shared/block-values.js';
 import { stepsToWorkspace, workspaceToSteps } from '../extension/shared/blocks.js';
 import { SCHEMA_VERSION, validateFlow } from '../extension/shared/flow.js';
 
@@ -172,4 +176,21 @@ test('値を入れられる欄は、ブロックの種類と条件の種類で�
 test('ブロックが見つからない場合は、読み取りの名前を出さない', () => {
   const { state } = workspace(steps);
   assert.deepEqual(texts(insertableValues(state, 'none', 'path', []), 'extract'), []);
+});
+
+test('値は欄の末尾に足し、保存先が拡張子で終わる場合は拡張子の前に入れる', () => {
+  assert.deepEqual(insertValueText('Lightomate/', '{{no}}', 'path'), {
+    value: 'Lightomate/{{no}}',
+    beforeExtension: false,
+  });
+  assert.deepEqual(insertValueText('Lightomate/{{month}}_.pdf', '{{no}}', 'path'), {
+    value: 'Lightomate/{{month}}_{{no}}.pdf',
+    beforeExtension: true,
+  });
+  // 名前の途中のドット（INV.2026）は拡張子とみなしません。保存先でない欄は、常に末尾に足します。
+  assert.equal(
+    insertValueText('Lightomate/INV.2026', '{{no}}', 'path').value,
+    'Lightomate/INV.2026{{no}}',
+  );
+  assert.equal(insertValueText('a.pdf', '{{no}}', 'template').value, 'a.pdf{{no}}');
 });
