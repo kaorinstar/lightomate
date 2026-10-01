@@ -99,10 +99,11 @@ function register() {
 
   // 右クリックのメニューの文言です。Blockly の日本語の「重複」は、ブロックを写す操作に合わないため直します。
   Blockly.Msg.DUPLICATE_BLOCK = '複製';
-  // 複数行のブロックを 1 行にまとめるか、行に分けるかの切り替えです。Blockly の日本語の「インライン入力」
-  // 「外部入力」は、何が変わるかがわからないため、見た目の変化を表す名前にします。手順の内容は変わりません。
-  Blockly.Msg.INLINE_INPUTS = '1 行にまとめて表示';
-  Blockly.Msg.EXTERNAL_INPUTS = '複数行に分けて表示';
+  // 複数行のブロックを 1 行にまとめるか、行に分けるかの切り替え（Blockly の「インライン入力」「外部入力」）は、
+  // 見た目だけが変わり、保存もされず、使う場面がないため、メニューから外します（利用者の確認）。
+  if (Blockly.ContextMenuRegistry.registry.getItem('blockInline')) {
+    Blockly.ContextMenuRegistry.registry.unregister('blockInline');
+  }
 
   // 右クリックのメニューから、要素の選択モードを始めます（#139）。キーボードでは、ブロックを選んで
   // Ctrl + Enter キー（Mac では Command + Enter キー）でメニューを開きます（Blockly 13 の標準の操作）。
