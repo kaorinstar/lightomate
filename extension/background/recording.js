@@ -244,9 +244,11 @@ export function resetRecording() {
  * @param {unknown} to 範囲の末尾（この手順を含みます）
  * @param {unknown} key 選んだ行の候補（shared/record-loop.js の candidateKey の値）
  * @param {unknown} count 表示していた手順の件数
+ * @param {unknown} [names] ファイル名に使う手順の番号（#179）
+ * @param {unknown} [withSite] ファイル名の先頭にサイト名を入れるか（#179）
  * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
  */
-export function makeRecordedLoop(from, to, key, count) {
+export function makeRecordedLoop(from, to, key, count, names, withSite) {
   return enqueue(async () => {
     const recording = await getRecording();
     const lastFlow = recording ? undefined : await getLastFlow();
@@ -262,7 +264,7 @@ export function makeRecordedLoop(from, to, key, count) {
       };
     }
     const hints = alignHints(steps, recording ? recording.rowHints : await getLastFlowHints());
-    const result = makeLoop(steps, hints, from, to, key);
+    const result = makeLoop(steps, hints, from, to, key, names, withSite);
     if (!result.ok) {
       return result;
     }

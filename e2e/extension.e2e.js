@@ -1516,3 +1516,102 @@ test('一覧へ戻る：行に読み込むたびに変わるリンクがあっ�
     await page.close();
   }
 });
+
+test('ファイル名：注文番号の文字を押して記録し、ファイル名に使うと、注文番号の名前で保存する（#179）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/link-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  // 1 件目の注文番号の文字を押してから、明細書のリンクを押します。
+  await site.click('.order:nth-child(1) .order-number');
+  await site.click('.order:nth-child(1) a.invoice');
+  const recorded = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[], rowHints: any[] }} */ (recording);
+      }),
+    (recording) =>
+      recording.steps.length >= 3 &&
+      recording.steps[2].type === 'click' &&
+      recording.steps[2].download?.from === 'link',
+  );
+  const key = JSON.stringify(recorded.rowHints[2][0].items.selectors);
+  const looped = await extensionPage.evaluate(
+    (key) =>
+      chrome.runtime.sendMessage({
+        kind: 'recording/makeLoop',
+        from: 1,
+        to: 2,
+        key,
+        count: 3,
+        names: [1],
+        withSite: true,
+      }),
+    key,
+  );
+  assert.deepEqual(looped, { ok: true });
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.deepEqual(stopped.errors, []);
+  await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...stopped.flow, name: 'ファイル名', interval: { min: 1000, max: 1000 } };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/ファイル名/')),
+    (list) => list.length >= 3,
+  );
+  // サイト名（{{site.host}}）は、ポートを含まないホスト名です。
+  assert.deepEqual(files, [
+    'Lightomate/ファイル名/127.0.0.1_A-001.pdf',
+    'Lightomate/ファイル名/127.0.0.1_A-002.pdf',
+    'Lightomate/ファイル名/127.0.0.1_A-003.pdf',
+  ]);
+  for (const page of pagesAt('/link-orders.html')) {
+    await page.close();
+  }
+});
+
+test('ファイル名：同じ実行の中で同じ名前を 2 回保存した場合は、上書きせずに別名で保存する（#179）', async () => {
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 15,
+    name: '同じ名前',
+    origin: server.origin,
+    interval: { min: 1000, max: 1000 },
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/done.html` },
+      { type: 'savePdf', path: 'Lightomate/同じ名前/領収書', onConflict: 'overwrite' },
+      { type: 'savePdf', path: 'Lightomate/同じ名前/領収書', onConflict: 'overwrite' },
+    ],
+  };
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.deepEqual(
+    await waitUntil(
+      async () =>
+        listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/同じ名前/')),
+      (list) => list.length >= 2,
+    ),
+    ['Lightomate/同じ名前/領収書 (1).pdf', 'Lightomate/同じ名前/領収書.pdf'],
+  );
+  for (const page of pagesAt('/done.html')) {
+    await page.close();
+  }
+});

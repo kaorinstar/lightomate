@@ -6,7 +6,7 @@
 // 行の見分けにはタグと class だけを使います。表示の文字は翻訳で置き換わるため使いません（CLAUDE.md）。
 
 import { PAGE_STEP_TYPES, validateTarget } from './flow.js';
-import { CONTROL_STEP_TYPES } from './control-flow.js';
+import { CONTROL_STEP_TYPES, flattenSteps } from './control-flow.js';
 
 /** @typedef {import('./flow.js').Step} Step */
 /** @typedef {import('./flow.js').Target} Target */
@@ -178,9 +178,11 @@ export function loopOptionLabel(option, options) {
  * @param {unknown} from 範囲の先頭（0 から数えます）
  * @param {unknown} to 範囲の末尾（この手順を含みます）
  * @param {unknown} key 選んだ行の候補（candidateKey の値）
+ * @param {unknown} [nameIndexes] ファイル名に使う手順の番号（0 から数えます、#179）。選んだ順にファイル名に並べます
+ * @param {unknown} [withSite] ファイル名の先頭にサイト名（{{site.host}}）を入れるか（#179）
  * @returns {{ ok: true, steps: Step[], hints: RowHint[] } | { ok: false, error: string }}
  */
-export function makeLoop(steps, hints, from, to, key) {
+export function makeLoop(steps, hints, from, to, key, nameIndexes = [], withSite = false) {
   if (
     !Number.isInteger(from) ||
     !Number.isInteger(to) ||
@@ -212,13 +214,31 @@ export function makeLoop(steps, hints, from, to, key) {
     };
   }
 
+  const naming = Array.isArray(nameIndexes) ? nameIndexes : [];
+  const nameable = nameableSteps(steps, start, end);
+  if (
+    naming.some((index) => !Number.isInteger(index) || !nameable.includes(index)) ||
+    new Set(naming).size !== naming.length
+  ) {
+    return {
+      ok: false,
+      error: 'ファイル名に使う手順が正しくありません。手順の一覧を確かめてから選び直してください。',
+    };
+  }
+  const names = fileNames(steps, naming.length);
+
   /** @type {Step[]} */
   const inner = range.map((step, offset) => {
     const candidate = usableHint(step, hints[start + offset])?.find(
       (item) => candidateKey(item.items) === key,
     );
-    return candidate && 'target' in step ? { ...step, target: candidate.inner } : step;
+    const moved = candidate && 'target' in step ? { ...step, target: candidate.inner } : step;
+    const order = naming.indexOf(start + offset);
+    return order === -1 ? moved : toExtract(moved, names[order]);
   });
+  if (names.length > 0) {
+    nameSaveSteps(inner, withSite === true ? ['site.host', ...names] : names);
+  }
   // 記録から作る繰り返しでは、行の中の要素が見つからない行（キャンセル済みの注文など）を飛ばします（#174）。
   // 飛ばした行は、実行のカードと実行履歴に報告します。
   /** @type {Step} */
@@ -298,5 +318,106 @@ export function stepScopes(steps, hints, from, to, key) {
     }
     const candidates = usableHint(step, hints[from + offset]) ?? [];
     return candidates.some((candidate) => candidateKey(candidate.items) === key) ? 'item' : 'page';
+  });
+}
+
+/** ファイル名に使えないクリックの対象です（#179）。押すとページが移動したり、値が変わったりするためです。 */
+const ACTION_TAGS = ['a', 'button', 'input', 'select', 'textarea', 'label', 'summary', 'option'];
+
+/**
+ * 保存先とファイル名を決める手順か（リンク先やクリックで始まるダウンロード、PDF の保存）を判定します（#179）。
+ * @param {Step} step
+ * @returns {boolean}
+ */
+function isSaveStep(step) {
+  return step.type === 'savePdf' || (step.type === 'click' && step.download !== undefined);
+}
+
+/**
+ * 範囲の中で、ファイル名に使える手順の番号を返します（#179）。文字（リンクやボタン以外の要素）をクリックした
+ * 手順のうち、範囲の中の最初の保存の手順より前のものです。読み取った値は、その後の手順の保存先でだけ使える
+ * ためです。範囲に保存の手順がない場合は空です。
+ * @param {Step[]} steps
+ * @param {number} from
+ * @param {number} to
+ * @returns {number[]}
+ */
+export function nameableSteps(steps, from, to) {
+  const save = steps.findIndex((step, index) => index >= from && index <= to && isSaveStep(step));
+  if (save === -1) {
+    return [];
+  }
+  /** @type {number[]} */
+  const indexes = [];
+  for (let index = from; index < save; index += 1) {
+    const step = steps[index];
+    if (
+      step.type === 'click' &&
+      step.download === undefined &&
+      step.newTab === undefined &&
+      !ACTION_TAGS.includes(step.target.tag)
+    ) {
+      indexes.push(index);
+    }
+  }
+  return indexes;
+}
+
+/**
+ * 読み取りの手順の名前を、手順の中で使われていない名前から決めます（#179）。fileName1、fileName2 … です。
+ * @param {Step[]} steps
+ * @param {number} count
+ * @returns {string[]}
+ */
+function fileNames(steps, count) {
+  const used = new Set(
+    flattenSteps(steps).flatMap(({ step }) => (step.type === 'extract' ? [step.name] : [])),
+  );
+  /** @type {string[]} */
+  const names = [];
+  for (let number = 1; names.length < count; number += 1) {
+    const name = `fileName${number}`;
+    if (!used.has(name)) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * 文字のクリックの手順を、同じ要素を読み取る手順に変えます（#179）。
+ * @param {Step} step
+ * @param {string} name
+ * @returns {Step}
+ */
+function toExtract(step, name) {
+  if (step.type !== 'click') {
+    return step;
+  }
+  return {
+    type: 'extract',
+    target: step.target,
+    name,
+    ...(step.origin !== undefined ? { origin: step.origin } : {}),
+    ...(step.translated ? { translated: true } : {}),
+  };
+}
+
+/**
+ * 繰り返しの中の保存の手順の保存先を、読み取った値を並べた名前にします（#179）。names には、組み込みの値
+ * （site.host）も書けます。同じ注文を再び保存したときに
+ * 増えないよう、同じ名前のファイルは上書きにします。同じ実行の中で同じ名前になった場合は、実行の処理が
+ * 番号を付けて別名にします（background/runner.js）。元の配列の手順を置き換えます。
+ * @param {Step[]} inner
+ * @param {string[]} names
+ */
+function nameSaveSteps(inner, names) {
+  const path = `Lightomate/{{flow.name}}/${names.map((name) => `{{${name}}}`).join('_')}`;
+  inner.forEach((step, index) => {
+    if (step.type === 'savePdf') {
+      inner[index] = { ...step, path, onConflict: 'overwrite' };
+    } else if (step.type === 'click' && step.download !== undefined) {
+      inner[index] = { ...step, download: { ...step.download, path, onConflict: 'overwrite' } };
+    }
   });
 }
