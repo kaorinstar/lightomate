@@ -308,9 +308,11 @@ export function paramColumns(param) {
       ? 'なし'
       : param.default === '@previous-month'
         ? '前月'
-        : param.default === '@current-month'
-          ? '今月'
-          : param.default;
+        : param.default === '@month-before-last'
+          ? '前々月'
+          : param.default === '@current-month'
+            ? '今月'
+            : param.default;
   return {
     label: param.label,
     reference: `{{${param.name}}}`,

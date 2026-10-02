@@ -106,3 +106,16 @@ test('欄ごとの誤りは、実行時の検証（resolveParams）と同じ件�
     resolveParams(params, input, now).errors.length,
   );
 });
+
+test('前々月の既定値は、実行した日の 2 か月前の年月にし、年をまたぐ（#163）', () => {
+  const param = {
+    name: 'month',
+    label: '対象月',
+    type: /** @type {const} */ ('month'),
+    default: '@month-before-last',
+  };
+  assert.equal(defaultValue(param, new Date(2026, 9, 1)), '2026-08');
+  assert.equal(defaultValue(param, new Date(2026, 1, 28)), '2025-12');
+  assert.equal(defaultValue(param, new Date(2026, 0, 31)), '2025-11');
+  assert.deepEqual(validateParams([param]), []);
+});

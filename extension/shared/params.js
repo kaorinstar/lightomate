@@ -8,7 +8,18 @@
 export const PARAM_TYPES = /** @type {const} */ (['text', 'number', 'select', 'month']);
 
 /** 年月の種類で使える、実行した日から決まる既定値です。 */
-export const RELATIVE_MONTHS = /** @type {const} */ (['@current-month', '@previous-month']);
+export const RELATIVE_MONTHS = /** @type {const} */ ([
+  '@current-month',
+  '@previous-month',
+  '@month-before-last',
+]);
+
+/** 実行した日の月から何か月前かです。前々月（#163）は、領収書の発行が遅いサイトで使います。 */
+const RELATIVE_MONTH_OFFSETS = {
+  '@current-month': 0,
+  '@previous-month': -1,
+  '@month-before-last': -2,
+};
 
 /** パラメータ名に使える文字です。英字または _ で始め、英数字と _ だけを使います。 */
 export const PARAM_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -25,7 +36,8 @@ const NUMBER_PATTERN = /^-?\d+(\.\d+)?$/;
  * @property {string} name 名前。手順の中では {{名前}} と書きます。
  * @property {string} label 入力フォームに表示する説明
  * @property {'text' | 'number' | 'select' | 'month'} type 種類
- * @property {string} [default] 既定値。年月では「@current-month」（今月）と「@previous-month」（前月）も使えます。
+ * @property {string} [default] 既定値。年月では「@current-month」（今月）、「@previous-month」（前月）、
+ *   「@month-before-last」（前々月、#163）も使えます。
  * @property {string[]} [options] 選択肢（種類が select の場合に必須）
  */
 
@@ -230,8 +242,10 @@ function resolveParam(param, raw, now) {
  * @returns {string}
  */
 export function defaultValue(param, now) {
-  if (param.default === '@current-month' || param.default === '@previous-month') {
-    const offset = param.default === '@previous-month' ? -1 : 0;
+  const offset = /** @type {Record<string, number | undefined>} */ (RELATIVE_MONTH_OFFSETS)[
+    param.default ?? ''
+  ];
+  if (offset !== undefined) {
     const date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
   }

@@ -131,7 +131,7 @@ export function schedulingRemedies(flow) {
   const remedies = [];
   if ((flow.params ?? []).some((param) => param.default === undefined || param.default === '')) {
     remedies.push(
-      'パラメータに既定値を設定します（［JSON］のタブで params の default を指定します）。年月の場合は「@previous-month」（前月）なども使えます。',
+      'パラメータに既定値を設定します（［JSON］のタブで params の default を指定します）。年月の場合は「@previous-month」（前月）や「@month-before-last」（前々月）なども使えます。',
     );
   }
   if (flattenSteps(flow.steps).some(({ step }) => step.type === 'input' && step.secret)) {

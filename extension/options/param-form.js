@@ -15,6 +15,7 @@ const MONTH_DEFAULTS = [
   ['', 'なし'],
   ['@current-month', '今月'],
   ['@previous-month', '前月'],
+  ['@month-before-last', '前々月'],
 ];
 
 let serial = 0;

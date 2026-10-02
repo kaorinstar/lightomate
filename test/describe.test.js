@@ -286,3 +286,11 @@ test('すべての手順を終えた後と、「待つ」の途中の一時停�
     /^手順 2 \/ 2 の前で一時停止しています/,
   );
 });
+
+test('年月の既定値の @month-before-last を、前々月と表示する（#163）', () => {
+  assert.equal(
+    paramColumns({ name: 'm', label: '対象月', type: 'month', default: '@month-before-last' })
+      .defaultValue,
+    '前々月',
+  );
+});

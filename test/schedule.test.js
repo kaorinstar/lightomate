@@ -185,6 +185,14 @@ test('定期実行できるフロー：既定値のあるパラメータだけ�
     }),
     [],
   );
+  // 前々月（#163）も、実行した日から決まる既定値です。
+  assert.deepEqual(
+    schedulingProblems({
+      ...baseFlow,
+      params: [{ name: 'month', label: '対象月', type: 'month', default: '@month-before-last' }],
+    }),
+    [],
+  );
 });
 
 test('定期実行できないフロー：既定値のないパラメータと、値を記録していない入力欄', () => {
