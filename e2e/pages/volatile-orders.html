@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>注文履歴（読み込むたびに変わるリンク）</title>
+  </head>
+  <body>
+    <!-- 一覧へ戻った後に同じ一覧かを確かめる目印（#177）の確認に使います。各注文の「明細書」のリンク先は、
+         ページを読み込むたびに変わります（volatile-orders.js）。「詳細」のリンク先は変わりません。 -->
+    <div id="orders">
+      <div class="order">
+        <a class="detail" href="receipt.html?n=V-001">詳細</a>
+        <a class="volatile" href="#">明細書</a>
+        <a class="help" href="/help.html">ヘルプ</a>
+      </div>
+      <div class="order">
+        <a class="detail" href="receipt.html?n=V-002">詳細</a>
+        <a class="volatile" href="#">明細書</a>
+        <a class="help" href="/help.html">ヘルプ</a>
+      </div>
+      <div class="order">
+        <a class="detail" href="receipt.html?n=V-003">詳細</a>
+        <a class="volatile" href="#">明細書</a>
+        <a class="help" href="/help.html">ヘルプ</a>
+      </div>
+    </div>
+    <script src="volatile-orders.js"></script>
+  </body>
+</html>

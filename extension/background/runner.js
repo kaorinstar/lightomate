@@ -61,6 +61,7 @@ import {
   pageLimitError,
   returnedListError,
   rowLimitError,
+  sameRowKey,
   stepAt,
   whileLimitError,
 } from '../shared/control-flow.js';
@@ -1897,7 +1898,7 @@ export function isPageTurned(before, current) {
   return (
     current.documentId === before.documentId &&
     current.firstKey !== undefined &&
-    current.firstKey !== before.firstKey
+    (before.firstKey === undefined || !sameRowKey(before.firstKey, current.firstKey))
   );
 }
 

@@ -284,7 +284,7 @@
     return {
       ok: true,
       count: rows.length,
-      firstKey: rows.length > 0 ? rowKey(rows[0]) : undefined,
+      firstKey: rows.length > 0 ? rowKey(rows[0], rows.slice(1)) : undefined,
     };
   }
 
@@ -293,19 +293,47 @@
    * 画像の src の値を並べます。どちらもない行では undefined を返し、行数だけで確かめてもらいます。
    * 表示の文字は使いません。Chrome の翻訳などが表示の後に文字を置き換えるため、同じ一覧でも読み取った時点に
    * よって文字が異なるためです。href と src の値は、翻訳では変わりません。
+   *
+   * ほかの行にない、その行に固有のリンク先がある場合は、それだけを `links:` に続けて改行で区切って並べます
+   * （#177）。比べる側は、1 件以上一致すれば同じ行とみなします（control-flow.js の sameRowKey）。読み込むたびに
+   * 値が変わるリンク（ダウンロードの URL など）があっても、注文の詳細へのリンクなどが一致すれば同じ行と分かります。
+   * 全行に共通のリンク（ヘルプなど）は比べないため、別の行に変わった場合に、同じ行と誤ることを防げます。
    * @param {Element} row
+   * @param {Element[]} others 同じ一覧のほかの行
    * @returns {string | undefined}
    */
-  function rowKey(row) {
+  function rowKey(row, others) {
+    /**
+     * @param {Element} target
+     * @param {string} selector
+     * @param {string} name
+     */
+    const valuesOf = (target, selector, name) =>
+      [target, ...target.querySelectorAll(selector)]
+        .filter((element) => element.matches(selector))
+        .map((element) => element.getAttribute(name) ?? '');
     /**
      * @param {string} selector
      * @param {string} name
      */
-    const values = (selector, name) =>
-      [row, ...row.querySelectorAll(selector)]
-        .filter((element) => element.matches(selector))
-        .map((element) => element.getAttribute(name) ?? '');
+    const values = (selector, name) => valuesOf(row, selector, name);
     const links = values('a[href]', 'href');
+    const shared = new Set(others.flatMap((other) => valuesOf(other, 'a[href]', 'href')));
+    const unique = [...new Set(links.filter((link) => link !== '' && !shared.has(link)))];
+    if (unique.length > 0) {
+      // 上限を超える場合は、リンク先の途中で切らず、収まる件数までにします。
+      /** @type {string[]} */
+      const kept = [];
+      let length = 'links:'.length;
+      for (const link of unique) {
+        if (kept.length > 0 && length + link.length + 1 > FIRST_KEY_MAX_LENGTH) {
+          break;
+        }
+        kept.push(link);
+        length += link.length + 1;
+      }
+      return `links:${kept.join('\n')}`;
+    }
     if (links.length > 0) {
       return `link:${links.join(' ')}`.slice(0, FIRST_KEY_MAX_LENGTH);
     }
