@@ -19,6 +19,7 @@ import { applyStopRuleToRecordedStep } from '../shared/stop-rules.js';
 import { getStopRule } from '../common/stop-rules-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
 import { makeLoop, sanitizeRowHint } from '../shared/record-loop.js';
+import { toLinkDownload } from '../shared/file-link.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -435,8 +436,17 @@ export function onCommitted(details) {
     if (!isWebUrl(details.url) || recording.steps.length >= MAX_STEPS) {
       return;
     }
+    // リンクのクリックで PDF などのファイルへ移動した場合は、移動を記録せず、クリックをリンク先のファイルを
+    // 保存する指定に変えます（#172）。表示画面で開くだけでは、ファイルが保存されないためです。
+    const cause = navigationCause(details);
+    const converted = toLinkDownload(recording.steps.at(-1), details.url, cause);
+    if (converted) {
+      recording.steps[recording.steps.length - 1] = converted;
+      await chrome.storage.session.set({ [RECORDING_KEY]: recording });
+      return;
+    }
     recording.rowHints = [...alignHints(recording.steps, recording.rowHints), null];
-    recording.steps.push({ type: 'navigate', url: details.url, cause: navigationCause(details) });
+    recording.steps.push({ type: 'navigate', url: details.url, cause });
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
   });
 }

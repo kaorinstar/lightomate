@@ -24,7 +24,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -45,9 +45,11 @@ export const SCHEMA_VERSION = 13;
  * 版 12 は、版 11 に、クリックで始まったダウンロードの保存先の指定（click の download）を加えたものです（#20）。
  * 版 13 は、版 12 に、繰り返しを途中で終える手順（break）と、日付が指定した月より前かの条件（condition の
  * before）を加えたものです（#162）。
+ * 版 14 は、版 13 に、クリックせずにリンク先のファイルを保存する指定（click の download の from）を加えたものです
+ * （#172）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -70,6 +72,9 @@ const NEW_TAB_MIN_SCHEMA_VERSION = 11;
 
 /** click の download を使える最も古い版です（#20）。 */
 const DOWNLOAD_MIN_SCHEMA_VERSION = 12;
+
+/** click の download の from を使える最も古い版です（#172）。 */
+const DOWNLOAD_LINK_MIN_SCHEMA_VERSION = 14;
 
 /** 日付が指定した月より前かの条件（before）を使える最も古い版です（#162）。 */
 const BEFORE_CONDITION_MIN_SCHEMA_VERSION = 13;
@@ -149,6 +154,8 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string} path 保存先のひな形。savePdf の path と同じ書き方です。ファイル名がサイトのファイルの
  *   拡張子で終わっていない場合は、その拡張子を付けます
  * @property {'rename' | 'overwrite'} [onConflict] 同じ名前のファイルがある場合の動作。既定は rename です
+ * @property {'link'} [from] link の場合は、クリックせずに、要素（リンク）の href のファイルを保存します（#172）。
+ *   PDF などのファイルを Chrome の表示画面で開くリンクに使います。版 14 で加えました
  */
 
 /**
@@ -678,6 +685,16 @@ function validateStepList(list, path, depth, inLoop, context, inRepeat = false) 
         `${at}: download は、schemaVersion が ${DOWNLOAD_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
       );
     }
+    if (
+      isRecord(step.download) &&
+      step.download.from !== undefined &&
+      version !== undefined &&
+      version < DOWNLOAD_LINK_MIN_SCHEMA_VERSION
+    ) {
+      errors.push(
+        `${at}: download.from は、schemaVersion が ${DOWNLOAD_LINK_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+      );
+    }
     if (type === 'click' && isRecord(step.download) && typeof step.download.path === 'string') {
       validatePathReferences(step.download.path, `${at}.download`, context);
     }
@@ -1036,6 +1053,9 @@ function validateDownload(download) {
     download.onConflict !== 'overwrite'
   ) {
     errors.push('download.onConflict が rename または overwrite ではありません。');
+  }
+  if (download.from !== undefined && download.from !== 'link') {
+    errors.push('download.from が link ではありません。');
   }
   return errors;
 }

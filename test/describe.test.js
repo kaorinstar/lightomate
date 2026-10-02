@@ -194,6 +194,14 @@ test('ダウンロードの保存先を指定したクリックの説明（#20�
   );
 });
 
+test('リンク先のファイルを保存する指定のクリックは、クリックとは別の名前で説明する（#172）', () => {
+  const target = { selectors: ['a.invoice'], tag: 'a', label: '明細書' };
+  /** @type {import('../extension/shared/flow.js').Step} */
+  const step = { type: 'click', target, download: { path: 'L/{{n}}', from: 'link' } };
+  assert.equal(describeStep(step), 'リンク先のファイルを保存：明細書（L/{{n}} に保存）');
+  assert.equal(describeStepForPage(step), 'リンク先のファイルを保存：明細書');
+});
+
 // ---- 実行中のページの枠に表示する手順（#156） ----
 
 test('ページに出す手順の文には、入力する値、選ぶ値、URL、保存先、条件の値を含めない', () => {

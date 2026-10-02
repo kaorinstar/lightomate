@@ -2,6 +2,8 @@
 // npm run test:e2e で実行します。ブラウザを起動するため、npm test（単体テスト）には含めません。
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { launchBrowser, listFiles, runFlow, startServer, waitUntil } from './harness.js';
 
@@ -1184,3 +1186,101 @@ test('記録から繰り返しを作る：1 件目の操作を記録し、サイ
 
 test('記録から繰り返しを作る：翻訳したページで記録し、翻訳したページで実行しても、全行で同じ操作を行う（#167）', () =>
   recordLoop(true));
+
+test('リンク先のファイルを保存：PDF のリンクのクリックを記録すると保存の指定になり、全行の PDF をログインの Cookie 付きで保存する（#172）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/link-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  const started = await extensionPage.evaluate(
+    (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+    tabId,
+  );
+  assert.deepEqual(started, { ok: true });
+
+  // 1 件目の明細書のリンクを押します。PDF への移動は記録せず、クリックが保存の指定に変わります。
+  await site.click('.order:nth-child(1) a.invoice');
+  const recorded = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[], rowHints: any[] }} */ (recording);
+      }),
+    (recording) =>
+      recording.steps.length >= 2 &&
+      recording.steps[1].type === 'click' &&
+      recording.steps[1].download?.from === 'link',
+  );
+  assert.deepEqual(
+    recorded.steps.map((step) => step.type),
+    ['navigate', 'click'],
+  );
+
+  // 記録した手順を、一覧の各行で繰り返す手順にします（#167）。
+  const key = JSON.stringify(recorded.rowHints[1][0].items.selectors);
+  const looped = await extensionPage.evaluate(
+    (key) =>
+      chrome.runtime.sendMessage({ kind: 'recording/makeLoop', from: 1, to: 1, key, count: 2 }),
+    key,
+  );
+  assert.deepEqual(looped, { ok: true });
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.equal(stopped.ok, true);
+  assert.deepEqual(stopped.errors, []);
+  await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...stopped.flow, name: 'リンク先の保存', interval: { min: 1000, max: 1000 } };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) =>
+        file.startsWith('Lightomate/リンク先の保存/'),
+      ),
+    (list) => list.length >= 3,
+  );
+  assert.equal(files.length, 3);
+  const contents = files
+    .map((file) => fs.readFileSync(path.join(browser.downloadDir, file), 'latin1'))
+    .map((text) => /\((A-\d{3})\) Tj/.exec(text)?.[1])
+    .sort();
+  assert.deepEqual(contents, ['A-001', 'A-002', 'A-003']);
+  // 実行中は、PDF の表示画面へ移動しません。
+  assert.deepEqual(pagesAt('/auth/invoice.pdf'), []);
+  for (const page of pagesAt('/link-orders.html')) {
+    await page.close();
+  }
+});
+
+test('リンク先のファイルを保存：リンクがフローのサイト以外を指す場合は、保存せずに停止する（#172）', async () => {
+  const before = listFiles(browser.downloadDir);
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 14,
+    name: '別のサイトのリンク',
+    origin: server.origin,
+    interval: { min: 1000, max: 1000 },
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/link-orders.html` },
+      {
+        type: 'click',
+        target: target('#external', 'a', '別のサイトの明細書'),
+        download: { path: 'Lightomate/別のサイト/明細書', from: 'link' },
+      },
+    ],
+  };
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'failed');
+  assert.match(entry.reason ?? '', /フローのサイト.*ではないため、保存せずに停止しました/);
+  assert.deepEqual(listFiles(browser.downloadDir), before);
+  for (const page of pagesAt('/link-orders.html')) {
+    await page.close();
+  }
+});

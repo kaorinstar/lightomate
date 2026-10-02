@@ -1316,6 +1316,14 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             downloading?.cancel();
             throw error;
           }
+          if (downloading && step.type === 'click' && step.download?.from === 'link') {
+            // リンク先のファイルを保存する指定（#172）では、ページがクリックせずに返したリンク先を保存します。
+            // 保存先とファイル名は、クリックで始まるダウンロードと同じく watchDownload が決めます。
+            await downloadLink(flow, done.response.href).catch((error) => {
+              downloading.cancel();
+              throw error;
+            });
+          }
           if (downloading) {
             const file = await downloading.wait(runId);
             savedFiles.get(runId)?.push(file);
@@ -1493,6 +1501,24 @@ function watchDownload(download, values) {
       }
     },
   };
+}
+
+/**
+ * リンク先のファイルのダウンロードを始めます（#172）。ページから届いたリンク先は、フローのサイト（origin、
+ * extraOrigins）の http・https の URL だけを受け付けます。別のサイトのファイルを、このフローの書類として
+ * 保存しないためです。chrome.downloads.download は、そのサイトの Cookie を付けて取得します。
+ * @param {Flow} flow
+ * @param {unknown} href ページから届いたリンク先
+ * @returns {Promise<void>}
+ */
+async function downloadLink(flow, href) {
+  const url = typeof href === 'string' && isWebUrl(href) ? new URL(href) : undefined;
+  if (!url || !flowOrigins(flow).includes(url.origin)) {
+    throw new Error(
+      `リンク先（${typeof href === 'string' && href ? href : '不明'}）が、フローのサイト（${flowOrigins(flow).join('、')}）のファイルではないため、保存せずに停止しました。`,
+    );
+  }
+  await chrome.downloads.download({ url: url.href, saveAs: false });
 }
 
 /**

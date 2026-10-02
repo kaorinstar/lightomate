@@ -318,11 +318,11 @@
 
   /**
    * 手順を 1 つ実行します。
-   * @param {{ type: string, target: { selectors: string[], tag: string, text?: string, scope?: string }, value?: string, values?: string[], labels?: string[] }} step
+   * @param {{ type: string, target: { selectors: string[], tag: string, text?: string, scope?: string }, value?: string, values?: string[], labels?: string[], download?: { from?: string } }} step
    *   値の中のパラメータは、Service Worker で置き換え済みです。
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true, text?: string } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
+   * @returns {Promise<{ ok: true, text?: string, href?: string } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
    */
   async function runStep(step, scope, timeoutMs) {
     /** @type {Element} */
@@ -350,6 +350,19 @@
 
     switch (step.type) {
       case 'click':
+        // リンク先のファイルを保存する指定（#172）では、クリックせずにリンク先を返します。保存は Service Worker が
+        // 行います。PDF などを Chrome の表示画面で開かずに保存するためです。
+        if (step.download?.from === 'link') {
+          const link = element.closest('a[href]');
+          if (!(link instanceof HTMLAnchorElement)) {
+            return {
+              ok: false,
+              error:
+                'リンク先を保存する指定ですが、見つかった要素がリンクではありません。クリックの手順の download から from を外してください。',
+            };
+          }
+          return { ok: true, href: link.href };
+        }
         // クリックでページを移動すると、このスクリプトは応答する前に失われます。
         // そのため、先に応答してからクリックします。
         setTimeout(() => {
