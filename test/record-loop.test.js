@@ -10,6 +10,7 @@ import {
   loopOptionLabel,
   loopOptions,
   makeLoop,
+  nameableSteps,
   sanitizeRowHint,
   stepScopes,
   toggleRange,
@@ -322,4 +323,105 @@ test('既定の範囲は、先頭より後の含められない手順（一覧�
   // 既定の範囲は、そのまま繰り返しにできます。
   const result = makeLoop(reopened, reopenedHints, 1, 4, candidateKey(orderRow));
   assert.ok(result.ok);
+});
+
+// ---- ファイル名に使う文字（#179） ----
+
+const spanTarget = (/** @type {string} */ selector, /** @type {string} */ label) => ({
+  selectors: [selector],
+  tag: 'span',
+  label,
+});
+
+/** @type {Step[]} */
+const namedSteps = [
+  { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+  { type: 'click', target: spanTarget('#date-1', '2026年9月11日'), translated: true },
+  { type: 'click', target: spanTarget('#number-1', '503-1') },
+  { type: 'click', target: pageTarget('#menu-1', '領収書等') },
+  {
+    type: 'click',
+    target: pageTarget('#invoice-1', '明細書'),
+    download: { path: 'Lightomate/{{flow.name}}/x', onConflict: 'rename', from: 'link' },
+  },
+  { type: 'click', target: spanTarget('#after-1', '後') },
+];
+/** @type {RowHint[]} */
+const namedHints = [
+  null,
+  ...['span.date', 'span.number', 'a.menu', 'a.invoice', 'span.after'].map((selector) => [
+    {
+      items: orderRow,
+      count: 3,
+      inner: {
+        selectors: [selector],
+        tag: 'span',
+        label: selector,
+        scope: /** @type {const} */ ('item'),
+      },
+    },
+  ]),
+];
+
+test('ファイル名に使えるのは、範囲の最初の保存の手順より前の、文字（リンクやボタン以外）のクリックだけ', () => {
+  assert.deepEqual(nameableSteps(namedSteps, 1, 5), [1, 2]);
+  // 保存の手順がない範囲では、ファイル名に使う手順はありません。
+  assert.deepEqual(nameableSteps(namedSteps, 1, 3), []);
+});
+
+test('選んだ文字のクリックを読み取りに変え、保存の手順の保存先を、その値を選んだ順に並べた名前にする', () => {
+  const result = makeLoop(namedSteps, namedHints, 1, 5, candidateKey(orderRow), [2, 1]);
+  assert.ok(result.ok);
+  const loop = result.steps[1];
+  assert.ok(loop.type === 'forEach');
+  assert.deepEqual(loop.steps[0], {
+    type: 'extract',
+    target: { selectors: ['span.date'], tag: 'span', label: 'span.date', scope: 'item' },
+    name: 'fileName2',
+    translated: true,
+  });
+  assert.equal(loop.steps[1].type === 'extract' && loop.steps[1].name, 'fileName1');
+  assert.deepEqual(loop.steps[3].type === 'click' && loop.steps[3].download, {
+    path: 'Lightomate/{{flow.name}}/{{fileName1}}_{{fileName2}}',
+    onConflict: 'overwrite',
+    from: 'link',
+  });
+  // 保存の手順の後のクリックは、そのままです。
+  assert.equal(loop.steps[4].type, 'click');
+  assert.deepEqual(
+    validateFlow({
+      schemaVersion: SCHEMA_VERSION,
+      name: '記録',
+      origin: 'https://shop.example.com',
+      steps: result.steps,
+    }),
+    [],
+  );
+});
+
+test('サイト名を入れる場合は、ファイル名の先頭に {{site.host}} を置く', () => {
+  const result = makeLoop(namedSteps, namedHints, 1, 5, candidateKey(orderRow), [2], true);
+  assert.ok(result.ok);
+  const loop = result.steps[1];
+  assert.ok(loop.type === 'forEach');
+  const save = loop.steps[3];
+  assert.equal(
+    save.type === 'click' && save.download?.path,
+    'Lightomate/{{flow.name}}/{{site.host}}_{{fileName1}}',
+  );
+});
+
+test('ファイル名に使えない手順を選んだ場合と、同じ手順を 2 回選んだ場合は、変換しない', () => {
+  for (const names of [[3], [5], [1, 1], ['1']]) {
+    const result = makeLoop(namedSteps, namedHints, 1, 5, candidateKey(orderRow), names);
+    assert.equal(result.ok, false, JSON.stringify(names));
+  }
+});
+
+test('ファイル名を選ばない場合は、保存の手順の保存先を変えない', () => {
+  const result = makeLoop(namedSteps, namedHints, 1, 5, candidateKey(orderRow));
+  assert.ok(result.ok);
+  const loop = result.steps[1];
+  assert.ok(loop.type === 'forEach');
+  assert.deepEqual(loop.steps[3], { ...namedSteps[4], target: namedHints[4]?.[0].inner });
 });

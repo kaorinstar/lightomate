@@ -118,10 +118,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!fromExtensionPage) {
         return false;
       }
-      makeRecordedLoop(message.from, message.to, message.key, message.count).then(
-        sendResponse,
-        (error) => sendResponse({ ok: false, error: String(error) }),
-      );
+      makeRecordedLoop(
+        message.from,
+        message.to,
+        message.key,
+        message.count,
+        message.names,
+        message.withSite,
+      ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
       return true;
 
     case 'recording/reset':

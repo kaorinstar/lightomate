@@ -10,6 +10,7 @@ import {
   excludedReason,
   loopOptionLabel,
   loopOptions,
+  nameableSteps,
   stepScopes,
   toggleRange,
 } from '../shared/record-loop.js';
@@ -40,6 +41,13 @@ export function createLoopForm({ open, container, list, toast }) {
   let range = null;
   /** 選んでいる一覧の行の候補（candidateKey の値）です。空の場合は、最も多く使われた候補にします。 */
   let rowKey = '';
+  /**
+   * ファイル名に使う手順の番号です（#179）。選んだ順に並べ、その順にファイル名に並べます。
+   * @type {number[]}
+   */
+  let naming = [];
+  /** ファイル名の先頭にサイト名を入れるか（#179）です。 */
+  let withSite = false;
 
   const fieldset = document.createElement('fieldset');
   fieldset.className = 'lm-loop-form';
@@ -118,8 +126,9 @@ export function createLoopForm({ open, container, list, toast }) {
       // 一覧を作り直すため、押したチェックボックスに入力の位置を戻します。
       document.getElementById(box.id)?.focus();
     });
+    const content = document.createElement('div');
+    content.className = 'lm-loop-step';
     const label = document.createElement('label');
-    label.className = 'lm-loop-step';
     label.htmlFor = box.id;
     label.textContent = `${index + 1}. ${describeStep(step)}`;
     if (reason) {
@@ -128,7 +137,20 @@ export function createLoopForm({ open, container, list, toast }) {
       why.textContent = reason;
       label.append(why);
     }
-    item.append(box, label);
+    content.append(label);
+    // ファイル名に使う文字を選んでいる場合は、保存の手順の下に、変換後の保存先を示します（#179）。今の説明の
+    // 保存先は変換前のもので、［繰り返す］を押すと変わるためです。
+    if (inRange && naming.length > 0 && isSaveStepForName(step)) {
+      const changed = document.createElement('small');
+      changed.className = 'd-block lm-loop-changed';
+      changed.textContent = `→ 保存先は Lightomate/<フロー名>/${fileNameText()} に変わります`;
+      content.append(changed);
+    }
+    // 文字のクリックは、読み取りに変えて保存するファイルの名前に使えます（#179）。
+    if (inRange && nameableIndexes().includes(index)) {
+      content.append(nameToggle(index));
+    }
+    item.append(box, content);
     if (scope) {
       const badge = document.createElement('span');
       badge.className = `badge ${scope === 'item' ? 'bg-blue-lt' : 'bg-secondary-lt'} lm-loop-scope`;
@@ -138,8 +160,82 @@ export function createLoopForm({ open, container, list, toast }) {
     return item;
   };
 
+  /**
+   * 保存するファイルの名前の説明です（#179）。例：サイト名_「2026年9月11日」_「503-1」
+   * @returns {string}
+   */
+  const fileNameText = () =>
+    [
+      ...(withSite ? ['サイト名'] : []),
+      ...naming.map((index) => {
+        const step = steps[index];
+        return `「${'target' in step ? step.target.label : ''}」`;
+      }),
+    ].join('_');
+
+  /**
+   * 保存先が、ファイル名に使う文字で変わる手順か（#179）。
+   * @param {Step} step
+   * @returns {boolean}
+   */
+  const isSaveStepForName = (step) =>
+    step.type === 'savePdf' || (step.type === 'click' && step.download !== undefined);
+
+  /** 範囲の中で、ファイル名に使える手順の番号です（#179）。 */
+  const nameableIndexes = () => (range ? nameableSteps(steps, range.from, range.to) : []);
+
+  /**
+   * 「ファイル名に使う」の切り替えです（#179）。
+   * @param {number} index
+   * @returns {HTMLLabelElement}
+   */
+  const nameToggle = (index) => {
+    const toggle = document.createElement('label');
+    toggle.className = 'lm-loop-name lm-sub';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'lm-check';
+    check.id = `${id}-name-${index}`;
+    check.checked = naming.includes(index);
+    check.disabled = locked;
+    check.addEventListener('change', () => {
+      naming = check.checked ? [...naming, index] : naming.filter((chosen) => chosen !== index);
+      draw();
+      document.getElementById(check.id)?.focus();
+    });
+    toggle.append(check, document.createTextNode(' この文字をファイル名に使う'));
+    return toggle;
+  };
+
+  /**
+   * 「ファイル名の先頭にサイト名を入れる」の切り替えです（#179）。
+   * @returns {HTMLLabelElement}
+   */
+  const siteToggle = () => {
+    const toggle = document.createElement('label');
+    toggle.className = 'lm-loop-name lm-sub';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'lm-check';
+    check.id = `${id}-site`;
+    check.checked = withSite;
+    check.disabled = locked;
+    check.addEventListener('change', () => {
+      withSite = check.checked;
+      draw();
+      document.getElementById(check.id)?.focus();
+    });
+    toggle.append(
+      check,
+      document.createTextNode(' ファイル名の先頭にサイト名（例：www.amazon.co.jp）を入れる'),
+    );
+    return toggle;
+  };
+
   /** 範囲と行の候補に合わせて、欄を表示し直します。 */
   const draw = () => {
+    const nameable = nameableIndexes();
+    naming = naming.filter((index) => nameable.includes(index));
     const options = currentOptions();
     if (!options.some((option) => option.key === rowKey)) {
       rowKey = options[0]?.key ?? '';
@@ -170,6 +266,23 @@ export function createLoopForm({ open, container, list, toast }) {
         strong(`${chosen.count} 件`),
         document.createTextNode(` で、${span} を 1 件ずつ行います。`),
       );
+      if (naming.length > 0) {
+        const name = document.createElement('small');
+        name.className = 'd-block lm-sub';
+        name.textContent =
+          `保存するファイルの名前：${fileNameText()}（「」は 1 件ごとに読み取る文字）。` +
+          '前回の実行で保存した同じ名前のファイルは上書きします。同じ実行の中で同じ名前になった場合は、番号を付けて別名で保存します。';
+        summary.append(name);
+        // 日付のように、複数の注文で同じ値になる文字だけでは、再実行のたびに番号付きのファイルが増えます（#179）。
+        if (naming.length === 1) {
+          const caution = document.createElement('small');
+          caution.className = 'd-block lm-sub';
+          caution.textContent =
+            '選んだ文字が注文ごとに異なるか確かめてください。日付のように同じ値の注文がある文字だけでは、もう一度実行したときに番号付きのファイルが増えます。注文番号などを加えてください。';
+          summary.append(caution);
+        }
+        summary.append(siteToggle());
+      }
       if (scopes.includes('item')) {
         const note = document.createElement('small');
         note.className = 'd-block lm-sub';
@@ -206,6 +319,8 @@ export function createLoopForm({ open, container, list, toast }) {
       return;
     }
     rowKey = '';
+    naming = [];
+    withSite = false;
     draw();
     container.hidden = false;
     list.hidden = true;
@@ -229,6 +344,8 @@ export function createLoopForm({ open, container, list, toast }) {
         from,
         to,
         key: rowKey,
+        names: naming,
+        withSite,
         count: steps.length,
       });
       if (!response?.ok) {

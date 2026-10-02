@@ -217,6 +217,29 @@ const redactions = new Map();
 const savedFiles = new Map();
 
 /**
+ * 実行ごとの、保存を指示したファイルのパス（ダウンロード先からの相対パス）です（#179）。同じ実行の中で同じ名前の
+ * ファイルを保存する場合は、上書きの指定があっても番号を付けて別名にします。注文日だけをファイル名にした場合などに、
+ * 同じ日の別の注文の PDF を上書きで失わないためです。前回までの実行で保存したファイルは、指定どおり上書きします。
+ * @type {Map<string, Set<string>>}
+ */
+const plannedPaths = new Map();
+
+/**
+ * 同じ名前のファイルがある場合の動作を決めます（#179）。
+ * @param {string} runId
+ * @param {string} path 保存先（ダウンロード先からの相対パス）
+ * @param {'rename' | 'overwrite' | undefined} onConflict
+ * @returns {'overwrite' | 'uniquify'}
+ */
+function conflictActionFor(runId, path, onConflict) {
+  const planned = plannedPaths.get(runId) ?? new Set();
+  plannedPaths.set(runId, planned);
+  const repeated = planned.has(path);
+  planned.add(path);
+  return onConflict === 'overwrite' && !repeated ? 'overwrite' : 'uniquify';
+}
+
+/**
  * 実行ごとの、実行中の手順で要素が見つからずにやり直した回数です（#18）。手順を始めるたびに 0 に戻し、
  * 止まったときの回数を実行履歴に記録します（#93）。
  * @type {Map<string, number>}
@@ -584,6 +607,7 @@ async function finishRun(runId, update, step) {
   const retries = retryCounts.get(runId);
   redactions.delete(runId);
   savedFiles.delete(runId);
+  plannedPaths.delete(runId);
   retryCounts.delete(runId);
   pageStepTexts.delete(runId);
   // 操作の許可がないサイトのページでは、tabs の権限がないため URL を読めません（undefined）。
@@ -1363,7 +1387,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           // サイトが提供するファイルのダウンロード（#20）も、クリックの前から待ち始めます。
           const downloading =
             step.type === 'click' && step.download
-              ? watchDownload(step.download, pathValues)
+              ? watchDownload(runId, step.download, pathValues)
               : undefined;
           // 行の中の要素が見つからない行を飛ばす繰り返し（#174）の中では、やり直さず、見つからない場合は
           // その行の残りの手順を行わずに次の行へ進みます。ページ全体で探す要素は対象にしません。
@@ -1530,11 +1554,12 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
  * 含まれないため、待ち始めた後に最初に始まったダウンロード 1 件を対象にします。
  * ほかの拡張機能がファイル名を決めた場合は、名前を変えられないことがあります。その場合も停止せず、
  * 実際に保存されたパスを返します。
+ * @param {string} runId
  * @param {import('../shared/flow.js').DownloadTarget} download
  * @param {Record<string, string>} values 保存先に埋め込む値
  * @returns {{ wait: (runId: string) => Promise<string>, cancel: () => void }}
  */
-function watchDownload(download, values) {
+function watchDownload(runId, download, values) {
   // 埋め込む値がないなどの誤りは、クリックの前に確かめます。拡張子は、サイトのファイルが分かってから付けます。
   const base = buildSavePath(download.path, values, '');
   if (!base.ok) {
@@ -1556,9 +1581,10 @@ function watchDownload(download, values) {
       // 対象でないダウンロードは、Chrome が決めた名前のままにします。
       return;
     }
+    const filename = withExtension(base.path, fileExtension(item.filename));
     suggest({
-      filename: withExtension(base.path, fileExtension(item.filename)),
-      conflictAction: download.onConflict === 'overwrite' ? 'overwrite' : 'uniquify',
+      filename,
+      conflictAction: conflictActionFor(runId, filename, download.onConflict),
     });
   };
   chrome.downloads.onCreated.addListener(onCreated);
@@ -2394,7 +2420,7 @@ async function savePdf(runId, flow, tabId, step, pathValues) {
   const downloadId = await chrome.downloads.download({
     url: `data:application/pdf;base64,${data}`,
     filename: built.path,
-    conflictAction: step.onConflict === 'overwrite' ? 'overwrite' : 'uniquify',
+    conflictAction: conflictActionFor(runId, built.path, step.onConflict),
     saveAs: false,
   });
   return waitForDownload(runId, downloadId);

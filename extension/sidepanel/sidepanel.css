@@ -168,6 +168,20 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* ファイル名に使う文字を選んだときの、変換後の保存先です（#179）。変わることが分かるよう、強調の色にします。 */
+.lm-loop-changed {
+  margin-top: 0.25rem;
+  color: var(--tblr-primary);
+}
+
+/* 「この文字をファイル名に使う」などの切り替えです（#179）。説明の下に小さく置きます。 */
+.lm-loop-name {
+  display: flex;
+  gap: 0.375rem;
+  align-items: center;
+  margin-top: 0.25rem;
+}
+
 .lm-loop-scope {
   flex-shrink: 0;
 }
