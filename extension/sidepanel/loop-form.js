@@ -138,6 +138,14 @@ export function createLoopForm({ open, container, list, toast }) {
       label.append(why);
     }
     content.append(label);
+    // ファイル名に使う文字を選んでいる場合は、保存の手順の下に、変換後の保存先を示します（#179）。今の説明の
+    // 保存先は変換前のもので、［繰り返す］を押すと変わるためです。
+    if (inRange && naming.length > 0 && isSaveStepForName(step)) {
+      const changed = document.createElement('small');
+      changed.className = 'd-block lm-loop-changed';
+      changed.textContent = `→ 保存先は Lightomate/<フロー名>/${fileNameText()} に変わります`;
+      content.append(changed);
+    }
     // 文字のクリックは、読み取りに変えて保存するファイルの名前に使えます（#179）。
     if (inRange && nameableIndexes().includes(index)) {
       content.append(nameToggle(index));
@@ -151,6 +159,27 @@ export function createLoopForm({ open, container, list, toast }) {
     }
     return item;
   };
+
+  /**
+   * 保存するファイルの名前の説明です（#179）。例：サイト名_「2026年9月11日」_「503-1」
+   * @returns {string}
+   */
+  const fileNameText = () =>
+    [
+      ...(withSite ? ['サイト名'] : []),
+      ...naming.map((index) => {
+        const step = steps[index];
+        return `「${'target' in step ? step.target.label : ''}」`;
+      }),
+    ].join('_');
+
+  /**
+   * 保存先が、ファイル名に使う文字で変わる手順か（#179）。
+   * @param {Step} step
+   * @returns {boolean}
+   */
+  const isSaveStepForName = (step) =>
+    step.type === 'savePdf' || (step.type === 'click' && step.download !== undefined);
 
   /** 範囲の中で、ファイル名に使える手順の番号です（#179）。 */
   const nameableIndexes = () => (range ? nameableSteps(steps, range.from, range.to) : []);
@@ -240,12 +269,19 @@ export function createLoopForm({ open, container, list, toast }) {
       if (naming.length > 0) {
         const name = document.createElement('small');
         name.className = 'd-block lm-sub';
-        const parts = naming.map((index) => {
-          const step = steps[index];
-          return `「${'target' in step ? step.target.label : ''}」`;
-        });
-        name.textContent = `保存するファイルの名前：${[...(withSite ? ['サイト名'] : []), ...parts].join('_')}（1 件ごとに読み取った文字。同じ名前のファイルは上書きします）`;
-        summary.append(name, siteToggle());
+        name.textContent =
+          `保存するファイルの名前：${fileNameText()}（「」は 1 件ごとに読み取る文字）。` +
+          '前回の実行で保存した同じ名前のファイルは上書きします。同じ実行の中で同じ名前になった場合は、番号を付けて別名で保存します。';
+        summary.append(name);
+        // 日付のように、複数の注文で同じ値になる文字だけでは、再実行のたびに番号付きのファイルが増えます（#179）。
+        if (naming.length === 1) {
+          const caution = document.createElement('small');
+          caution.className = 'd-block lm-sub';
+          caution.textContent =
+            '選んだ文字が注文ごとに異なるか確かめてください。日付のように同じ値の注文がある文字だけでは、もう一度実行したときに番号付きのファイルが増えます。注文番号などを加えてください。';
+          summary.append(caution);
+        }
+        summary.append(siteToggle());
       }
       if (scopes.includes('item')) {
         const note = document.createElement('small');
