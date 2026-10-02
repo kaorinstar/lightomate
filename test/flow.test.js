@@ -53,9 +53,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜13 のフローは、そのまま版 14 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 14);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
+test('版 1〜14 のフローは、そのまま版 15 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 15);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -1239,5 +1239,24 @@ test('download.from は link だけを書け、版 14 のフローで検証を�
   assert.deepEqual(validateFlow({ ...flow, schemaVersion: 14 }), []);
   assert.deepEqual(validateFlow({ ...flow, schemaVersion: 13 }), [
     `steps[${validFlow.steps.length}]: download.from は、schemaVersion が 14 以上のフローでだけ使えます。`,
+  ]);
+});
+
+test('forEach の onMissing は stop か skip だけを書け、版 15 のフローで検証を通り、版 14 以前では誤りになる（#174）', () => {
+  const loop = {
+    type: 'forEach',
+    items: { selectors: ['div.order'], tag: 'div', label: '一覧の行' },
+    onMissing: 'skip',
+    steps: [],
+  };
+  assert.deepEqual(validateStep(loop), []);
+  assert.deepEqual(validateStep({ ...loop, onMissing: 'stop' }), []);
+  assert.deepEqual(validateStep({ ...loop, onMissing: 'ignore' }), [
+    'onMissing が stop または skip ではありません。',
+  ]);
+  const flow = { ...validFlow, steps: [...validFlow.steps, loop] };
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 15 }), []);
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 14 }), [
+    `steps[${validFlow.steps.length}]: onMissing は、schemaVersion が 15 以上のフローでだけ使えます。`,
   ]);
 });

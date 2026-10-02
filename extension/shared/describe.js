@@ -217,13 +217,49 @@ export function runStatusTone(status) {
 
 /**
  * 実行の進み具合と止まった理由の文です。フロー名は、カードの 1 行目に出すため含めません（#7）。
- * 完了した場合は、状態の印だけで足りるため、空の文字列を返します。
+ * 完了した場合は、状態の印だけで足りるため、空の文字列を返します。飛ばした行がある場合（#174）は、
+ * 完了した場合も、飛ばした行を報告します。
  * @param {{ flowName: string, status: string, stepIndex: number, total: number, items?: number[],
- *   page?: number, loops?: ('item' | 'round')[], error?: string, note?: string, midStep?: boolean }} run
+ *   page?: number, loops?: ('item' | 'round')[], error?: string, note?: string, midStep?: boolean,
+ *   skipped?: import('./history.js').SkippedRow[] }} run
  * @param {Step | undefined} step stepIndex の手順
  * @returns {string}
  */
 export function runDetailText(run, step) {
+  const base = runDetailBase(run, step);
+  // 行の中の要素が見つからず飛ばした行（#174）は、どの結果でも報告します。
+  const skipped = skippedText(run.skipped);
+  return [base, skipped].filter((text) => text !== '').join(' ');
+}
+
+/** 飛ばした行の説明に並べる件数の上限です。超えた分は件数だけを示します。 */
+const SKIPPED_LIST_LIMIT = 5;
+
+/**
+ * 飛ばした行の説明です（#174）。例：「2 件の行を飛ばしました：10 件目（クリック：領収書等）、14 件目（…）。」
+ * @param {import('./history.js').SkippedRow[] | undefined} skipped
+ * @returns {string}
+ */
+export function skippedText(skipped) {
+  if (!skipped || skipped.length === 0) {
+    return '';
+  }
+  const listed = skipped
+    .slice(0, SKIPPED_LIST_LIMIT)
+    .map((row) => `${itemText(row.items, row.page)}（${row.step}）`)
+    .join('、');
+  const more =
+    skipped.length > SKIPPED_LIST_LIMIT ? `ほか ${skipped.length - SKIPPED_LIST_LIMIT} 件` : '';
+  return `要素が見つからない ${skipped.length} 件の行を飛ばしました：${listed}${more ? `、${more}` : ''}。`;
+}
+
+/**
+ * runDetailText の、飛ばした行を除いた部分です。
+ * @param {Parameters<typeof runDetailText>[0]} run
+ * @param {Step | undefined} step
+ * @returns {string}
+ */
+function runDetailBase(run, step) {
   const item = itemText(run.items, run.page, run.loops);
   const number = `手順 ${run.stepIndex + 1} / ${run.total}${item ? `（${item}）` : ''}`;
   const where = `${number}${step ? `：${describeStep(step)}` : ''}`;

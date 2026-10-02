@@ -65,7 +65,7 @@ import {
   whileLimitError,
 } from '../shared/control-flow.js';
 import { conditionKind, describeCondition, evaluateCondition } from '../shared/condition.js';
-import { pageStepText } from '../shared/describe.js';
+import { describeStepForPage, pageStepText } from '../shared/describe.js';
 import { decideDialog } from '../shared/dialog.js';
 import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../shared/redirect.js';
 
@@ -103,8 +103,11 @@ import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../sh
  *   その手順の残りの時間を待ってから続けます。
  * @property {number} [schemaVersion] 実行しているフローの形式の版。実行履歴に記録します（#93）
  * @property {'schedule'} [trigger] 定期実行（#22）で始めた場合に 'schedule' です。通知と実行履歴に使います
+ * @property {SkippedRow[]} [skipped] 行の中の要素が見つからず飛ばした行（#174）。実行履歴にも記録します
  * @property {string} startedAt
  */
+
+/** @typedef {import('../shared/history.js').SkippedRow} SkippedRow */
 
 /** 要素が表示されるまで待つ上限です。 */
 const ELEMENT_TIMEOUT_MS = 10_000;
@@ -967,6 +970,11 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
    * @type {Step | undefined}
    */
   let previousStep;
+  /**
+   * 行の中の要素が見つからず飛ばした行です（#174）。実行の状態と実行履歴に記録します。
+   * @type {SkippedRow[]}
+   */
+  const skippedRows = [];
   /** 記録時にあった転送が起きなかったため飛ばした、転送先の URL です（#90）。失敗したときの説明に使います。 */
   let skippedRedirect;
   /** 実行を終えた後も、ページの枠とアイコンで「ここから手で操作する」ことを示すか（#13）。 */
@@ -1062,7 +1070,9 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           (afterRow(loop.step, frame) === 'page' ||
             needsReturn(frame.documentId, await getDocumentId(tabId)));
         if (!pending) {
+          const before = frames;
           ({ pc, frames } = advance(program, pc, frames));
+          throwIfAllSkipped(before, frames);
           continue;
         }
       }
@@ -1108,7 +1118,9 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           }
           if (afterRow(loop.step, frame) === 'page') {
             const turned = await turnPage(runId, flow, tabId, loop.step, frame);
+            const before = frames;
             ({ pc, frames } = advance(program, pc, frames, turned.count));
+            throwIfAllSkipped(before, frames);
             if (turned.count > 0) {
               frames = [
                 ...frames.slice(0, -1),
@@ -1124,7 +1136,9 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             }
             continue;
           }
+          const before = frames;
           ({ pc, frames } = advance(program, pc, frames));
+          throwIfAllSkipped(before, frames);
           continue;
         }
         if (instruction.op === 'if') {
@@ -1306,14 +1320,41 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             step.type === 'click' && step.download
               ? watchDownload(step.download, pathValues)
               : undefined;
+          // 行の中の要素が見つからない行を飛ばす繰り返し（#174）の中では、やり直さず、見つからない場合は
+          // その行の残りの手順を行わずに次の行へ進みます。ページ全体で探す要素は対象にしません。
+          const skipDepth =
+            'target' in step && step.target.scope === 'item' ? skippableDepth(program, frames) : -1;
           let done;
           try {
-            done = await withRetry(runId, flow, () =>
-              runInPage(runId, flow, tabId, step, expectedUrl, scope),
-            );
+            done =
+              skipDepth === -1
+                ? await withRetry(runId, flow, () =>
+                    runInPage(runId, flow, tabId, step, expectedUrl, scope),
+                  )
+                : await runInPage(runId, flow, tabId, step, expectedUrl, scope);
           } catch (error) {
             opened?.cancel();
             downloading?.cancel();
+            if (skipDepth !== -1 && error instanceof ElementNotFound) {
+              skippedRows.push({
+                stepNumber: currentNumber() + 1,
+                items: frames.map((frame) => frame.index + 1),
+                ...(pageNumber(program, frames) !== undefined
+                  ? { page: pageNumber(program, frames) }
+                  : {}),
+                step: describeStepForPage(step),
+              });
+              await updateRunState(runId, { skipped: skippedRows.slice(0, MAX_SKIPPED_ROWS) });
+              const frame = frames[skipDepth];
+              const loop = program[frame.startPc];
+              frames = [
+                ...frames.slice(0, skipDepth),
+                { ...frame, skipped: (frame.skipped ?? 0) + 1 },
+              ];
+              pc = loop.op === 'forEach' ? loop.endPc - 1 : pc + 1;
+              previousStep = undefined;
+              continue;
+            }
             throw error;
           }
           if (downloading && step.type === 'click' && step.download?.from === 'link') {
@@ -1563,8 +1604,49 @@ function watchOpenedTab(openerTabId) {
 
 /**
  * 繰り返しの記録（LoopFrame）に、一覧のページへ戻るための情報を加えたものです（#95）。
- * @typedef {LoopFrame & { documentId?: string, listUrl?: string }} LoopState
+ * skipped は、要素が見つからず飛ばした行の数です（#174）。
+ * @typedef {LoopFrame & { documentId?: string, listUrl?: string, skipped?: number }} LoopState
  */
+
+/** 実行の状態と実行履歴に記録する、飛ばした行の数の上限です（#174）。 */
+const MAX_SKIPPED_ROWS = 100;
+
+/**
+ * 行の中の要素が見つからない行を飛ばす繰り返し（forEach の onMissing が skip、#174）の段を返します。
+ * 行の中の要素（scope: item）は、いちばん内側の forEach の行の中で探すため、その段だけを見ます。
+ * 飛ばさない場合は -1 です。
+ * @param {Instruction[]} program
+ * @param {LoopState[]} frames
+ * @returns {number}
+ */
+function skippableDepth(program, frames) {
+  for (let depth = frames.length - 1; depth >= 0; depth -= 1) {
+    const loop = program[frames[depth].startPc];
+    if (loop?.op === 'forEach') {
+      return loop.step.onMissing === 'skip' ? depth : -1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * 繰り返しを終えたときに、すべての行を飛ばしていた場合は停止します（#174）。行の中の要素の指定が
+ * 誤っている場合に、何もせずに「完了」にならないようにするためです。
+ * @param {LoopState[]} before 次の行へ進む前の繰り返しの記録
+ * @param {LoopState[]} after 進んだ後の繰り返しの記録
+ */
+function throwIfAllSkipped(before, after) {
+  if (after.length >= before.length) {
+    return;
+  }
+  const ended = before[before.length - 1];
+  const rows = (ended.done ?? 0) + ended.count;
+  if (ended.skipped !== undefined && ended.skipped > 0 && ended.skipped >= rows) {
+    throw new Error(
+      `繰り返しの ${rows} 件すべてで、行の中の要素が見つからなかったため、停止しました。行の中の要素の指定を確かめてください。`,
+    );
+  }
+}
 
 /**
  * ページ送りを使う繰り返しの中の場合に、何ページ目か（1 から数えます）を返します（#95）。

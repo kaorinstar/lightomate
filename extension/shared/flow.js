@@ -24,7 +24,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -47,9 +47,10 @@ export const SCHEMA_VERSION = 14;
  * before）を加えたものです（#162）。
  * 版 14 は、版 13 に、クリックせずにリンク先のファイルを保存する指定（click の download の from）を加えたものです
  * （#172）。
+ * 版 15 は、版 14 に、行の中の要素が見つからない行を飛ばす指定（forEach の onMissing）を加えたものです（#174）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -75,6 +76,9 @@ const DOWNLOAD_MIN_SCHEMA_VERSION = 12;
 
 /** click の download の from を使える最も古い版です（#172）。 */
 const DOWNLOAD_LINK_MIN_SCHEMA_VERSION = 14;
+
+/** forEach の onMissing を使える最も古い版です（#174）。 */
+const ON_MISSING_MIN_SCHEMA_VERSION = 15;
 
 /** 日付が指定した月より前かの条件（before）を使える最も古い版です（#162）。 */
 const BEFORE_CONDITION_MIN_SCHEMA_VERSION = 13;
@@ -285,6 +289,9 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {Target} [nextPage] 次のページへ送る要素（「次へ」のボタンなど）の指定。ページの行をすべて処理した後にクリックし、
  *   次のページの行を続けて処理します。見つからない場合は繰り返しを終えます
  * @property {number} [maxPages] ページ送りの上限。省略した場合は control-flow.js の DEFAULT_MAX_PAGES です
+ * @property {'stop' | 'skip'} [onMissing] 行の中で要素（scope: item）が見つからない場合の動作（#174）。
+ *   skip は、その行の残りの手順を行わずに次の行へ進み、飛ばした行を報告します。すべての行を飛ばした場合は
+ *   失敗にします。既定は stop（実行を止める）です。版 15 で加えました
  * @property {Step[]} steps 各行で行う手順
  */
 
@@ -617,6 +624,16 @@ function validateStepList(list, path, depth, inLoop, context, inRepeat = false) 
           `${at}: forEach の内側には、cause が user の navigate の手順を書けません。一覧のページへは、行の処理の後に自動で戻ります。`,
         );
       }
+    }
+    if (
+      type === 'forEach' &&
+      step.onMissing !== undefined &&
+      version !== undefined &&
+      version < ON_MISSING_MIN_SCHEMA_VERSION
+    ) {
+      errors.push(
+        `${at}: onMissing は、schemaVersion が ${ON_MISSING_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+      );
     }
     if (type === 'forEach' && (step.nextPage !== undefined || step.maxPages !== undefined)) {
       if (version !== undefined && version < LOOP_NAVIGATION_MIN_SCHEMA_VERSION) {
@@ -1001,6 +1018,9 @@ export function validateStep(step) {
           /** @type {number} */ (step.maxPages) > MAX_PAGES_LIMIT)
       ) {
         errors.push(`maxPages が 1 以上 ${MAX_PAGES_LIMIT} 以下の整数ではありません。`);
+      }
+      if (step.onMissing !== undefined && step.onMissing !== 'stop' && step.onMissing !== 'skip') {
+        errors.push('onMissing が stop または skip ではありません。');
       }
       if (!Array.isArray(step.steps)) {
         errors.push('steps が配列ではありません。');

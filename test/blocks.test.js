@@ -344,3 +344,22 @@ test('「秒待つ」と実行速度の関係の説明は、［実行速度］�
   );
   assert.equal(/** @type {any} */ (wait).tooltip, undefined);
 });
+
+test('繰り返しのブロックの「要素がない行は飛ばす」は、forEach の onMissing と往復する（#174）', () => {
+  /** @type {import('../extension/shared/flow.js').Step[]} */
+  const loops = [
+    { type: 'forEach', items: target('行'), onMissing: 'skip', steps: [] },
+    { type: 'forEach', items: target('行'), onMissing: 'stop', steps: [] },
+    { type: 'forEach', items: target('行'), steps: [] },
+  ];
+  const state = stepsToWorkspace(loops);
+  assert.equal(nth(state, 0).fields?.SKIP, true);
+  assert.equal(nth(state, 1).fields?.SKIP, false);
+  assert.deepEqual(workspaceToSteps(state).steps, loops);
+  // 欄を切り替えると、その項目だけが変わります。
+  Object.assign(nth(state, 0).fields ?? {}, { SKIP: false });
+  Object.assign(nth(state, 2).fields ?? {}, { SKIP: true });
+  const changed = workspaceToSteps(state).steps;
+  assert.equal('onMissing' in changed[0], false);
+  assert.equal(/** @type {any} */ (changed[2]).onMissing, 'skip');
+});

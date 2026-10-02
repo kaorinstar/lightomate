@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>注文履歴（キャンセル済みを含む）</title>
+  </head>
+  <body>
+    <!-- 行の中の要素が見つからない行を飛ばす指定（#174）の確認に使います。キャンセル済みの注文には、
+         明細書のリンクがありません。明細書のリンクは、ログインの Cookie がある場合だけ PDF を返します。 -->
+    <div id="orders">
+      <div class="order">
+        <span class="order-number">B-001</span>
+        <a class="invoice" href="/auth/invoice.pdf?n=B-001">明細書</a>
+      </div>
+      <div class="order canceled">
+        <span class="order-number">B-002</span>
+        <span class="status">キャンセル済み</span>
+      </div>
+      <div class="order">
+        <span class="order-number">B-003</span>
+        <a class="invoice" href="/auth/invoice.pdf?n=B-003">明細書</a>
+      </div>
+      <div class="order canceled">
+        <span class="order-number">B-004</span>
+        <span class="status">キャンセル済み</span>
+      </div>
+    </div>
+    <script src="link-orders.js"></script>
+  </body>
+</html>

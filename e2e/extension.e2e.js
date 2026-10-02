@@ -1284,3 +1284,70 @@ test('リンク先のファイルを保存：リンクがフローのサイト�
     await page.close();
   }
 });
+
+test('要素がない行は飛ばす：行の中の要素が見つからない行を飛ばして最後の行まで進み、飛ばした行を実行履歴に残す（#174）', async () => {
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 15,
+    name: '飛ばす行',
+    origin: server.origin,
+    interval: { min: 1000, max: 1000 },
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/skip-orders.html` },
+      {
+        type: 'forEach',
+        items: target('div.order', 'div', '注文の行'),
+        onMissing: 'skip',
+        steps: [
+          {
+            type: 'click',
+            target: target('a.invoice', 'a', '明細書', true),
+            download: { path: 'Lightomate/飛ばす行/明細書', from: 'link' },
+          },
+        ],
+      },
+    ],
+  };
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.deepEqual(
+    entry.skipped?.map((row) => row.items),
+    [[2], [4]],
+  );
+  assert.equal(entry.skipped?.[0].step, 'リンク先のファイルを保存：明細書');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/飛ばす行/')),
+    (list) => list.length >= 2,
+  );
+  assert.equal(files.length, 2);
+  for (const page of pagesAt('/skip-orders.html')) {
+    await page.close();
+  }
+});
+
+test('要素がない行は飛ばす：すべての行を飛ばした場合は「失敗」にする（#174）', async () => {
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 15,
+    name: 'すべて飛ばす',
+    origin: server.origin,
+    interval: { min: 1000, max: 1000 },
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/skip-orders.html` },
+      {
+        type: 'forEach',
+        items: target('div.order.canceled', 'div', 'キャンセル済みの行'),
+        onMissing: 'skip',
+        steps: [{ type: 'click', target: target('a.invoice', 'a', '明細書', true) }],
+      },
+    ],
+  };
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'failed');
+  assert.match(entry.reason ?? '', /2 件すべてで、行の中の要素が見つからなかった/);
+  assert.equal(entry.skipped?.length, 2);
+  for (const page of pagesAt('/skip-orders.html')) {
+    await page.close();
+  }
+});

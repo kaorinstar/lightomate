@@ -219,8 +219,10 @@ export function makeLoop(steps, hints, from, to, key) {
     );
     return candidate && 'target' in step ? { ...step, target: candidate.inner } : step;
   });
+  // 記録から作る繰り返しでは、行の中の要素が見つからない行（キャンセル済みの注文など）を飛ばします（#174）。
+  // 飛ばした行は、実行のカードと実行履歴に報告します。
   /** @type {Step} */
-  const loop = { type: 'forEach', items: option.items, steps: inner };
+  const loop = { type: 'forEach', items: option.items, onMissing: 'skip', steps: inner };
   return {
     ok: true,
     steps: [...steps.slice(0, start), loop, ...steps.slice(end + 1)],

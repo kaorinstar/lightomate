@@ -28,7 +28,7 @@ import {
   saveStopRule,
 } from '../common/stop-rules-store.js';
 import { listHistory, onHistoryChanged } from '../common/history-store.js';
-import { formatDateTime, paramColumns } from '../shared/describe.js';
+import { formatDateTime, paramColumns, skippedText } from '../shared/describe.js';
 import { flattenSteps } from '../shared/control-flow.js';
 import { createBlockEditor } from './block-editor.js';
 import { paramFieldset, readParamRows, showParamRowErrors } from './param-form.js';
@@ -2485,6 +2485,13 @@ async function renderHistory() {
         text.className = 'lm-sub';
         text.textContent = entry.reason;
         reason.append(text);
+      }
+      // 行の中の要素が見つからず飛ばした行（#174）は、完了した実行でも示します。
+      if (entry.skipped && entry.skipped.length > 0) {
+        const skipped = document.createElement('div');
+        skipped.className = 'lm-sub';
+        skipped.textContent = skippedText(entry.skipped);
+        reason.append(skipped);
       }
 
       const files = document.createElement('td');

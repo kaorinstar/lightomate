@@ -229,8 +229,11 @@ export function blockDefinitions() {
           precision: 1,
         },
       ],
-      message1: '%1',
-      args1: [{ type: 'input_statement', name: 'STEPS' }],
+      // 行の中の要素が見つからない行を飛ばすか（forEach の onMissing、#174）です。
+      message1: '要素がない行は飛ばす %1',
+      args1: [{ type: 'field_checkbox', name: 'SKIP', checked: false }],
+      message2: '%1',
+      args2: [{ type: 'input_statement', name: 'STEPS' }],
       colour: BLOCK_COLOURS.control,
       ...statement,
     },
@@ -261,8 +264,10 @@ export function blockDefinitions() {
       ],
       message2: '次のページへ進むボタン：%1',
       args2: [{ type: 'field_label_serializable', name: 'NEXT', text: '' }],
-      message3: '%1',
-      args3: [{ type: 'input_statement', name: 'STEPS' }],
+      message3: '要素がない行は飛ばす %1',
+      args3: [{ type: 'field_checkbox', name: 'SKIP', checked: false }],
+      message4: '%1',
+      args4: [{ type: 'input_statement', name: 'STEPS' }],
       colour: BLOCK_COLOURS.control,
       ...statement,
     },
@@ -533,8 +538,13 @@ function stepFields(step) {
             MAX: step.max ?? DEFAULT_FOREACH_MAX,
             MAX_PAGES: step.maxPages ?? DEFAULT_MAX_PAGES,
             NEXT: step.nextPage.label,
+            SKIP: step.onMissing === 'skip',
           }
-        : { TARGET: step.items.label, MAX: step.max ?? DEFAULT_FOREACH_MAX };
+        : {
+            TARGET: step.items.label,
+            MAX: step.max ?? DEFAULT_FOREACH_MAX,
+            SKIP: step.onMissing === 'skip',
+          };
   }
 }
 
@@ -683,6 +693,16 @@ export function blockToStep(block) {
           keepDefault(step.maxPages, fields.MAX_PAGES, DEFAULT_MAX_PAGES),
         );
       }
+      // 飛ばさない場合は、元の手順に stop と書いてあれば残し、なければ省略します（既定は stop です）。
+      setOrDelete(
+        step,
+        'onMissing',
+        fields.SKIP === true || fields.SKIP === 'TRUE'
+          ? 'skip'
+          : step.onMissing === 'stop'
+            ? 'stop'
+            : undefined,
+      );
       step.steps = inner('STEPS');
       break;
   }
