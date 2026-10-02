@@ -1351,3 +1351,137 @@ test('要素がない行は飛ばす：すべての行を飛ばした場合は�
     await page.close();
   }
 });
+
+test('接続できないページ：PDF の表示画面のように接続が切れるページへ移動しても止まらず、一覧へ戻った後も続けられる（#171）', async () => {
+  const { extensionPage } = browser;
+  const listUrl = `${server.origin}/link-orders.html`;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 15,
+    name: '接続できないページ',
+    origin: server.origin,
+    interval: { min: 1000, max: 1000 },
+    steps: [
+      { type: 'navigate', cause: 'user', url: listUrl },
+      { type: 'pause', note: '別のページへ移動して戻ります。' },
+      {
+        type: 'extract',
+        target: target('.order:nth-child(2) .order-number', 'span', '注文番号'),
+        name: 'number',
+      },
+    ],
+  };
+  const started = await extensionPage.evaluate(async (flow) => {
+    await chrome.storage.local.remove('history');
+    await chrome.storage.local.set({
+      flows: { unreachable: { id: 'unreachable', createdAt: '', updatedAt: '', flow } },
+    });
+    return chrome.runtime.sendMessage({
+      kind: 'runner/start',
+      flowId: 'unreachable',
+      params: {},
+      secrets: {},
+    });
+  }, flow);
+  assert.equal(started.ok, true);
+  /** @returns {Promise<{ status?: string, tabId?: number } | undefined>} */
+  const state = () =>
+    extensionPage.evaluate(
+      async (key) =>
+        /** @type {{ status?: string, tabId?: number } | undefined} */ (
+          (await chrome.storage.session.get(key))[key]
+        ),
+      `run/${started.runId}`,
+    );
+  const paused = await waitUntil(state, (value) => value?.status === 'paused');
+
+  // Chrome の PDF の表示画面と同じく、拡張機能が接続できないページ（chrome://）へ移動します。タブは開いたまま、
+  // ダイアログを受け取る接続（chrome.debugger）が target_closed で切れます。その後、一覧のページへ戻ります。
+  await extensionPage.evaluate(
+    async ({ tabId, listUrl }) => {
+      await chrome.tabs.update(tabId, { url: 'chrome://version' });
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await chrome.tabs.update(tabId, { url: listUrl });
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    },
+    { tabId: paused?.tabId, listUrl },
+  );
+  // 接続が切れても、タブが開いているため止まりません。
+  assert.equal((await state())?.status, 'paused');
+
+  await extensionPage.evaluate(
+    (runId) => chrome.runtime.sendMessage({ kind: 'runner/resume', runId }),
+    started.runId,
+  );
+  const [entry] = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { history } = await chrome.storage.local.get('history');
+        return /** @type {import('../extension/shared/history.js').HistoryEntry[]} */ (
+          history ?? []
+        );
+      }),
+    (entries) => entries.length > 0,
+    30_000,
+  );
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  for (const page of pagesAt('/link-orders.html')) {
+    await page.close();
+  }
+});
+
+test('接続できないページ：実行中のタブを本当に閉じた場合は、これまでどおり停止する（#171）', async () => {
+  const { extensionPage } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 15,
+    name: 'タブを閉じる',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/link-orders.html` },
+      { type: 'pause', note: 'タブを閉じます。' },
+      { type: 'wait', ms: 1000 },
+    ],
+  };
+  const started = await extensionPage.evaluate(async (flow) => {
+    await chrome.storage.local.remove('history');
+    await chrome.storage.local.set({
+      flows: { closing: { id: 'closing', createdAt: '', updatedAt: '', flow } },
+    });
+    return chrome.runtime.sendMessage({
+      kind: 'runner/start',
+      flowId: 'closing',
+      params: {},
+      secrets: {},
+    });
+  }, flow);
+  assert.equal(started.ok, true);
+  const paused = await waitUntil(
+    () =>
+      extensionPage.evaluate(
+        async (key) =>
+          /** @type {{ status?: string, tabId?: number } | undefined} */ (
+            (await chrome.storage.session.get(key))[key]
+          ),
+        `run/${started.runId}`,
+      ),
+    (value) => value?.status === 'paused',
+  );
+  await extensionPage.evaluate(
+    (tabId) => chrome.tabs.remove(/** @type {number} */ (tabId)),
+    paused?.tabId,
+  );
+  const [entry] = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { history } = await chrome.storage.local.get('history');
+        return /** @type {import('../extension/shared/history.js').HistoryEntry[]} */ (
+          history ?? []
+        );
+      }),
+    (entries) => entries.length > 0,
+    30_000,
+  );
+  assert.equal(entry.status, 'failed');
+  assert.match(entry.reason ?? '', /実行中のタブが閉じられたため、停止しました。/);
+});

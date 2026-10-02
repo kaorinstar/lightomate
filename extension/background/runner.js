@@ -242,6 +242,9 @@ const pageStepTexts = new Map();
  * @property {import('../shared/dialog.js').DialogDecision | undefined} pending まだ処理していない、
  *   一時停止または実行を終える対応
  * @property {string | undefined} detached 接続が切れた理由（chrome.debugger.onDetach の reason）
+ * @property {boolean} [suspended] タブが開いたまま接続が切れている状態か（#171）。PDF の表示画面など、拡張機能が
+ *   接続できないページへ移動すると、タブを閉じなくても target_closed で切れます。次にページを操作する前に、
+ *   接続し直します
  * @property {((note: string) => Promise<void>) | undefined} pause ダイアログのために一時停止する処理。
  *   手順を実行している間だけ設定します
  */
@@ -361,7 +364,7 @@ async function unwatchDialogs(runId) {
     return;
   }
   dialogWatches.delete(runId);
-  if (watch.detached === undefined) {
+  if (watch.detached === undefined && !watch.suspended) {
     await chrome.debugger.detach({ tabId: watch.tabId }).catch(() => {});
   }
 }
@@ -386,12 +389,41 @@ function beginDialogWindow(runId, step) {
  */
 async function dismissOpenDialog(runId) {
   const watch = dialogWatches.get(runId);
-  if (watch?.open && watch.detached === undefined) {
+  if (watch?.open && watch.detached === undefined && !watch.suspended) {
     await chrome.debugger
       .sendCommand({ tabId: watch.tabId }, 'Page.handleJavaScriptDialog', { accept: false })
       .catch(() => {});
     watch.open = false;
   }
+}
+
+/**
+ * タブが開いたまま接続が切れている場合に、接続し直します（#171）。PDF の表示画面から一覧のページへ戻った後など、
+ * ページを操作する前に呼びます。まだ接続できないページ（PDF の表示画面など）を表示している場合は、接続が切れた
+ * まま false を返します。
+ * @param {string} runId
+ * @returns {Promise<boolean>} 接続しているか。実行していない場合も true です
+ */
+async function resumeDialogWatch(runId) {
+  await handleDialogs(runId);
+  const watch = dialogWatches.get(runId);
+  if (!watch?.suspended) {
+    return true;
+  }
+  const target = { tabId: watch.tabId };
+  try {
+    await chrome.debugger.attach(target, '1.3');
+  } catch {
+    return false;
+  }
+  try {
+    await chrome.debugger.sendCommand(target, 'Page.enable');
+  } catch {
+    await chrome.debugger.detach(target).catch(() => {});
+    return false;
+  }
+  watch.suspended = false;
+  return true;
 }
 
 /**
@@ -405,7 +437,19 @@ async function handleDialogs(runId) {
   }
   if (watch.detached !== undefined) {
     if (watch.detached === 'target_closed') {
-      throw new Error('実行中のタブが閉じられたため、停止しました。');
+      // PDF の表示画面など、拡張機能が接続できないページへ移動した場合も、タブを閉じずに target_closed で
+      // 切れます（#171）。タブがある場合は止めずに、次にページを操作する前に接続し直します。
+      const alive = await chrome.tabs.get(watch.tabId).then(
+        () => true,
+        () => false,
+      );
+      if (!alive) {
+        throw new Error('実行中のタブが閉じられたため、停止しました。');
+      }
+      watch.detached = undefined;
+      watch.suspended = true;
+      watch.open = false;
+      return;
     }
     throw new Error(
       watch.detached === 'canceled_by_user'
@@ -2178,6 +2222,8 @@ async function throwIfAuthScreen(runId, tabId, currentUrl, step, expectedUrl) {
  */
 async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
   await waitForLoad(runId, tabId, () => true, '');
+  // PDF の表示画面などで切れた、ダイアログを受け取る接続を戻します（#171）。
+  await resumeDialogWatch(runId);
   // クリックで移動した場合に、新しいページに切り替わったかを判定できるよう、操作の前に控えます（#51）。
   const documentId = await getDocumentId(tabId);
   const tab = await chrome.tabs.get(tabId);
@@ -2297,6 +2343,7 @@ async function checkCondition(runId, flow, tabId, condition, scope) {
  */
 async function readPage(runId, flow, tabId, message) {
   await waitForLoad(runId, tabId, () => true, '');
+  await resumeDialogWatch(runId);
   const tab = await chrome.tabs.get(tabId);
   const url = tab.url ?? '';
   const pageOrigin = isWebUrl(url) ? new URL(url).origin : undefined;
@@ -2362,6 +2409,13 @@ async function savePdf(runId, flow, tabId, step, pathValues) {
  */
 async function printPage(runId, tabId, screen) {
   const target = { tabId };
+  // PDF を作る命令は、ダイアログを受け取る接続（chrome.debugger）で送ります。接続が切れている場合は接続し直し、
+  // 接続できないページ（PDF の表示画面など）では止めます（#171）。
+  if (!(await resumeDialogWatch(runId))) {
+    throw new Error(
+      'PDF の表示画面など、拡張機能が接続できないページのため、PDF として保存できません。PDF のファイルを保存する場合は、リンクのクリックの手順で「リンク先のファイルを保存」を使ってください。',
+    );
+  }
   try {
     if (screen) {
       // 実行中の枠と文字は @media print でだけ隠れるため、画面の表示では PDF に写らないよう隠します。
