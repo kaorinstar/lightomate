@@ -4,7 +4,7 @@
 // 止まった理由の説明には、値を当てはめた URL などが含まれることがあるため、記録する前に伏せます。
 
 import { itemText } from './control-flow.js';
-import { describeStep } from './describe.js';
+import { describeStep, skippedText } from './describe.js';
 
 /** @typedef {import('./flow.js').Step} Step */
 
@@ -34,6 +34,7 @@ import { describeStep } from './describe.js';
  * @property {string} [extensionVersion] 実行した拡張機能の版（manifest.json の version、#93）
  * @property {number} [schemaVersion] 実行したフローの形式の版（#93）
  * @property {'schedule'} [trigger] 定期実行（#22）で始めた場合に 'schedule' です
+ * @property {SkippedRow[]} [skipped] 行の中の要素が見つからず飛ばした行（#174）。完了した実行でも記録します
  *
  * step 以降の項目は #93 で加えました。それより前に記録した履歴にはありません。
  */
@@ -46,6 +47,16 @@ import { describeStep } from './describe.js';
  * @property {string} [pageUrl] 止まったときのタブの URL
  * @property {number} [retries] 止まった手順で、要素が見つからずにやり直した回数
  * @property {string} [extensionVersion] 拡張機能の版
+ */
+
+/**
+ * 行の中の要素が見つからず飛ばした行です（#174）。行の内容（注文番号など）は、個人情報を含む場合があるため
+ * 記録しません。
+ * @typedef {object} SkippedRow
+ * @property {number} stepNumber 要素が見つからなかった手順の番号（1 から数えます）
+ * @property {number[]} items 段ごとの何件目の行か（1 から数えます）
+ * @property {number} [page] ページ送りを使う繰り返しの場合の、何ページ目か（1 から数えます）
+ * @property {string} step 手順の短い説明（describeStepForPage）。入力する値は含みません
  */
 
 /** 保存する履歴の件数の上限です。超えた分は古い順に削除します。 */
@@ -104,7 +115,7 @@ export function withoutHistoryEntries(history, runIds) {
  *   runId: string, flowId: string, flowName: string, origin: string, startedAt: string,
  *   status: string, stepIndex: number, total: number, error?: string, items?: number[],
  *   loops?: ('item' | 'round')[], page?: number,
- *   schemaVersion?: number, trigger?: 'schedule',
+ *   schemaVersion?: number, trigger?: 'schedule', skipped?: SkippedRow[],
  * }} run 実行の状態（background/runner.js の RunState）
  * @param {string} endedAt 終了した日時（ISO 8601）
  * @param {Iterable<string>} values 伏せる値
@@ -128,6 +139,9 @@ export function historyEntryFromRun(run, endedAt, values, extra = {}) {
     total: run.total,
     files: [...(extra.files ?? [])],
     ...(run.trigger ? { trigger: run.trigger } : {}),
+    ...(run.skipped && run.skipped.length > 0
+      ? { skipped: run.skipped.map((row) => ({ ...row, items: [...row.items] })) }
+      : {}),
   };
   if (status === 'done') {
     return entry;
@@ -227,6 +241,7 @@ const CSV_COLUMNS = /** @type {const} */ ([
   ['ページ', (/** @type {HistoryEntry} */ entry) => entry.pageUrl ?? ''],
   ['やり直し', (/** @type {HistoryEntry} */ entry) => retryText(entry)],
   ['理由', (/** @type {HistoryEntry} */ entry) => entry.reason ?? ''],
+  ['飛ばした行', (/** @type {HistoryEntry} */ entry) => skippedText(entry.skipped)],
   ['保存したファイル', (/** @type {HistoryEntry} */ entry) => entry.files.join('\n')],
 ]);
 
@@ -300,6 +315,9 @@ export function historyEntryText(entry) {
   }
   if (entry.reason) {
     lines.push(`理由：${entry.reason}`);
+  }
+  if (entry.skipped && entry.skipped.length > 0) {
+    lines.push(`飛ばした行：${skippedText(entry.skipped)}`);
   }
   if (entry.files.length > 0) {
     lines.push(`保存したファイル：${entry.files.join('、')}`);

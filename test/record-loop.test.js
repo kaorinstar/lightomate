@@ -102,6 +102,8 @@ test('範囲を各行で繰り返す手順に変え、行の中の要素だけ�
   const loop = result.steps[1];
   assert.ok(loop.type === 'forEach');
   assert.deepEqual(loop.items, orderRow);
+  // 記録から作る繰り返しは、行の中の要素が見つからない行を飛ばします（#174）。
+  assert.equal(loop.onMissing, 'skip');
   assert.deepEqual(loop.steps, [
     {
       type: 'click',

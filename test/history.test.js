@@ -171,7 +171,7 @@ test('CSV は見出しと各行を CRLF で区切り、先頭に BOM を付け�
   const csv = historyToCsv([entry('a')]);
   assert.ok(
     csv.startsWith(
-      '﻿開始,終了,フロー,サイト,結果,止まった手順,止まった手順の内容,ページ,やり直し,理由,保存したファイル\r\n',
+      '﻿開始,終了,フロー,サイト,結果,止まった手順,止まった手順の内容,ページ,やり直し,理由,飛ばした行,保存したファイル\r\n',
     ),
   );
   assert.ok(csv.endsWith('\r\n'));
@@ -189,7 +189,7 @@ test('CSV の値に区切りの文字、引用符、改行を含む場合は引�
     },
   ]);
   assert.ok(csv.includes('"領収書, ""8 月"""'));
-  assert.ok(csv.includes(',失敗,2 / 3,,,,"1 行目\n2 行目",'));
+  assert.ok(csv.includes(',失敗,2 / 3,,,,"1 行目\n2 行目",,'));
 });
 
 test("CSV の値が数式として実行されないよう、= などで始まる値の先頭に ' を付ける", () => {
@@ -390,4 +390,35 @@ test('実行履歴の結果は、サイドパネルの実行の状態と同じ�
     assert.equal(STATUS_LABELS[status], runStatusLabel(status));
     assert.equal(STATUS_TONES[status], runStatusTone(status));
   }
+});
+
+test('飛ばした行（#174）は、完了した実行でも履歴に残し、報告のテキストと CSV に含める', () => {
+  const skipped = [
+    { stepNumber: 4, items: [10], step: 'クリック：領収書等' },
+    { stepNumber: 4, items: [14], page: 2, step: 'クリック：領収書等' },
+  ];
+  const done = historyEntryFromRun(
+    {
+      runId: 'r',
+      flowId: 'f',
+      flowName: '領収書',
+      origin: 'https://www.example.com',
+      startedAt: '2026-10-02T00:00:00.000Z',
+      status: 'done',
+      stepIndex: 5,
+      total: 6,
+      skipped,
+    },
+    '2026-10-02T00:01:00.000Z',
+    [],
+  );
+  assert.deepEqual(done?.skipped, skipped);
+  const text = historyEntryText(/** @type {any} */ (done));
+  assert.match(
+    text,
+    /飛ばした行：要素が見つからない 2 件の行を飛ばしました：10 件目（クリック：領収書等）、2 ページ目の 14 件目（クリック：領収書等）。/,
+  );
+  assert.ok(
+    historyToCsv([/** @type {any} */ (done)]).includes('要素が見つからない 2 件の行を飛ばしました'),
+  );
 });
