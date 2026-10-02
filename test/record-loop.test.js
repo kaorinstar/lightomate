@@ -305,3 +305,19 @@ test('一覧の行の名前は CSS セレクターを含まず件数で示し、
     assert.doesNotMatch(loopOptionLabel(option, options), /div|span|li\b|\./);
   }
 });
+
+test('既定の範囲は、先頭より後の含められない手順（一覧のページを開き直した手順）の前までにする', () => {
+  /** @type {Step[]} */
+  const reopened = [
+    ...steps,
+    { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+    { type: 'click', target: pageTarget('#date-2', '2026年9月2日') },
+  ];
+  /** @type {RowHint[]} */
+  const reopenedHints = [...hints, null, hints[1]];
+  const range = defaultLoopRange(reopened, reopenedHints);
+  assert.deepEqual(range, { from: 1, to: 4 });
+  // 既定の範囲は、そのまま繰り返しにできます。
+  const result = makeLoop(reopened, reopenedHints, 1, 4, candidateKey(orderRow));
+  assert.ok(result.ok);
+});

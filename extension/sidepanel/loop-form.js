@@ -109,7 +109,8 @@ export function createLoopForm({ open, container, list, toast }) {
     box.type = 'checkbox';
     box.className = 'lm-check';
     box.id = `${id}-step-${index}`;
-    box.checked = inRange;
+    // 含められない手順は、範囲の中にあっても印を付けた状態にしません。押せず、外せなくなるためです。
+    box.checked = inRange && reason === null;
     box.disabled = locked || reason !== null;
     box.addEventListener('change', () => {
       range = toggleRange(steps, range, index, box.checked);

@@ -1097,17 +1097,30 @@ async function recordLoop(translate) {
       }),
     (count) => count >= 5,
   );
+  // 一覧のページへ戻ります。戻る操作は、ページを開く手順（利用者の操作による移動）として記録されます。
+  await site.goBack();
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps.length;
+      }),
+    (count) => count >= 6,
+  );
 
   // サイドパネルの記録中の区画で、範囲を選んで繰り返しにします。
   const panel = await browser.context.newPage();
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
   await panel.click('#recording-loop');
   const form = panel.locator('#recording-loop-form');
-  // 既定の範囲は、行の中を操作した最初の手順（2 番目）から最後の手順までです。
-  // ページを開く手順（1 番目）には、印を付けられません。
+  // 既定の範囲は、行の中を操作した最初の手順（2 番目）から、一覧のページへ戻った手順の前までです。
+  // ページを開く手順（1 番目と 6 番目）には、印を付けられません。
   const boxes = form.locator('input[type="checkbox"]');
-  assert.equal(await boxes.count(), 5);
-  assert.equal(await boxes.nth(0).isDisabled(), true);
+  assert.equal(await boxes.count(), 6);
+  for (const index of [0, 5]) {
+    assert.equal(await boxes.nth(index).isDisabled(), true, `${index + 1} 番目の手順`);
+    assert.equal(await boxes.nth(index).isChecked(), false, `${index + 1} 番目の手順`);
+  }
   for (const index of [1, 2, 3, 4]) {
     assert.equal(await boxes.nth(index).isChecked(), true, `${index + 1} 番目の手順`);
   }
@@ -1127,7 +1140,7 @@ async function recordLoop(translate) {
   await form.getByRole('button', { name: '3 件で繰り返す' }).click();
   await waitUntil(
     () => panel.locator('#steps > li').count(),
-    (count) => count === 2,
+    (count) => count === 3,
   );
   assert.equal(await panel.locator('#steps .lm-steps-inner > li').count(), 4);
 
@@ -1140,6 +1153,10 @@ async function recordLoop(translate) {
   const flow = stopped.flow;
   const loop = flow.steps[1];
   assert.ok(loop.type === 'forEach');
+  assert.deepEqual(
+    flow.steps.map((step) => step.type),
+    ['navigate', 'forEach', 'navigate'],
+  );
   assert.deepEqual(
     loop.steps.map((step) =>
       'target' in step ? `${step.type}:${step.target.scope ?? 'page'}` : step.type,

@@ -100,14 +100,20 @@ export function candidateKey(items) {
 
 /**
  * 繰り返しにできる手順を 1 件以上含む範囲の、既定の先頭と末尾を返します。
- * 先頭は行の候補がある最初の手順、末尾は最後の手順です。候補がある手順がない場合は null です。
+ * 先頭は行の候補がある最初の手順、末尾は最後の手順です。ただし、先頭より後に繰り返しに含められない手順
+ * （一覧のページを開き直した手順など）がある場合は、その手順の前までにします。
+ * 候補がある手順がない場合は null です。
  * @param {Step[]} steps
  * @param {RowHint[]} hints
  * @returns {{ from: number, to: number } | null}
  */
 export function defaultLoopRange(steps, hints) {
   const from = steps.findIndex((step, index) => usableHint(step, hints[index]) !== null);
-  return from < 0 ? null : { from, to: steps.length - 1 };
+  if (from < 0) {
+    return null;
+  }
+  const excluded = steps.findIndex((step, index) => index > from && excludedReason(step) !== null);
+  return { from, to: excluded < 0 ? steps.length - 1 : excluded - 1 };
 }
 
 /**
