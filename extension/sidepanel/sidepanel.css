@@ -114,6 +114,64 @@ body {
   content: '';
 }
 
+/* 繰り返しにした手順（#167）の内側の手順です。外側の一覧の高さの中に収めるため、上限を設けません。 */
+.lm-steps-inner {
+  margin: 0;
+  padding-inline-start: 1.5em;
+  list-style: lower-alpha;
+}
+
+/* 繰り返す手順を選ぶ欄（#167）です。範囲の手順は、背景の色と左の線で示します。色だけに頼らないよう、
+   チェックボックスの印と、範囲の手順の右端の「1 件の中」「ページ全体」の印も添えます。 */
+.lm-loop-form {
+  margin-top: 0.75rem;
+}
+
+.lm-loop-title {
+  margin-bottom: 0.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.lm-loop-pick {
+  max-height: 20rem;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.lm-loop-pick li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.375rem 0.5rem;
+  border-inline-start: 3px solid transparent;
+}
+
+.lm-loop-pick li.lm-loop-in {
+  background: var(--tblr-primary-lt);
+  border-inline-start-color: var(--tblr-primary);
+}
+
+.lm-loop-pick .lm-check {
+  flex-shrink: 0;
+  margin-top: 0.25em;
+}
+
+.lm-loop-pick .lm-check:disabled {
+  cursor: not-allowed;
+}
+
+.lm-loop-step {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lm-loop-scope {
+  flex-shrink: 0;
+}
+
 .lm-step-remove {
   float: inline-end;
   margin-inline-start: 0.25rem;

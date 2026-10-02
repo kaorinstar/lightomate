@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>注文履歴（小さな枠）</title>
+    <style>
+      .popover {
+        display: none;
+      }
+      .popover.open {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 記録から繰り返しを作る確認（#167）に使います。各注文の［領収書等］を押すと、行の外（ページの末尾）に
+         置いた小さな枠が開き、その中のリンクから領収書の画面へ移動します。 -->
+    <div id="orders">
+      <div class="order">
+        <span class="order-date">2026年9月1日</span>
+        <button type="button" class="receipt-menu" data-order="A-001">領収書等</button>
+      </div>
+      <div class="order">
+        <span class="order-date">2026年9月2日</span>
+        <button type="button" class="receipt-menu" data-order="A-002">領収書等</button>
+      </div>
+      <div class="order">
+        <span class="order-date">2026年9月3日</span>
+        <button type="button" class="receipt-menu" data-order="A-003">領収書等</button>
+      </div>
+    </div>
+    <div class="popover" id="popover-A-001">
+      <ul>
+        <li><a href="invoice.html?n=A-001">明細書</a></li>
+        <li><a href="receipt.html?n=A-001">注文の詳細</a></li>
+      </ul>
+    </div>
+    <div class="popover" id="popover-A-002">
+      <ul>
+        <li><a href="invoice.html?n=A-002">明細書</a></li>
+        <li><a href="receipt.html?n=A-002">注文の詳細</a></li>
+      </ul>
+    </div>
+    <div class="popover" id="popover-A-003">
+      <ul>
+        <li><a href="invoice.html?n=A-003">明細書</a></li>
+        <li><a href="receipt.html?n=A-003">注文の詳細</a></li>
+      </ul>
+    </div>
+    <script src="popover-orders.js"></script>
+  </body>
+</html>

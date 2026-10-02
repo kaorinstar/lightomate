@@ -18,9 +18,11 @@ import { guardRecordedStep } from '../shared/purchase-guard.js';
 import { applyStopRuleToRecordedStep } from '../shared/stop-rules.js';
 import { getStopRule } from '../common/stop-rules-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
+import { makeLoop, sanitizeRowHint } from '../shared/record-loop.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
+/** @typedef {import('../shared/record-loop.js').RowHint} RowHint */
 
 /**
  * 記録中の状態です。
@@ -30,6 +32,8 @@ import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
  * @property {string[]} [extraOrigins] 記録を始めたサイトのほかに、手順を記録したサイト（#41）
  * @property {string} startedAt 記録を始めた日時（ISO 8601）
  * @property {Step[]} steps 記録した手順
+ * @property {RowHint[]} [rowHints] steps と同じ順の、操作した要素を含む一覧の行の候補（#167）。
+ *   記録した手順を「各行で繰り返す」に変えるときに使います。フロー定義には含めません
  */
 
 /**
@@ -43,19 +47,22 @@ import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
 const RECORDING_KEY = 'recording';
 const RECORDING_PAGE_KEY = 'recordingPage';
 const LAST_FLOW_KEY = 'lastFlow';
+/** 保存前の手順（lastFlow の steps）と同じ順の、一覧の行の候補です（#167）。 */
+const LAST_FLOW_HINTS_KEY = 'lastFlowRowHints';
 
 /** 手順の削除を、表示が古いために断ったときの理由です。 */
 const STALE_STEPS_ERROR =
   '手順の一覧が変わったため、削除しませんでした。一覧を確かめてから押し直してください。';
 
 /**
- * ページへ読み込むスクリプトです。selector.js、overlay.js、element-text.js の関数を recorder.js が
- * 使うため、この順で読み込みます。
+ * ページへ読み込むスクリプトです。selector.js、overlay.js、element-text.js、picker-rows.js の関数を
+ * recorder.js が使うため、この順で読み込みます。picker-rows.js は selector.js の関数を使います。
  */
 const CONTENT_FILES = [
   'content/selector.js',
   'content/overlay.js',
   'content/element-text.js',
+  'content/picker-rows.js',
   'content/recorder.js',
 ];
 
@@ -113,9 +120,10 @@ export function startRecording(tabId) {
       startedAt: new Date().toISOString(),
       // 実行時に同じページから始められるよう、記録を始めたページを最初の手順にします。
       steps: [{ type: 'navigate', url: frame.url, cause: 'user' }],
+      rowHints: [null],
     };
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
-    await chrome.storage.session.remove(LAST_FLOW_KEY);
+    await chrome.storage.session.remove([LAST_FLOW_KEY, LAST_FLOW_HINTS_KEY]);
     await attach(recording);
     return { ok: true };
   });
@@ -146,7 +154,10 @@ export function stopRecording() {
       ...(recording.extraOrigins?.length ? { extraOrigins: recording.extraOrigins } : {}),
       steps: recording.steps,
     };
-    await chrome.storage.session.set({ [LAST_FLOW_KEY]: flow });
+    await chrome.storage.session.set({
+      [LAST_FLOW_KEY]: flow,
+      [LAST_FLOW_HINTS_KEY]: alignHints(recording.steps, recording.rowHints),
+    });
     await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
     await detach(recording.tabId);
     return { ok: true, flow: orderFlow(flow), errors: validateFlow(flow) };
@@ -171,7 +182,10 @@ export function removeRecordedStep(index, count) {
       if (!steps) {
         return { ok: false, error: STALE_STEPS_ERROR };
       }
-      await chrome.storage.session.set({ [RECORDING_KEY]: { ...recording, steps } });
+      const rowHints = /** @type {RowHint[]} */ (
+        withoutStep(alignHints(recording.steps, recording.rowHints), index, count)
+      );
+      await chrome.storage.session.set({ [RECORDING_KEY]: { ...recording, steps, rowHints } });
       return { ok: true };
     }
 
@@ -184,9 +198,13 @@ export function removeRecordedStep(index, count) {
       return { ok: false, error: STALE_STEPS_ERROR };
     }
     if (steps.length === 0) {
-      await chrome.storage.session.remove(LAST_FLOW_KEY);
+      await chrome.storage.session.remove([LAST_FLOW_KEY, LAST_FLOW_HINTS_KEY]);
     } else {
-      await chrome.storage.session.set({ [LAST_FLOW_KEY]: { ...lastFlow, steps } });
+      const hints = alignHints(lastFlow.steps, await getLastFlowHints());
+      await chrome.storage.session.set({
+        [LAST_FLOW_KEY]: { ...lastFlow, steps },
+        [LAST_FLOW_HINTS_KEY]: withoutStep(hints, index, count),
+      });
     }
     return { ok: true };
   });
@@ -204,7 +222,12 @@ export function resetRecording() {
     if (!recording && !lastFlow) {
       return { ok: false, error: '破棄する記録がありません。' };
     }
-    await chrome.storage.session.remove([RECORDING_KEY, LAST_FLOW_KEY, RECORDING_PAGE_KEY]);
+    await chrome.storage.session.remove([
+      RECORDING_KEY,
+      LAST_FLOW_KEY,
+      LAST_FLOW_HINTS_KEY,
+      RECORDING_PAGE_KEY,
+    ]);
     if (recording) {
       await detach(recording.tabId);
     }
@@ -213,12 +236,75 @@ export function resetRecording() {
 }
 
 /**
+ * 記録中、または保存前の手順の範囲を、一覧の各行で繰り返す手順に変えます（#167）。
+ * 表示が古い状態で押された場合に別の手順を変えないよう、表示していた手順の件数を受け取り、
+ * 今の件数と一致しない場合は変えません。
+ * @param {unknown} from 範囲の先頭（0 から数えます）
+ * @param {unknown} to 範囲の末尾（この手順を含みます）
+ * @param {unknown} key 選んだ行の候補（shared/record-loop.js の candidateKey の値）
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function makeRecordedLoop(from, to, key, count) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    const lastFlow = recording ? undefined : await getLastFlow();
+    const steps = recording?.steps ?? lastFlow?.steps;
+    if (!steps) {
+      return { ok: false, error: '繰り返しにする手順がありません。' };
+    }
+    if (count !== steps.length) {
+      return {
+        ok: false,
+        error:
+          '手順の一覧が変わったため、繰り返しにしませんでした。一覧を確かめてから押し直してください。',
+      };
+    }
+    const hints = alignHints(steps, recording ? recording.rowHints : await getLastFlowHints());
+    const result = makeLoop(steps, hints, from, to, key);
+    if (!result.ok) {
+      return result;
+    }
+    if (recording) {
+      await chrome.storage.session.set({
+        [RECORDING_KEY]: { ...recording, steps: result.steps, rowHints: result.hints },
+      });
+    } else if (lastFlow) {
+      await chrome.storage.session.set({
+        [LAST_FLOW_KEY]: { ...lastFlow, steps: result.steps },
+        [LAST_FLOW_HINTS_KEY]: result.hints,
+      });
+    }
+    return { ok: true };
+  });
+}
+
+/**
+ * 手順と同じ数の、行の候補の配列を返します。候補を持たない記録（この機能より前に始めた記録など）では、
+ * 足りない分を null で補います。
+ * @param {Step[]} steps
+ * @param {unknown} hints
+ * @returns {RowHint[]}
+ */
+function alignHints(steps, hints) {
+  const list = Array.isArray(hints) ? hints : [];
+  return steps.map((_, index) => /** @type {RowHint} */ (list[index] ?? null));
+}
+
+/** @returns {Promise<RowHint[] | undefined>} */
+async function getLastFlowHints() {
+  const stored = await chrome.storage.session.get(LAST_FLOW_HINTS_KEY);
+  return /** @type {RowHint[] | undefined} */ (stored[LAST_FLOW_HINTS_KEY]);
+}
+
+/**
  * 指定した番号の手順を除いた、新しい手順の配列を返します。元の配列は変更しません。
  * 番号が範囲外の場合と、件数が一致しない場合は null を返します。
- * @param {Step[]} steps
+ * @template T
+ * @param {T[]} steps
  * @param {unknown} index 削除する手順の番号（0 から数えます）
  * @param {unknown} count 削除を指示した画面が表示していた手順の件数
- * @returns {Step[] | null}
+ * @returns {T[] | null}
  */
 export function withoutStep(steps, index, count) {
   if (
@@ -254,9 +340,10 @@ async function getLastFlow() {
  * @param {unknown} texts クリックした要素の文言（content/element-text.js）
  * @param {unknown} matchedSelector クリックした要素が一致した、止める要素の指定
  * @param {unknown} [keys] クリックした要素の、翻訳で変わらない手がかり（content/element-text.js、#97）
+ * @param {unknown} [rows] 操作した要素を含む一覧の行の候補（content/picker-rows.js の rowCandidates、#167）
  * @returns {Promise<void>}
  */
-export function addStep(step, sender, texts, matchedSelector, keys) {
+export function addStep(step, sender, texts, matchedSelector, keys, rows) {
   return enqueue(async () => {
     const recording = await getRecording();
     if (
@@ -320,6 +407,9 @@ export function addStep(step, sender, texts, matchedSelector, keys) {
           recording.extraOrigins = [...extraOrigins, origin];
         }
       }
+      // 一時停止に変えた手順は要素を操作しないため、行の候補を添えません。
+      const hint = recorded.type === received.type ? sanitizeRowHint(rows) : null;
+      recording.rowHints = [...alignHints(recording.steps, recording.rowHints), hint];
       recording.steps.push(recorded);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
     }
@@ -345,6 +435,7 @@ export function onCommitted(details) {
     if (!isWebUrl(details.url) || recording.steps.length >= MAX_STEPS) {
       return;
     }
+    recording.rowHints = [...alignHints(recording.steps, recording.rowHints), null];
     recording.steps.push({ type: 'navigate', url: details.url, cause: navigationCause(details) });
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
   });

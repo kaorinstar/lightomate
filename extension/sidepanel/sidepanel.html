@@ -78,12 +78,16 @@
           </div>
           <ol id="steps" class="lm-steps"></ol>
           <div class="lm-buttons mt-2" id="recording-buttons">
+            <button type="button" class="btn btn-sm" id="recording-loop" hidden>
+              繰り返しにする
+            </button>
             <button type="button" class="btn btn-sm btn-ghost-danger" id="recording-discard">
               破棄
             </button>
           </div>
           <div id="recording-confirm" hidden></div>
           <p id="recording-discard-notice" hidden></p>
+          <div id="recording-loop-form" hidden></div>
         </div>
       </section>
 
@@ -107,6 +111,12 @@
               記録した手順（<span id="result-step-count">0</span> 件）
             </summary>
             <ol id="result-steps" class="lm-steps mt-2"></ol>
+            <div class="lm-buttons mt-2">
+              <button type="button" class="btn btn-sm" id="result-loop" hidden>
+                繰り返しにする
+              </button>
+            </div>
+            <div id="result-loop-form" hidden></div>
           </details>
           <details class="mt-2">
             <summary class="lm-sub">記録した内容（JSON）</summary>

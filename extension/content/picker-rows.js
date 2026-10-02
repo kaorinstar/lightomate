@@ -1,13 +1,14 @@
 // 要素の選択モード（#139）で、一覧の行と、行の内側の要素の指定を作ります。
 //
 // content script は ES モジュールとして読み込めないため、通常のスクリプトとして読み込みます。
-// selector.js の後、picker.js の前に読み込みます。picker.js と単体テスト（test/picker-rows.test.js）から使います。
+// selector.js の後、picker.js と recorder.js の前に読み込みます。picker.js、recorder.js（#167）と単体テスト
+// （test/picker-rows.test.js）から使います。
 // 同じページに 2 回読み込まれても誤りにならないよう、最上位には関数の宣言だけを置きます。
 //
 // 行の見分けには、タグと class だけを使います。表示の文字は、翻訳で置き換わるため使いません（CLAUDE.md）。
 
 /* global buildTarget, looksGenerated, visibleText */
-/* exported buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, originalElement, resolveRows */
+/* exported buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, originalElement, resolveRows, rowCandidates */
 
 /**
  * 押した要素が、Chrome の翻訳がページに差し込んだ要素であれば、その外側の本来の要素を返します。
@@ -147,8 +148,19 @@ function uniqueSelectorWithin(element, root) {
  */
 function buildRowsTarget(element, root) {
   const row = findRowElement(element, root);
-  const parent = row?.parentElement;
-  if (!row || !parent) {
+  return row ? rowsTargetOf(row, root) : null;
+}
+
+/**
+ * 行の要素から、同じ形の行すべてに一致する、繰り返しの行の指定を作ります。buildRowsTarget の本体です。
+ * @param {Element} row 行の要素
+ * @param {Document | Element} root 探す範囲
+ * @returns {{ items: { selectors: string[], tag: string, label: string, scope?: 'item' }, rows: Element[] } | null}
+ *   すべての行に一致するセレクターを作れない場合は null
+ */
+function rowsTargetOf(row, root) {
+  const parent = row.parentElement;
+  if (!parent) {
     return null;
   }
   const shape = shapeSelector(row);
@@ -212,6 +224,50 @@ function buildInnerTarget(element, row) {
     scope: /** @type {const} */ ('item'),
   };
   return text ? { ...target, text } : target;
+}
+
+/**
+ * 記録した操作の要素を含む、一覧の行の候補を、内側から順に返します（#167）。
+ * 記録を終えた後に、記録した手順を「各行で繰り返す」に変えるときに使います。ページを移動すると要素を
+ * 調べられなくなるため、操作した時点で求めます。
+ * 要素の親をたどり、同じ形の兄弟が 2 つ以上ある階層を、それぞれ候補にします。要素そのものは候補にしません。
+ * 翻訳が差し込んだ要素（font）を押した場合は、その外側の本来の要素を、操作した要素とします。
+ * 行の内側の指定は、行を起点にするため、行と要素が同じでは作れないためです。
+ * @param {Element} element 操作した要素
+ * @returns {{ items: { selectors: string[], tag: string, label: string }, count: number,
+ *   inner: { selectors: string[], tag: string, label: string, text?: string, scope: 'item' } }[]}
+ */
+function rowCandidates(element) {
+  // 記録した手順 1 件に添える候補の数の上限です。最上位に定数を置くと、2 回目の読み込みで誤りになるため、ここに置きます。
+  const maxCandidates = 5;
+  /** @type {ReturnType<typeof rowCandidates>} */
+  const candidates = [];
+  // 翻訳が差し込んだ要素（font）は、翻訳していないページにないため、その外側の本来の要素を指します。
+  const base = originalElement(element);
+  let current = base.parentElement;
+  while (
+    current &&
+    current !== document.body &&
+    current.parentElement &&
+    candidates.length < maxCandidates
+  ) {
+    const shape = shapeSelector(current);
+    const siblings = Array.from(current.parentElement.children).filter(
+      (child) => shapeSelector(child) === shape,
+    );
+    if (siblings.length >= 2) {
+      const built = rowsTargetOf(current, document);
+      if (built) {
+        candidates.push({
+          items: built.items,
+          count: built.rows.length,
+          inner: buildInnerTarget(base, current),
+        });
+      }
+    }
+    current = current.parentElement;
+  }
+  return candidates;
 }
 
 /**

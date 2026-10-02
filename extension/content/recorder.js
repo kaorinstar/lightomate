@@ -1,12 +1,12 @@
 // 記録中のタブのページで、利用者の操作を記録します。
 //
-// 読み込む順序は selector.js、overlay.js、element-text.js、recorder.js です（background/recording.js）。
+// 読み込む順序は selector.js、overlay.js、element-text.js、picker-rows.js、recorder.js です（background/recording.js）。
 // Service Worker が、記録を始めたときと、記録中にページを移動したときに、このスクリプトを
 // ページへ読み込みます（chrome.scripting.executeScript）。読み込まれた時点で記録を始め、
 // Service Worker から停止の連絡を受けると終了します。
 // 記録した手順は Service Worker へ送り、ここでは保存しません。
 
-/* global buildTarget, elementKeys, elementTexts, isPageTranslated, matchStopSelector, showNotice, showStatusOverlay */
+/* global buildTarget, elementKeys, elementTexts, isPageTranslated, matchStopSelector, rowCandidates, showNotice, showStatusOverlay */
 
 (() => {
   /** 同じページに 2 回読み込まれた場合に、記録が二重にならないようにする目印です。 */
@@ -58,6 +58,7 @@
       elementTexts(element),
       matchStopSelector(event.target, scope.__lightomateStopSelectors),
       elementKeys(element),
+      rowCandidates(element),
     );
   };
 
@@ -70,12 +71,18 @@
 
     if (element instanceof HTMLSelectElement) {
       const options = Array.from(element.selectedOptions);
-      send({
-        type: 'select',
-        target: buildTarget(element),
-        values: options.map((option) => option.value),
-        labels: options.map((option) => option.label),
-      });
+      send(
+        {
+          type: 'select',
+          target: buildTarget(element),
+          values: options.map((option) => option.value),
+          labels: options.map((option) => option.label),
+        },
+        undefined,
+        undefined,
+        undefined,
+        rowCandidates(element),
+      );
       return;
     }
 
@@ -88,6 +95,10 @@
         isSecret(element)
           ? { type: 'input', target: buildTarget(element), secret: true }
           : { type: 'input', target: buildTarget(element), value: element.value },
+        undefined,
+        undefined,
+        undefined,
+        rowCandidates(element),
       );
     }
   };
@@ -128,12 +139,13 @@
    * @param {string[]} [texts] クリックした要素の文言
    * @param {string} [matchedSelector] クリックした要素が一致した、止める要素の指定
    * @param {string[]} [keys] クリックした要素の、翻訳で変わらない手がかり（#97）
+   * @param {object[]} [rows] 操作した要素を含む一覧の行の候補（#167）。後で「各行で繰り返す」に変えるときに使います
    */
-  function send(step, texts, matchedSelector, keys) {
+  function send(step, texts, matchedSelector, keys, rows) {
     // 記録したときにページが翻訳されていたことを残します。実行時に見つからなかった場合の説明に使います（#99）。
     const recorded = isPageTranslated() ? { ...step, translated: true } : step;
     chrome.runtime
-      .sendMessage({ kind: 'recording/step', step: recorded, texts, matchedSelector, keys })
+      .sendMessage({ kind: 'recording/step', step: recorded, texts, matchedSelector, keys, rows })
       .catch(() => {
         // 拡張機能を再読み込みした後など、Service Worker と接続できない場合は記録を続けられません。
         overlay.remove();

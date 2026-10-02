@@ -633,3 +633,16 @@ div.lm-hint {
   margin-top: 0.5rem !important;
   font-weight: 600;
 }
+
+/*
+  チェックボックスは、管理画面とサイドパネルの両方で、Tabler の form-check-input ではなく、ブラウザー標準の表示を使います。
+  Tabler はチェックの印を data: の画像で描きますが、拡張機能の CSP（img-src は 'self'）で読み込めず、
+  選んだ状態と一部だけ選んだ状態の区別が付かなくなるためです。色だけを合わせます。
+*/
+.lm-check {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--tblr-primary);
+  cursor: pointer;
+}

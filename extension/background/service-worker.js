@@ -8,6 +8,7 @@
 import {
   addStep,
   allowRecordingOrigin,
+  makeRecordedLoop,
   onCommitted,
   onDOMContentLoaded,
   onTabRemoved,
@@ -110,6 +111,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       removeRecordedStep(message.index, message.count).then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/makeLoop':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      makeRecordedLoop(message.from, message.to, message.key, message.count).then(
+        sendResponse,
+        (error) => sendResponse({ ok: false, error: String(error) }),
       );
       return true;
 
@@ -234,9 +245,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
 
     case 'recording/step':
-      addStep(message.step, sender, message.texts, message.matchedSelector, message.keys).catch(
-        (error) => console.error('手順を記録できませんでした。', error),
-      );
+      addStep(
+        message.step,
+        sender,
+        message.texts,
+        message.matchedSelector,
+        message.keys,
+        message.rows,
+      ).catch((error) => console.error('手順を記録できませんでした。', error));
       return false;
 
     default:

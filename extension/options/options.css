@@ -68,19 +68,6 @@ body {
   padding: 0;
 }
 
-/*
-  チェックボックスは、Tabler の form-check-input ではなく、ブラウザー標準の表示を使います。
-  Tabler はチェックの印を data: の画像で描きますが、拡張機能の CSP（img-src は 'self'）で読み込めず、
-  選んだ状態と一部だけ選んだ状態の区別が付かなくなるためです。色だけを合わせます。
-*/
-.lm-check {
-  width: 1rem;
-  height: 1rem;
-  margin: 0;
-  accent-color: var(--tblr-primary);
-  cursor: pointer;
-}
-
 /* 行の上下の余白は、ほかの一覧の行と同じ値（base.css の --tblr-list-group-item-padding-y）にそろえます。 */
 .lm-flow-check {
   flex: none;

@@ -188,3 +188,50 @@ test('Chrome の翻訳が差し込んだ font 要素を押した場合は、外�
     );
   }
 });
+
+// ---- 記録した手順に添える行の候補（#167） ----
+
+test('記録した要素の行の候補を、内側から順に返し、要素そのものは候補にしない', () => {
+  const { window, $ } = page(`
+    <div id="orders">
+      <div class="order">
+        <div class="head"><span class="date">2026年9月1日</span><span class="total">100 円</span></div>
+        <a class="receipt" href="/r/1">領収書</a>
+      </div>
+      <div class="order">
+        <div class="head"><span class="date">2026年9月2日</span><span class="total">200 円</span></div>
+        <a class="receipt" href="/r/2">領収書</a>
+      </div>
+      <div class="order">
+        <div class="head"><span class="date">2026年9月3日</span><span class="total">300 円</span></div>
+        <a class="receipt" href="/r/3">領収書</a>
+      </div>
+    </div>`);
+  const candidates = plain(window.rowCandidates($('.order:nth-child(2) .receipt')));
+  assert.equal(candidates.length, 1);
+  assert.deepEqual(candidates[0].items.selectors, ['div.order', '#orders > div.order']);
+  assert.equal(candidates[0].count, 3);
+  assert.equal(candidates[0].inner.scope, 'item');
+  assert.equal(candidates[0].inner.selectors[0], 'a.receipt');
+});
+
+test('同じ形の兄弟がない要素では、行の候補は空になる', () => {
+  const { window, $ } = page('<div><p><a id="only" href="/">1 つだけ</a></p></div>');
+  assert.deepEqual(plain(window.rowCandidates($('#only'))), []);
+});
+
+test('行の候補は、外側の行も含めて 5 件までにする', () => {
+  // 同じ形の兄弟を持つ階層を 7 段重ねます。
+  let html = '<a id="target" href="/">押す</a>';
+  for (let level = 0; level < 7; level += 1) {
+    html = `<div class="l${level}">${html}</div><div class="l${level}"></div>`;
+  }
+  const { window, $ } = page(`<main>${html}</main>`);
+  const candidates = plain(window.rowCandidates($('#target')));
+  assert.equal(candidates.length, 5);
+  assert.deepEqual(
+    candidates.map((/** @type {any} */ candidate) => candidate.items.tag),
+    ['div', 'div', 'div', 'div', 'div'],
+  );
+  assert.equal(candidates[0].items.selectors[0], 'div.l0');
+});
