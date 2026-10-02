@@ -193,6 +193,36 @@ LIGHTOMATE_CHROMIUM=/opt/pw-browsers/chromium npm run test:e2e
 仕組みや運用の規則を提案するときは、先に広く使われている手法を一次情報で確認し、提案に出典の URL を
 添えます。
 
+## 大きい要件を分けるとき
+
+1 件に収まらない大きい要件は、親 Issue と子 Issue に分けます。1 件に作業を積むと、使ってよい時間を
+超え、どこまで完了したかも判別できなくなるためです。
+
+分ける基準は、1 件が「1 セッション・1 プルリクエストで、単体テストか e2e で確かめられる単位」に
+収まるかどうかです。収まらない要件を分けます。
+
+| 置き場 | 記載する内容 |
+|---|---|
+| 親 Issue | 要件票の全体。「8. 完了の判定」に「子 Issue が依存順に完了している」。子の一覧を依存順のチェックリストで記載します |
+| 子 Issue | 本文の冒頭に `親: #番号` と `依存: #番号`。子ごとの要件票。「7. 使ってよい時間」は 1 セッションまでです |
+
+- 1 つの子につき、ブランチ 1 本、プルリクエスト 1 本とします。ブランチ名の番号は子の番号です。
+  プルリクエストには子を `Closes #子`、親を `Refs #親` と記載します。親は、すべての子を閉じた後に閉じます。
+- 子は GitHub のサブ Issue 機能で親に紐付けます。本文の `親: #番号` だけでは、GitHub 上で親子として
+  扱われません。API には Issue の番号ではなく ID を渡します。
+
+  ```
+  gh api repos/{owner}/{repo}/issues/<親の番号>/sub_issues \
+    -F sub_issue_id="$(gh api repos/{owner}/{repo}/issues/<子の番号> --jq .id)"
+  ```
+
+- 親と子は同時に作成し、親の承認で子もすべて承認済みとします。作業前に停止するのは、「ユーザーが問題を
+  提起したとき」の手順 4 の 1 回だけです。後から子を追加した場合は、その子だけを個別に確認します。
+- 後から見つかった作業は、親の範囲に入るなら子を追加し、範囲の外なら別の Issue にします。
+- 形は MOTO-VISION/repository_template_wordpress#137（親）と #138〜#149（子）に合わせています。
+  出典は https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues
+  （GitHub のサブ Issue）と https://basecamp.com/shapeup/3.3-chapter-12 （Shape Up の scope）です。
+
 ## 規約
 
 - 改行コードは LF です。ただし `.bat`、`.cmd`、`.ps1` は CRLF です。`.gitattributes` で統一しています。
