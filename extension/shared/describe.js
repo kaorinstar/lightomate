@@ -26,7 +26,12 @@ export function describeStep(step) {
       }
       // サイトが提供するファイルのダウンロード（#20）は、保存先を添えます。
       if (step.download) {
-        return `クリック：${step.target.label}（ダウンロードを ${step.download.path} に保存${step.download.onConflict === 'overwrite' ? '、同じ名前は上書き' : ''}）`;
+        const conflict = step.download.onConflict === 'overwrite' ? '、同じ名前は上書き' : '';
+        // リンク先のファイルを保存する指定（#172）は、クリックしないため、クリックとは別の名前で示します。
+        if (step.download.from === 'link') {
+          return `リンク先のファイルを保存：${step.target.label}（${step.download.path} に保存${conflict}）`;
+        }
+        return `クリック：${step.target.label}（ダウンロードを ${step.download.path} に保存${conflict}）`;
       }
       return `クリック：${step.target.label}`;
     case 'input':
@@ -74,7 +79,9 @@ export function describeStepForPage(step) {
     case 'navigate':
       return step.cause === 'user' ? 'ページを開く' : 'ページの移動を待つ';
     case 'click':
-      return `クリック：${step.target.label}`;
+      return step.download?.from === 'link'
+        ? `リンク先のファイルを保存：${step.target.label}`
+        : `クリック：${step.target.label}`;
     case 'input':
       return `入力：${step.target.label}`;
     case 'select':

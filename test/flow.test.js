@@ -53,9 +53,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜12 のフローは、そのまま版 13 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 13);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+test('版 1〜13 のフローは、そのまま版 14 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 14);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -1225,4 +1225,19 @@ test('withSteps は、手順を入れ替えたフローを現在の版にして�
   assert.deepEqual(validateFlow(changed), []);
   assert.equal(old.schemaVersion, 12);
   assert.equal(old.steps, validFlow.steps);
+});
+
+test('download.from は link だけを書け、版 14 のフローで検証を通り、版 13 以前では誤りになる（#172）', () => {
+  const target = { selectors: ['a.invoice'], tag: 'a', label: '明細書' };
+  const download = { path: 'Lightomate/領収書/{{flow.name}}', from: 'link' };
+  assert.deepEqual(validateStep({ type: 'click', target, download }), []);
+  assert.deepEqual(
+    validateStep({ type: 'click', target, download: { ...download, from: 'href' } }),
+    ['download.from が link ではありません。'],
+  );
+  const flow = { ...validFlow, steps: [...validFlow.steps, { type: 'click', target, download }] };
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 14 }), []);
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 13 }), [
+    `steps[${validFlow.steps.length}]: download.from は、schemaVersion が 14 以上のフローでだけ使えます。`,
+  ]);
 });

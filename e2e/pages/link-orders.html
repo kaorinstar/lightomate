@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>注文履歴（明細書のリンク）</title>
+  </head>
+  <body>
+    <!-- リンク先のファイルを保存する指定（#172）の確認に使います。明細書のリンクは、ログインの Cookie が
+         ある場合だけ PDF を返します（e2e/harness.js）。 -->
+    <div id="orders">
+      <div class="order">
+        <span class="order-number">A-001</span>
+        <a class="invoice" href="/auth/invoice.pdf?n=A-001">明細書</a>
+      </div>
+      <div class="order">
+        <span class="order-number">A-002</span>
+        <a class="invoice" href="/auth/invoice.pdf?n=A-002">明細書</a>
+      </div>
+      <div class="order">
+        <span class="order-number">A-003</span>
+        <a class="invoice" href="/auth/invoice.pdf?n=A-003">明細書</a>
+      </div>
+    </div>
+    <!-- フローのサイト以外を指すリンクです。保存せずに停止することを確かめます。 -->
+    <p><a id="external" href="https://example.invalid/statement.pdf">別のサイトの明細書</a></p>
+    <script src="link-orders.js"></script>
+  </body>
+</html>

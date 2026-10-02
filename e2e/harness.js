@@ -33,7 +33,20 @@ const CONTENT_TYPES = {
  */
 export async function startServer() {
   const server = http.createServer((request, response) => {
-    const { pathname } = new URL(request.url ?? '/', 'http://127.0.0.1');
+    const { pathname, searchParams } = new URL(request.url ?? '/', 'http://127.0.0.1');
+    // ログインが必要なファイルの代わりです（#172）。Cookie の lm_auth=1 がある場合だけ PDF を返します。
+    // ログインの Cookie を付けて保存できるかを確かめるために使います。
+    if (pathname === '/auth/invoice.pdf') {
+      const cookies = request.headers.cookie ?? '';
+      if (!/(^|;\s*)lm_auth=1(;|$)/.test(cookies)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }).end('forbidden');
+        return;
+      }
+      response
+        .writeHead(200, { 'content-type': 'application/pdf' })
+        .end(minimalPdf(searchParams.get('n') ?? ''));
+      return;
+    }
     const file = path.join(pagesDir, decodeURIComponent(pathname));
     if (!file.startsWith(pagesDir + path.sep) || !fs.existsSync(file)) {
       response.writeHead(404).end();
@@ -52,6 +65,34 @@ export async function startServer() {
         server.close(() => resolve(undefined));
       }),
   };
+}
+
+/**
+ * 1 ページの最小の PDF を作ります。本文に文字を 1 行書きます（英数字と記号だけ）。
+ * @param {string} text
+ * @returns {Buffer}
+ */
+function minimalPdf(text) {
+  const safe = text.replace(/[^A-Za-z0-9 -]/g, '');
+  const content = `BT /F1 24 Tf 72 720 Td (${safe}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let body = '%PDF-1.4\n';
+  const offsets = objects.map((object, index) => {
+    const offset = body.length;
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    return offset;
+  });
+  const xref = body.length;
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  body += offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(body, 'latin1');
 }
 
 /**
