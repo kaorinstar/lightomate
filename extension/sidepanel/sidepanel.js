@@ -37,6 +37,7 @@ import {
 } from '../shared/describe.js';
 import { flattenSteps, stepAt } from '../shared/control-flow.js';
 import { flowOrigins, orderFlow } from '../shared/flow.js';
+import { createLoopForm } from './loop-form.js';
 import {
   RUN_KEY_PREFIX,
   conflictMessage,
@@ -78,6 +79,7 @@ import {
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../background/recording.js').Recording} Recording */
 /** @typedef {import('../background/recording.js').RecordingPage} RecordingPage */
+/** @typedef {import('../shared/record-loop.js').RowHint} RowHint */
 /** @typedef {import('../background/runner.js').RunState} RunState */
 /** @typedef {import('../common/flow-store.js').StoredFlow} StoredFlow */
 /** @typedef {import('../common/batch-store.js').StoredBatch} StoredBatch */
@@ -115,6 +117,10 @@ const elements = {
   steps: byId('steps'),
   stop: /** @type {HTMLButtonElement} */ (byId('stop')),
   recordingDiscard: /** @type {HTMLButtonElement} */ (byId('recording-discard')),
+  recordingLoop: /** @type {HTMLButtonElement} */ (byId('recording-loop')),
+  recordingLoopForm: byId('recording-loop-form'),
+  resultLoop: /** @type {HTMLButtonElement} */ (byId('result-loop')),
+  resultLoopForm: byId('result-loop-form'),
   recordingButtons: byId('recording-buttons'),
   resultButtons: byId('result-buttons'),
   main: byId('main'),
@@ -148,6 +154,18 @@ const elements = {
   searchSuggestions: byId('search-suggestions'),
   searchMode: /** @type {HTMLSelectElement} */ (byId('search-mode')),
 };
+
+/** 記録した手順を、一覧の各行で繰り返す手順に変える欄です（#167）。記録中と保存前の区画に 1 つずつ置きます。 */
+const recordingLoopForm = createLoopForm({
+  open: elements.recordingLoop,
+  container: elements.recordingLoopForm,
+  toast: elements.toast,
+});
+const resultLoopForm = createLoopForm({
+  open: elements.resultLoop,
+  container: elements.resultLoopForm,
+  toast: elements.toast,
+});
 
 /** 区画に固定で置いた知らせの表示欄です。次の操作を始めるときに、まとめて消します。 */
 const notices = [
@@ -345,7 +363,7 @@ elements.saveFlow.addEventListener('click', async () => {
     showNotice(elements.saveNotice, `保存できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
-  await chrome.storage.session.remove('lastFlow');
+  await chrome.storage.session.remove(['lastFlow', 'lastFlowRowHints']);
   showSaved(result.id, name, result.name);
 });
 
@@ -671,6 +689,7 @@ async function render() {
       ...stepItems(recording.steps, running, elements.recordingNotice),
     );
     elements.recordingDiscard.disabled = running || recording.steps.length === 0;
+    recordingLoopForm.update(recording.steps, recording.rowHints, running);
     // 最後に記録した手順が見えるよう、一覧の末尾まで移動します。
     elements.steps.scrollTop = elements.steps.scrollHeight;
   }
@@ -688,6 +707,11 @@ async function render() {
     ...stepItems(lastFlow?.steps ?? [], running, elements.saveNotice),
   );
   elements.discard.disabled = running || !lastFlow?.steps.length;
+  resultLoopForm.update(
+    lastFlow?.steps ?? [],
+    /** @type {RowHint[] | undefined} */ (stored.lastFlowRowHints),
+    running,
+  );
   if (lastFlow && !elements.flowName.value) {
     elements.flowName.value = lastFlow.name;
   }
@@ -790,6 +814,19 @@ function stepItems(steps, locked, errorNotice) {
     remove.disabled = locked;
     // 「×」は float で右端に寄せるため、説明より先に置きます。
     item.append(remove, text);
+    // 繰り返しにした手順（#167）は、内側の手順を字下げして続けます。削除は繰り返しの単位で行います。
+    if (step.type === 'forEach') {
+      const inner = document.createElement('ol');
+      inner.className = 'lm-steps-inner';
+      inner.append(
+        ...step.steps.map((child) => {
+          const line = document.createElement('li');
+          line.textContent = describeStep(child);
+          return line;
+        }),
+      );
+      item.append(inner);
+    }
     return item;
   });
 }

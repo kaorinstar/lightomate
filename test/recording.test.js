@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  makeRecordedLoop,
   navigationCause,
   removeRecordedStep,
   resetRecording,
@@ -167,4 +168,71 @@ test('破棄する記録がない場合は断る', async () => {
   fakeChrome({});
   const result = await resetRecording();
   assert.equal(result.ok, false);
+});
+
+// ---- 記録した手順を各行で繰り返す手順に変える（#167） ----
+
+const row = { selectors: ['div.order'], tag: 'div', label: '一覧の行（div.order）' };
+const rowKey = JSON.stringify(row.selectors);
+const rowHints = [
+  null,
+  [
+    {
+      items: row,
+      count: 3,
+      inner: { selectors: ['a.history'], tag: 'a', label: '注文履歴', scope: 'item' },
+    },
+  ],
+  [
+    {
+      items: row,
+      count: 3,
+      inner: { selectors: ['button.receipt'], tag: 'button', label: '領収書', scope: 'item' },
+    },
+  ],
+];
+
+test('記録中に手順を削除すると、その手順の行の候補も消え、残りの手順と順序がそろう', async () => {
+  const { session } = fakeChrome({ recording: { ...recording, rowHints } });
+  assert.deepEqual(await removeRecordedStep(1, 3), { ok: true });
+  assert.deepEqual(/** @type {any} */ (session.recording).rowHints, [null, rowHints[2]]);
+});
+
+test('記録中に範囲を繰り返しにすると、記録中の手順が変わり、行の候補は繰り返しの分が空になる', async () => {
+  const { session } = fakeChrome({ recording: { ...recording, rowHints } });
+  assert.deepEqual(await makeRecordedLoop(1, 2, rowKey, 3), { ok: true });
+  const changed = /** @type {any} */ (session.recording);
+  assert.equal(changed.steps.length, 2);
+  assert.equal(changed.steps[1].type, 'forEach');
+  assert.deepEqual(changed.steps[1].items, row);
+  assert.equal(changed.steps[1].steps[1].target.scope, 'item');
+  assert.deepEqual(changed.rowHints, [null, null]);
+});
+
+test('記録を停止すると行の候補を保存前の手順に引き継ぎ、停止後も繰り返しにできる', async () => {
+  const { session } = fakeChrome({ recording: { ...recording, rowHints } });
+  const stopped = await stopRecording();
+  assert.ok(stopped.ok);
+  assert.deepEqual(session.lastFlowRowHints, rowHints);
+  assert.deepEqual(await makeRecordedLoop(1, 1, rowKey, 3), { ok: true });
+  const flow = /** @type {any} */ (session.lastFlow);
+  assert.deepEqual(
+    flow.steps.map((/** @type {any} */ step) => step.type),
+    ['navigate', 'forEach', 'click'],
+  );
+  assert.deepEqual(session.lastFlowRowHints, [null, null, rowHints[2]]);
+  // 保存前の手順を破棄すると、行の候補も消えます。
+  assert.deepEqual(await resetRecording(), { ok: true });
+  assert.deepEqual(session, {});
+});
+
+test('件数が一致しない繰り返しの指示と、行の候補を持たない記録では、手順を変えない', async () => {
+  const { session } = fakeChrome({ recording: { ...recording, rowHints } });
+  const stale = await makeRecordedLoop(1, 2, rowKey, 2);
+  assert.equal(stale.ok, false);
+  assert.deepEqual(/** @type {any} */ (session.recording).steps, recordedSteps);
+
+  fakeChrome({ lastFlow });
+  const none = await makeRecordedLoop(1, 2, rowKey, 3);
+  assert.equal(none.ok, false);
 });

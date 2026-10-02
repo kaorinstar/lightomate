@@ -114,6 +114,17 @@ body {
   content: '';
 }
 
+/* 繰り返しにした手順（#167）の内側の手順です。外側の一覧の高さの中に収めるため、上限を設けません。 */
+.lm-steps-inner {
+  margin: 0;
+  padding-inline-start: 1.5em;
+  list-style: lower-alpha;
+}
+
+.lm-loop-form {
+  max-width: 40em;
+}
+
 .lm-step-remove {
   float: inline-end;
   margin-inline-start: 0.25rem;

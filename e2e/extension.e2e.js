@@ -1056,3 +1056,100 @@ test('一時停止：「待つ」の途中で［一時停止］を押すと、�
     await page.close();
   }
 });
+
+/**
+ * 記録から繰り返しを作る確認（#167）です。1 件目の操作を記録し、サイドパネルで範囲を選んで繰り返しにし、実行します。
+ * @param {boolean} translate 記録と実行の両方で、ページの文字を翻訳と同じく置き換えるか
+ */
+async function recordLoop(translate) {
+  const { extensionPage } = browser;
+  const id = new URL(extensionPage.url()).host;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/popover-orders.html${translate ? '?translate=1' : ''}`;
+  await site.goto(listUrl);
+  if (translate) {
+    await site.waitForSelector('.receipt-menu font');
+  }
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  const started = await extensionPage.evaluate(
+    (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+    tabId,
+  );
+  assert.deepEqual(started, { ok: true });
+
+  // 1 件目の注文だけを操作します。小さな枠は、行の外（ページの末尾）にあります。
+  // 翻訳した場合は、翻訳が差し込んだ font 要素を押します。
+  const inside = translate ? ' font font' : '';
+  await site.click(`.order:nth-child(1) .order-date${inside}`);
+  await site.click(`.order:nth-child(1) .receipt-menu${inside}`);
+  await Promise.all([
+    site.waitForURL(/\/invoice\.html/),
+    site.click(`#popover-A-001 a[href^="invoice"]${inside}`),
+  ]);
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps.length;
+      }),
+    (count) => count >= 5,
+  );
+
+  // サイドパネルの記録中の区画で、範囲を選んで繰り返しにします。
+  const panel = await browser.context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
+  await panel.click('#recording-loop');
+  const form = panel.locator('#recording-loop-form');
+  // 既定の範囲は、行の中を操作した最初の手順（2 番目）から最後の手順までです。
+  assert.equal(await form.locator('select').nth(0).inputValue(), '1');
+  assert.equal(await form.locator('select').nth(1).inputValue(), '4');
+  assert.match(
+    await form.locator('select').nth(2).locator('option:checked').innerText(),
+    /div\.order.*3 件/,
+  );
+  await form.getByRole('button', { name: '繰り返しにする' }).click();
+  await waitUntil(
+    () => panel.locator('#steps > li').count(),
+    (count) => count === 2,
+  );
+  assert.equal(await panel.locator('#steps .lm-steps-inner > li').count(), 4);
+
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.equal(stopped.ok, true);
+  assert.deepEqual(stopped.errors, []);
+  /** @type {Flow} */
+  const flow = stopped.flow;
+  const loop = flow.steps[1];
+  assert.ok(loop.type === 'forEach');
+  assert.deepEqual(
+    loop.steps.map((step) =>
+      'target' in step ? `${step.type}:${step.target.scope ?? 'page'}` : step.type,
+    ),
+    ['click:item', 'click:item', 'click:page', 'navigate'],
+  );
+  await panel.close();
+  await site.evaluate(() => localStorage.removeItem('invoices'));
+  await site.close();
+
+  const entry = await runFlow(extensionPage, { ...flow, interval: { min: 1000, max: 1000 } });
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const [opened] = pagesAt('/');
+  const invoices = await opened.evaluate(() =>
+    JSON.parse(localStorage.getItem('invoices') ?? '[]'),
+  );
+  assert.deepEqual(invoices, ['A-001', 'A-002', 'A-003']);
+  for (const page of [...pagesAt('/popover-orders.html'), ...pagesAt('/invoice.html')]) {
+    await page.close();
+  }
+}
+
+test('記録から繰り返しを作る：1 件目の操作を記録し、サイドパネルで範囲を選ぶと、全行で同じ操作を行う（#167）', () =>
+  recordLoop(false));
+
+test('記録から繰り返しを作る：翻訳したページで記録し、翻訳したページで実行しても、全行で同じ操作を行う（#167）', () =>
+  recordLoop(true));
