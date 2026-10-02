@@ -1485,3 +1485,34 @@ test('接続できないページ：実行中のタブを本当に閉じた場�
   assert.equal(entry.status, 'failed');
   assert.match(entry.reason ?? '', /実行中のタブが閉じられたため、停止しました。/);
 });
+
+test('一覧へ戻る：行に読み込むたびに変わるリンクがあっても、同じ一覧として最後の行まで進む（#177）', async () => {
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 15,
+    name: '変わるリンク',
+    origin: server.origin,
+    interval: { min: 1000, max: 1000 },
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/volatile-orders.html` },
+      {
+        type: 'forEach',
+        items: target('div.order', 'div', '注文の行'),
+        steps: [
+          { type: 'click', target: target('a.detail', 'a', '詳細', true) },
+          { type: 'navigate', cause: 'page', url: `${server.origin}/receipt.html?n=V-001` },
+          {
+            type: 'extract',
+            target: target('#number', 'p', '注文番号'),
+            name: 'number',
+          },
+        ],
+      },
+    ],
+  };
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  for (const page of [...pagesAt('/volatile-orders.html'), ...pagesAt('/receipt.html')]) {
+    await page.close();
+  }
+});

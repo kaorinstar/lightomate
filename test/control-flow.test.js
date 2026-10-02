@@ -15,6 +15,7 @@ import {
   outlineSteps,
   pageLimitError,
   returnedListError,
+  sameRowKey,
   rowLimitError,
   stepAt,
   whileLimitError,
@@ -531,4 +532,35 @@ test('while の中の break は、条件を満たしていても繰り返しを�
 
 test('繰り返しの外の break は、命令に変換できない（#162）', () => {
   assert.throws(() => compileSteps([{ type: 'break' }]));
+});
+
+// ---- 行の目印の比べ方（#177） ----
+
+test('行に固有のリンク先の目印は、1 件以上一致すれば同じ行とみなす', () => {
+  const before = 'links:/order?id=1\n/documents/download/aaa/invoice.pdf';
+  const after = 'links:/order?id=1\n/documents/download/bbb/invoice.pdf';
+  assert.equal(sameRowKey(before, after), true);
+  assert.equal(sameRowKey(before, 'links:/order?id=2\n/documents/download/ccc/invoice.pdf'), false);
+});
+
+test('固有のリンク先の目印でない場合は、完全に一致するときだけ同じ行とみなす', () => {
+  assert.equal(sameRowKey('link:/help /a', 'link:/help /a'), true);
+  assert.equal(sameRowKey('link:/help /a', 'link:/help /b'), false);
+  assert.equal(sameRowKey('image:/a.png', 'image:/a.png'), true);
+  // 種類が異なる目印は、同じ行とみなしません。
+  assert.equal(sameRowKey('links:/a', 'link:/a'), false);
+});
+
+test('一覧へ戻った後、読み込むたびに変わるリンクがあっても、固有のリンクが一致すれば止めない（#177）', () => {
+  const list = { count: 3, firstKey: 'links:/order?id=1\n/dl/aaa.pdf' };
+  assert.equal(
+    returnedListError('注文', list, { count: 3, firstKey: 'links:/dl/bbb.pdf\n/order?id=1' }),
+    undefined,
+  );
+  assert.match(
+    /** @type {string} */ (
+      returnedListError('注文', list, { count: 3, firstKey: 'links:/order?id=2\n/dl/ccc.pdf' })
+    ),
+    /1 行目が最初と異なる/,
+  );
 });

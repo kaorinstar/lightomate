@@ -60,7 +60,7 @@ export const MAX_PAGES_LIMIT = 50;
  * @property {number} [page] 処理中のページの番号（0 から数えます）。ページ送り（#95）で増えます。
  *   省略した場合は 0 です
  * @property {number} [done] 前のページまでに処理した行の数（#95）。省略した場合は 0 です
- * @property {string} [firstKey] 行を数えたときの 1 行目の目印（リンク先か画像の src、#95）。一覧のページへ戻った後に、同じ一覧かを
+ * @property {string} [firstKey] 行を数えたときの 1 行目の目印（リンク先か画像の src、#95）。比べるときは sameRowKey を使います。一覧のページへ戻った後に、同じ一覧かを
  *   確かめるために使います
  */
 
@@ -488,7 +488,7 @@ export function returnedListError(label, expected, actual) {
   if (
     expected.firstKey !== undefined &&
     actual.firstKey !== undefined &&
-    expected.firstKey !== actual.firstKey
+    !sameRowKey(expected.firstKey, actual.firstKey)
   ) {
     return (
       `一覧のページに戻った後、「${label}」の 1 行目が最初と異なるため、停止しました。` +
@@ -496,4 +496,28 @@ export function returnedListError(label, expected, actual) {
     );
   }
   return undefined;
+}
+
+/**
+ * 2 つの行の目印（content/runner.js の rowKey）が、同じ行を指すかを判定します（#177）。
+ * 行に固有のリンク先の一覧（`links:` で始まる目印）どうしは、1 件以上一致すれば同じ行とみなします。
+ * 読み込むたびに値が変わるリンクがあっても、ほかの固有のリンクが一致すれば同じ行と分かるようにするためです。
+ * それ以外の目印は、完全に一致する場合だけ同じ行とみなします。
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+export function sameRowKey(a, b) {
+  if (a === b) {
+    return true;
+  }
+  const prefix = 'links:';
+  if (!a.startsWith(prefix) || !b.startsWith(prefix)) {
+    return false;
+  }
+  const links = new Set(a.slice(prefix.length).split('\n'));
+  return b
+    .slice(prefix.length)
+    .split('\n')
+    .some((link) => link !== '' && links.has(link));
 }
