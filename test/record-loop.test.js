@@ -6,9 +6,13 @@ import assert from 'node:assert/strict';
 import {
   candidateKey,
   defaultLoopRange,
+  excludedReason,
+  loopOptionLabel,
   loopOptions,
   makeLoop,
   sanitizeRowHint,
+  stepScopes,
+  toggleRange,
 } from '../extension/shared/record-loop.js';
 import { SCHEMA_VERSION, validateFlow } from '../extension/shared/flow.js';
 
@@ -162,7 +166,7 @@ test('範囲の前後の手順と、ほかの値（入力の値など）はそ�
 test('ページを開く手順（利用者の操作による移動）を含む範囲は、繰り返しにしない', () => {
   const result = makeLoop(steps, hints, 0, 2, candidateKey(orderRow));
   assert.equal(result.ok, false);
-  assert.match(!result.ok ? result.error : '', /1 番目の手順（ページを開く）/);
+  assert.match(!result.ok ? result.error : '', /1 番目の手順は、一覧のページを開く手順のため/);
 });
 
 test('繰り返しの手順を含む範囲は、繰り返しにしない', () => {
@@ -170,7 +174,7 @@ test('繰り返しの手順を含む範囲は、繰り返しにしない', () =>
   assert.ok(first.ok);
   const second = makeLoop(first.steps, first.hints, 1, 2, candidateKey(orderRow));
   assert.equal(second.ok, false);
-  assert.match(!second.ok ? second.error : '', /繰り返しや条件/);
+  assert.match(!second.ok ? second.error : '', /繰り返しや条件の手順のため/);
 });
 
 test('範囲の誤りと、範囲にない行の候補は、繰り返しにしない', () => {
@@ -243,5 +247,61 @@ test('ページから届いた行の候補は、形を確かめて必要な項�
     Array.from({ length: 6 }, () => valid[0]),
   ]) {
     assert.equal(sanitizeRowHint(invalid), null, JSON.stringify(invalid));
+  }
+});
+
+// ---- 範囲を選ぶ欄（チェックボックス）の処理 ----
+
+test('ページを開く手順と、繰り返し・条件の手順は、印を付けられない理由を返す', () => {
+  assert.match(String(excludedReason(steps[0])), /一覧のページを開く手順/);
+  assert.equal(excludedReason(steps[1]), null);
+  assert.equal(excludedReason(steps[4]), null);
+  assert.match(
+    String(excludedReason({ type: 'forEach', items: orderRow, steps: [] })),
+    /繰り返しや条件/,
+  );
+});
+
+test('印を付けると、範囲とその手順の間を含む続いた範囲になる', () => {
+  assert.deepEqual(toggleRange(steps, null, 2, true), { from: 2, to: 2 });
+  assert.deepEqual(toggleRange(steps, { from: 2, to: 2 }, 4, true), { from: 2, to: 4 });
+  assert.deepEqual(toggleRange(steps, { from: 3, to: 4 }, 1, true), { from: 1, to: 4 });
+  // 印を付けられない手順には付けません。
+  assert.deepEqual(toggleRange(steps, { from: 1, to: 4 }, 0, true), { from: 1, to: 4 });
+});
+
+test('含められない手順をまたいで印を付けると、その手順だけの範囲になる', () => {
+  /** @type {Step[]} */
+  const split = [...steps.slice(0, 3), steps[0], ...steps.slice(3)];
+  assert.deepEqual(toggleRange(split, { from: 1, to: 2 }, 4, true), { from: 4, to: 4 });
+});
+
+test('印を外すと、端なら 1 つ縮め、途中ならその手順の前までにし、最後の 1 件なら範囲をなくす', () => {
+  assert.deepEqual(toggleRange(steps, { from: 1, to: 4 }, 1, false), { from: 2, to: 4 });
+  assert.deepEqual(toggleRange(steps, { from: 1, to: 4 }, 4, false), { from: 1, to: 3 });
+  assert.deepEqual(toggleRange(steps, { from: 1, to: 4 }, 3, false), { from: 1, to: 2 });
+  assert.equal(toggleRange(steps, { from: 2, to: 2 }, 2, false), null);
+  assert.deepEqual(toggleRange(steps, { from: 2, to: 3 }, 4, false), { from: 2, to: 3 });
+});
+
+test('範囲の各手順を、1 件の中・ページ全体・要素を操作しない手順に分ける', () => {
+  assert.deepEqual(stepScopes(steps, hints, 1, 4, candidateKey(orderRow)), [
+    'item',
+    'item',
+    'page',
+    null,
+  ]);
+});
+
+test('一覧の行の名前は CSS セレクターを含まず件数で示し、件数が同じ候補は操作した手順の数を添える', () => {
+  const options = loopOptions(steps, hints, 1, 4);
+  assert.equal(loopOptionLabel(options[0], options), 'このページに 10 件ある枠');
+  const same = [
+    { ...options[0], count: 3 },
+    { ...options[1], count: 3 },
+  ];
+  assert.equal(loopOptionLabel(same[0], same), 'このページに 3 件ある枠（手順 2 件が中を操作）');
+  for (const option of options) {
+    assert.doesNotMatch(loopOptionLabel(option, options), /div|span|li\b|\./);
   }
 });

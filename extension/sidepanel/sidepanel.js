@@ -159,11 +159,13 @@ const elements = {
 const recordingLoopForm = createLoopForm({
   open: elements.recordingLoop,
   container: elements.recordingLoopForm,
+  list: elements.steps,
   toast: elements.toast,
 });
 const resultLoopForm = createLoopForm({
   open: elements.resultLoop,
   container: elements.resultLoopForm,
+  list: elements.resultSteps,
   toast: elements.toast,
 });
 

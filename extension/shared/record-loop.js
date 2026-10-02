@@ -149,12 +149,18 @@ function usableHint(step, hint) {
 }
 
 /**
- * 候補の画面に出す名前です。例：一覧の行（div.order）・10 件
+ * 候補の画面に出す名前です。CSS セレクターは利用者に意味が伝わらないため、件数で示します。
+ * 件数が同じ候補が複数ある場合は、その候補の中を操作した手順の数を添えて見分けます。
+ * 例：このページに 10 件ある枠
  * @param {LoopOption} option
+ * @param {LoopOption[]} options 同時に示す候補
  * @returns {string}
  */
-export function loopOptionLabel(option) {
-  return `${option.items.label}・${option.count} 件`;
+export function loopOptionLabel(option, options) {
+  const label = `このページに ${option.count} 件ある枠`;
+  return options.filter((other) => other.count === option.count).length > 1
+    ? `${label}（手順 ${option.used} 件が中を操作）`
+    : label;
 }
 
 /**
@@ -183,17 +189,11 @@ export function makeLoop(steps, hints, from, to, key) {
   const range = steps.slice(start, end + 1);
 
   for (const [offset, step] of range.entries()) {
-    const number = start + offset + 1;
-    if (CONTROL_STEP_TYPES.includes(step.type) || step.type === 'break') {
+    const reason = excludedReason(step);
+    if (reason) {
       return {
         ok: false,
-        error: `${number} 番目の手順は繰り返しや条件のため、範囲に含められません。範囲から外してください。`,
-      };
-    }
-    if (step.type === 'navigate' && step.cause === 'user') {
-      return {
-        ok: false,
-        error: `${number} 番目の手順（ページを開く）は、繰り返しに含められません。一覧のページへは、行ごとの処理の後に自動で戻ります。範囲から外してください。`,
+        error: `${start + offset + 1} 番目の手順は、${reason}。範囲から外してください。`,
       };
     }
   }
@@ -220,4 +220,75 @@ export function makeLoop(steps, hints, from, to, key) {
     steps: [...steps.slice(0, start), loop, ...steps.slice(end + 1)],
     hints: [...hints.slice(0, start), null, ...hints.slice(end + 1)],
   };
+}
+
+/**
+ * 繰り返しに含められない手順か確かめ、含められない場合はその理由を返します。含められる場合は null です。
+ * @param {Step} step
+ * @returns {string | null}
+ */
+export function excludedReason(step) {
+  if (step.type === 'navigate' && step.cause === 'user') {
+    return '一覧のページを開く手順のため、繰り返しに含めません';
+  }
+  if (CONTROL_STEP_TYPES.includes(step.type) || step.type === 'break') {
+    return '繰り返しや条件の手順のため、含められません';
+  }
+  return null;
+}
+
+/**
+ * 手順の印（チェックボックス）を切り替えた後の範囲を返します。範囲は続いた手順で、印を付けた手順と
+ * 範囲の間の手順を含めます。範囲の途中の印を外した場合は、その手順の前までにします。
+ * 含められない手順をまたぐ場合は、印を付けた手順だけの範囲にします。
+ * @param {Step[]} steps
+ * @param {{ from: number, to: number } | null} range 今の範囲。印がない場合は null
+ * @param {number} index 印を切り替えた手順（0 から数えます）
+ * @param {boolean} checked 印を付けたか
+ * @returns {{ from: number, to: number } | null}
+ */
+export function toggleRange(steps, range, index, checked) {
+  if (checked) {
+    if (excludedReason(steps[index])) {
+      return range;
+    }
+    if (!range) {
+      return { from: index, to: index };
+    }
+    const from = Math.min(range.from, index);
+    const to = Math.max(range.to, index);
+    return steps.slice(from, to + 1).some((step) => excludedReason(step) !== null)
+      ? { from: index, to: index }
+      : { from, to };
+  }
+  if (!range || index < range.from || index > range.to) {
+    return range;
+  }
+  if (range.from === range.to) {
+    return null;
+  }
+  if (index === range.from) {
+    return { from: index + 1, to: range.to };
+  }
+  return { from: range.from, to: index - 1 };
+}
+
+/**
+ * 範囲の各手順が、要素をどこで探すかを返します。選んだ行の中の要素を操作した手順は item（1 件の中）、
+ * それ以外で要素を操作する手順は page（ページ全体）、要素を操作しない手順は null です。
+ * @param {Step[]} steps
+ * @param {RowHint[]} hints
+ * @param {number} from
+ * @param {number} to
+ * @param {string} key 選んだ行の候補（candidateKey の値）
+ * @returns {('item' | 'page' | null)[]} from から to までの手順の分
+ */
+export function stepScopes(steps, hints, from, to, key) {
+  return steps.slice(from, to + 1).map((step, offset) => {
+    if (!PAGE_STEP_TYPES.includes(step.type)) {
+      return null;
+    }
+    const candidates = usableHint(step, hints[from + offset]) ?? [];
+    return candidates.some((candidate) => candidateKey(candidate.items) === key) ? 'item' : 'page';
+  });
 }

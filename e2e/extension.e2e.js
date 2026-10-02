@@ -1104,13 +1104,27 @@ async function recordLoop(translate) {
   await panel.click('#recording-loop');
   const form = panel.locator('#recording-loop-form');
   // 既定の範囲は、行の中を操作した最初の手順（2 番目）から最後の手順までです。
-  assert.equal(await form.locator('select').nth(0).inputValue(), '1');
-  assert.equal(await form.locator('select').nth(1).inputValue(), '4');
-  assert.match(
-    await form.locator('select').nth(2).locator('option:checked').innerText(),
-    /div\.order.*3 件/,
-  );
-  await form.getByRole('button', { name: '繰り返しにする' }).click();
+  // ページを開く手順（1 番目）には、印を付けられません。
+  const boxes = form.locator('input[type="checkbox"]');
+  assert.equal(await boxes.count(), 5);
+  assert.equal(await boxes.nth(0).isDisabled(), true);
+  for (const index of [1, 2, 3, 4]) {
+    assert.equal(await boxes.nth(index).isChecked(), true, `${index + 1} 番目の手順`);
+  }
+  // 行の中の手順と、行の外（小さな枠）の手順を見分ける印を表示します。
+  assert.deepEqual(await form.locator('.lm-loop-scope').allInnerTexts(), [
+    '1 件の中',
+    '1 件の中',
+    'ページ全体',
+  ]);
+  assert.match(await form.locator('.alert').innerText(), /このページの一覧 3 件 で、手順 2〜5/);
+  // 一覧の行は CSS セレクターではなく件数で示します。候補が 1 つの場合は、選ぶ欄を出しません。
+  assert.equal(await form.locator('select').isVisible(), false);
+  // 範囲の印を外すと、範囲が縮みます。
+  await boxes.nth(4).uncheck();
+  assert.match(await form.locator('.alert').innerText(), /手順 2〜4/);
+  await boxes.nth(4).check();
+  await form.getByRole('button', { name: '3 件で繰り返す' }).click();
   await waitUntil(
     () => panel.locator('#steps > li').count(),
     (count) => count === 2,
