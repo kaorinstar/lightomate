@@ -199,7 +199,7 @@ test('Shadow DOM：開いた部品と閉じた部品の中の入力とクリッ�
   await again.close();
 });
 
-test('Shadow DOM：部品が見つからない場合は、見つからない部品を示して停止する（#20）', async () => {
+test('Shadow DOM：部品が見つからない場合は、見つからない部品を示して停止し、翻訳をやめる案内は付けない（#20）', async () => {
   const { extensionPage } = browser;
   /** @type {Flow} */
   const flow = {
@@ -207,7 +207,8 @@ test('Shadow DOM：部品が見つからない場合は、見つからない部�
     name: '部品が見つからない',
     origin: server.origin,
     steps: [
-      { type: 'navigate', url: `${server.origin}/shadow-form.html`, cause: 'user' },
+      // 翻訳したページで実行します。部品の指定は翻訳で変わらないため、翻訳をやめる案内は誤りです。
+      { type: 'navigate', url: `${server.origin}/shadow-form.html?translate=1`, cause: 'user' },
       {
         type: 'click',
         target: { ...target('button', 'button', '送信'), shadow: ['lm-card', 'lm-missing'] },
@@ -217,6 +218,7 @@ test('Shadow DOM：部品が見つからない場合は、見つからない部�
   const entry = await runFlow(extensionPage, flow);
   assert.equal(entry.status, 'failed');
   assert.match(entry.reason ?? '', /部品（lm-missing）が見つかりません/);
+  assert.doesNotMatch(entry.reason ?? '', /翻訳/);
   for (const opened of pagesAt('/shadow-form.html')) {
     await opened.close();
   }

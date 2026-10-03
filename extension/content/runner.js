@@ -193,27 +193,28 @@
     }
     if (!element) {
       // notFound は、Service Worker がこの手順をやり直してよいことを示します（#18）。
-      return {
-        ok: false,
-        notFound: true,
-        error: `${missingName(target, base.root, '要素')}が見つかりません（${Math.round(timeoutMs / 1000)} 秒待ちました）。`,
-        translated: isPageTranslated(),
-      };
+      return { ok: false, notFound: true, ...missing(target, base.root, '要素', timeoutMs) };
     }
     return { ok: true, element };
   }
 
   /**
-   * 見つからなかったものの名前です。Shadow DOM の中の要素（#20）で、外側の部品が見つからない場合は、その部品を
-   * 示します。部品はあるが内側の要素がない場合と、Shadow DOM の中にない要素では、name のままです。
+   * 要素が見つからなかったときの説明と、ページが翻訳されているかです。
+   * Shadow DOM の中の要素（#20）で、外側の部品が見つからない場合は、その部品を示し、翻訳されているかは返しません。
+   * 部品の指定には翻訳で変わる文字を使わないため、翻訳をやめるよう案内しても見つからないためです（#99 の説明を
+   * 付けません）。部品はあるが内側の要素がない場合と、Shadow DOM の中にない要素では、これまでどおりです。
    * @param {{ shadow?: string[] }} target
    * @param {Document | Element} root 探した範囲
    * @param {string} name 要素の名前
-   * @returns {string}
+   * @param {number} timeoutMs 待った時間（ミリ秒）
+   * @returns {{ error: string, translated?: boolean }}
    */
-  function missingName(target, root, name) {
+  function missing(target, root, name, timeoutMs) {
+    const waited = `（${Math.round(timeoutMs / 1000)} 秒待ちました）。`;
     const host = missingShadowHost(target, root);
-    return host === undefined ? name : `${name}を含む部品（${host}）`;
+    return host === undefined
+      ? { error: `${name}が見つかりません${waited}`, translated: isPageTranslated() }
+      : { error: `${name}を含む部品（${host}）が見つかりません${waited}` };
   }
 
   /**
@@ -261,8 +262,7 @@
       return {
         ok: false,
         notFound: true,
-        error: `${missingName(target, base.root, `条件の要素「${target.label}」`)}が見つかりません（${Math.round(timeoutMs / 1000)} 秒待ちました）。`,
-        translated: isPageTranslated(),
+        ...missing(target, base.root, `条件の要素「${target.label}」`, timeoutMs),
       };
     }
     return { ok: true, text: readText(element), translated: isPageTranslated() };

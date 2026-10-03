@@ -42,6 +42,8 @@ customElements.define('lm-card', LmCard);
 
 if (new URLSearchParams(location.search).has('translate')) {
   setTimeout(() => {
+    // Chrome の翻訳は、翻訳したページの html 要素に translated-ltr の class を付けます。
+    document.documentElement.classList.add('translated-ltr');
     const cardRoot = document.querySelector('lm-card')?.shadowRoot;
     for (const root of [cardRoot, payRoot]) {
       for (const label of root?.querySelectorAll('label') ?? []) {
