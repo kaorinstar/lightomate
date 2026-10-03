@@ -29,7 +29,9 @@ export function describeStep(step) {
         const conflict = step.download.onConflict === 'overwrite' ? '、同じ名前は上書き' : '';
         // リンク先のファイルを保存する指定（#172）は、クリックしないため、クリックとは別の名前で示します。
         if (step.download.from === 'link') {
-          return `リンク先のファイルを保存：${step.target.label}（${step.download.path} に保存${conflict}）`;
+          // 一致するリンクをすべて保存する指定（#185）は、その旨を添えます。
+          const all = step.download.all === true ? '、一致するリンクをすべて' : '';
+          return `リンク先のファイルを保存：${step.target.label}（${step.download.path} に保存${conflict}${all}）`;
         }
         return `クリック：${step.target.label}（ダウンロードを ${step.download.path} に保存${conflict}）`;
       }

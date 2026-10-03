@@ -36,7 +36,9 @@ export async function startServer() {
     const { pathname, searchParams } = new URL(request.url ?? '/', 'http://127.0.0.1');
     // ログインが必要なファイルの代わりです（#172）。Cookie の lm_auth=1 がある場合だけ PDF を返します。
     // ログインの Cookie を付けて保存できるかを確かめるために使います。
-    if (pathname === '/auth/invoice.pdf') {
+    // Amazon の明細書と同じ形のリンク先です（#185）。ID の部分がファイルごとに変わります。
+    const documentId = /^\/documents\/download\/([\w-]+)\/invoice\.pdf$/.exec(pathname)?.[1];
+    if (pathname === '/auth/invoice.pdf' || documentId !== undefined) {
       const cookies = request.headers.cookie ?? '';
       if (!/(^|;\s*)lm_auth=1(;|$)/.test(cookies)) {
         response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }).end('forbidden');
@@ -44,7 +46,7 @@ export async function startServer() {
       }
       response
         .writeHead(200, { 'content-type': 'application/pdf' })
-        .end(minimalPdf(searchParams.get('n') ?? ''));
+        .end(minimalPdf(documentId ?? searchParams.get('n') ?? ''));
       return;
     }
     const file = path.join(pagesDir, decodeURIComponent(pathname));

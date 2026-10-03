@@ -60,6 +60,7 @@
       elementKeys(element),
       rowCandidates(element),
       pagerSelectors(element),
+      linkHref(element),
     );
   };
 
@@ -142,8 +143,10 @@
    * @param {string[]} [keys] クリックした要素の、翻訳で変わらない手がかり（#97）
    * @param {object[]} [rows] 操作した要素を含む一覧の行の候補（#167）。後で「各行で繰り返す」に変えるときに使います
    * @param {string[]} [pager] 押した要素を、繰り返しのページ送りに使う場合の指定（#182）
+   * @param {string} [href] 押したリンクのリンク先（絶対 URL）。リンク先のファイルを保存する指定に変えるときに、
+   *   同じ種類のリンクを探す指定を作るために使います（#185）
    */
-  function send(step, texts, matchedSelector, keys, rows, pager) {
+  function send(step, texts, matchedSelector, keys, rows, pager, href) {
     // 記録したときにページが翻訳されていたことを残します。実行時に見つからなかった場合の説明に使います（#99）。
     const recorded = isPageTranslated() ? { ...step, translated: true } : step;
     chrome.runtime
@@ -155,11 +158,22 @@
         keys,
         rows,
         pager,
+        href,
       })
       .catch(() => {
         // 拡張機能を再読み込みした後など、Service Worker と接続できない場合は記録を続けられません。
         overlay.remove();
       });
+  }
+
+  /**
+   * 押した要素を含むリンクのリンク先（絶対 URL）を返します（#185）。リンクの中でない場合は undefined です。
+   * @param {Element} element
+   * @returns {string | undefined}
+   */
+  function linkHref(element) {
+    const link = element.closest('a[href]');
+    return link instanceof HTMLAnchorElement ? link.href : undefined;
   }
 
   /**

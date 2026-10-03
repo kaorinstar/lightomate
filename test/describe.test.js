@@ -202,6 +202,20 @@ test('リンク先のファイルを保存する指定のクリックは、ク�
   assert.equal(describeStepForPage(step), 'リンク先のファイルを保存：明細書');
 });
 
+test('一致するリンクをすべて保存する指定は、その旨を添えて説明する（#185）', () => {
+  const target = { selectors: ['a[href*="/invoice.pdf"]'], tag: 'a', label: '明細書' };
+  /** @type {import('../extension/shared/flow.js').Step} */
+  const step = {
+    type: 'click',
+    target,
+    download: { path: 'L/{{n}}', onConflict: 'overwrite', from: 'link', all: true },
+  };
+  assert.equal(
+    describeStep(step),
+    'リンク先のファイルを保存：明細書（L/{{n}} に保存、同じ名前は上書き、一致するリンクをすべて）',
+  );
+});
+
 // ---- 実行中のページの枠に表示する手順（#156） ----
 
 test('ページに出す手順の文には、入力する値、選ぶ値、URL、保存先、条件の値を含めない', () => {

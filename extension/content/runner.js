@@ -346,11 +346,11 @@
 
   /**
    * 手順を 1 つ実行します。
-   * @param {{ type: string, target: { selectors: string[], tag: string, text?: string, scope?: string }, value?: string, values?: string[], labels?: string[], download?: { from?: string } }} step
+   * @param {{ type: string, target: { selectors: string[], tag: string, text?: string, scope?: string }, value?: string, values?: string[], labels?: string[], download?: { from?: string, all?: boolean } }} step
    *   値の中のパラメータは、Service Worker で置き換え済みです。
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true, text?: string, href?: string } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
+   * @returns {Promise<{ ok: true, text?: string, href?: string, hrefs?: string[] } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
    */
   async function runStep(step, scope, timeoutMs) {
     /** @type {Element} */
@@ -388,6 +388,18 @@
               error:
                 'リンク先を保存する指定ですが、見つかった要素がリンクではありません。クリックの手順の download から from を外してください。',
             };
+          }
+          // 一致するリンクをすべて保存する指定（#185）では、表示されている同じ種類のリンクのリンク先を、ページの
+          // 順にすべて返します。明細書が複数ある注文で、すべての明細書を保存するためです。
+          if (step.download.all === true) {
+            const base = searchRoot(step.target, scope);
+            const hrefs = base.ok
+              ? findAllTargets(step.target, base.root).flatMap((found) => {
+                  const each = found.closest('a[href]');
+                  return each instanceof HTMLAnchorElement ? [each.href] : [];
+                })
+              : [];
+            return { ok: true, href: link.href, hrefs: [...new Set([link.href, ...hrefs])] };
           }
           return { ok: true, href: link.href };
         }

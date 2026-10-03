@@ -54,7 +54,7 @@ test('版番号が異なる場合は誤りを報告する', () => {
 });
 
 test('版 1〜14 のフローは、そのまま版 15 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 15);
+  assert.equal(SCHEMA_VERSION, 16);
   for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
@@ -1258,5 +1258,25 @@ test('forEach の onMissing は stop か skip だけを書け、版 15 のフロ
   assert.deepEqual(validateFlow({ ...flow, schemaVersion: 15 }), []);
   assert.deepEqual(validateFlow({ ...flow, schemaVersion: 14 }), [
     `steps[${validFlow.steps.length}]: onMissing は、schemaVersion が 15 以上のフローでだけ使えます。`,
+  ]);
+});
+
+test('一致するリンクをすべて保存する指定（download.all）は、リンク先の保存で、版 16 以上のフローにだけ書ける（#185）', () => {
+  const click = {
+    type: 'click',
+    target: { selectors: ['a[href*="/invoice.pdf"]'], tag: 'a', label: '明細書' },
+    download: { path: 'Lightomate/a', from: 'link', all: true },
+  };
+  assert.deepEqual(validateStep(click), []);
+  assert.deepEqual(validateStep({ ...click, download: { ...click.download, all: false } }), [
+    'download.all が true ではありません。',
+  ]);
+  assert.deepEqual(validateStep({ ...click, download: { path: 'Lightomate/a', all: true } }), [
+    'download.all は、download.from が link の場合にだけ書けます。',
+  ]);
+  const flow = { ...validFlow, steps: [...validFlow.steps, click] };
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 16 }), []);
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 15 }), [
+    `steps[${validFlow.steps.length}]: download.all は、schemaVersion が 16 以上のフローでだけ使えます。`,
   ]);
 });

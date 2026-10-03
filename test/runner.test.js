@@ -5,6 +5,7 @@ import {
   isNewPageLoaded,
   isPageTurned,
   lastPageNavigationIndex,
+  numberedPath,
   pageNumber,
   resolveSteps,
   samePage,
@@ -303,4 +304,16 @@ test('何ページ目かは、外側に while がある場合も、最も外側�
     { startPc: 1, index: 0, count: 2, page: 1 },
   ];
   assert.equal(pageNumber(program, frames), 2);
+});
+
+test('2 件目以降のリンク先のファイルは、保存先のファイル名の末尾に番号を付ける（#185）', () => {
+  assert.equal(
+    numberedPath('Lightomate/{{flow.name}}/{{site.host}}_{{fileName1}}', 2),
+    'Lightomate/{{flow.name}}/{{site.host}}_{{fileName1}}_2',
+  );
+  assert.equal(numberedPath('Lightomate/a/明細書.pdf', 3), 'Lightomate/a/明細書_3.pdf');
+  assert.equal(
+    numberedPath('Lightomate/{{flow.name}}/{{run.yyyy}}{{run.mm}}{{run.dd}}_{{run.hhmmss}}', 2),
+    'Lightomate/{{flow.name}}/{{run.yyyy}}{{run.mm}}{{run.dd}}_{{run.hhmmss}}_2',
+  );
 });

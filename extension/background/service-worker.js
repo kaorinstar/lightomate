@@ -258,6 +258,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.keys,
         message.rows,
         message.pager,
+        message.href,
       ).catch((error) => console.error('手順を記録できませんでした。', error));
       return false;
 

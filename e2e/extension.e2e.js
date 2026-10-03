@@ -1693,6 +1693,97 @@ test('ページ送り：記録で押した「次へ」をページ送りにす�
   }
 });
 
+test('明細書が複数ある注文：一致するリンクをすべて保存し、2 件目以降の名前に番号を付ける（#185）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/multi-invoices.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  // 1 件目の注文番号の文字、［領収書等］、小さな枠の明細書を押します。
+  await site.click('.order:nth-child(1) .order-number');
+  await site.click('.order:nth-child(1) .receipt-menu');
+  await site.click('#popover-content-1 a[href$="invoice.pdf"]');
+  const recorded = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[], rowHints: any[] }} */ (recording);
+      }),
+    (recording) =>
+      recording.steps.length >= 4 &&
+      recording.steps[3].type === 'click' &&
+      recording.steps[3].download?.from === 'link',
+  );
+  const link = recorded.steps[3];
+  assert.ok(link.type === 'click');
+  assert.equal(link.download?.all, true);
+  // 枠の id と表示の文字ではなく、リンク先の形で探します。
+  assert.equal(link.target.selectors[0], 'a[href*="/documents/download/"][href*="/invoice.pdf"]');
+  const key = JSON.stringify(recorded.rowHints[1][0].items.selectors);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (key) =>
+        chrome.runtime.sendMessage({
+          kind: 'recording/makeLoop',
+          from: 1,
+          to: 3,
+          key,
+          count: 4,
+          names: [1],
+          withSite: false,
+        }),
+      key,
+    ),
+    { ok: true },
+  );
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.deepEqual(stopped.errors, []);
+  await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...stopped.flow, name: '複数の明細書', interval: { min: 500, max: 500 } };
+  const expected = ['M-001', 'M-002', 'M-002_2', 'M-003'].map(
+    (name) => `Lightomate/複数の明細書/${name}.pdf`,
+  );
+  // もう一度実行しても同じ名前で上書きするため、ファイルは増えません。2 回目は、Chrome の翻訳と同じく表示の文字を
+  // 置き換えたページで実行します。リンクは表示の文字ではなくリンク先の形で探すため、同じ明細書を保存します。
+  for (const round of [1, 2]) {
+    const steps = flow.steps.map((step, index) =>
+      round === 2 && index === 0 && step.type === 'navigate'
+        ? { ...step, url: `${step.url}?translate=1` }
+        : step,
+    );
+    const entry = await runFlow(extensionPage, { ...flow, steps });
+    assert.equal(entry.status, 'done', `${round} 回目：${entry.reason ?? ''}`);
+    assert.deepEqual(
+      await waitUntil(
+        async () =>
+          listFiles(browser.downloadDir).filter((file) =>
+            file.startsWith('Lightomate/複数の明細書/'),
+          ),
+        (list) => list.length >= 4,
+      ),
+      expected,
+      `${round} 回目`,
+    );
+  }
+  for (const page of pagesAt('/multi-invoices.html')) {
+    await page.close();
+  }
+});
+
 test('ファイル名：同じ実行の中で同じ名前を 2 回保存した場合は、上書きせずに別名で保存する（#179）', async () => {
   /** @type {Flow} */
   const flow = {
