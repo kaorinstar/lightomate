@@ -24,7 +24,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -50,9 +50,12 @@ export const SCHEMA_VERSION = 16;
  * 版 15 は、版 14 に、行の中の要素が見つからない行を飛ばす指定（forEach の onMissing）を加えたものです（#174）。
  * 版 16 は、版 15 に、一致するリンクのファイルをすべて保存する指定（click の download の all）を加えたものです
  * （#185）。
+ * 版 17 は、版 16 に、Shadow DOM の中の要素の指定（target の shadow）を加えたものです（#20）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+export const SUPPORTED_SCHEMA_VERSIONS = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+];
 
 /**
  * 手順の種類ごとの、使える最も古い版です。これより古い版のフローには書けません。
@@ -100,6 +103,15 @@ const ORIGINS_MIN_SCHEMA_VERSION = 5;
 /** target の scope を使える最も古い版です（#6）。 */
 const SCOPE_MIN_SCHEMA_VERSION = 6;
 
+/** target の shadow を使える最も古い版です（#20）。 */
+const SHADOW_MIN_SCHEMA_VERSION = 17;
+
+/**
+ * target の shadow に並べられる部品の数（Shadow DOM の段数）の上限です（#20）。
+ * content/selector.js の shadowHosts は上限を設けず、超えた手順はこの検証で受け付けません。
+ */
+export const MAX_SHADOW_DEPTH = 10;
+
 /** forEach の nextPage と maxPages、forEach の内側の navigate を使える最も古い版です（#95）。 */
 const LOOP_NAVIGATION_MIN_SCHEMA_VERSION = 7;
 
@@ -130,6 +142,9 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string} [text] 要素の表示文字列。セレクターで見つからない場合の手がかりに使います。
  * @property {'item'} [scope] item の場合は、ページ全体ではなく、forEach で処理中の行の内側だけで
  *   要素を探します（#6）。forEach の内側の手順にだけ書けます。版 6 で加えました。
+ * @property {string[]} [shadow] 要素が Shadow DOM（部品の中身を外から隠す仕組み）の中にある場合の、外側の部品を
+ *   指すセレクター。最も外側の部品から順に並べます。要素は、最も内側の部品の Shadow DOM の中で探します（#20）。
+ *   forEach の items と nextPage には書けません。版 17 で加えました。
  */
 
 /**
@@ -606,7 +621,20 @@ function validateStepList(list, path, depth, inLoop, context, inRepeat = false) 
       );
     }
     for (const [name, target] of stepTargets(step)) {
-      if (!isRecord(target) || target.scope === undefined) {
+      if (!isRecord(target)) {
+        continue;
+      }
+      if (target.shadow !== undefined) {
+        if (name === 'items' || name === 'nextPage') {
+          // 一覧の行と「次へ」は、ページ全体で探します。Shadow DOM の中の一覧は対象外です（#20）。
+          errors.push(`${at}: ${name}.shadow は書けません。`);
+        } else if (version !== undefined && version < SHADOW_MIN_SCHEMA_VERSION) {
+          errors.push(
+            `${at}: ${name}.shadow は、schemaVersion が ${SHADOW_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+          );
+        }
+      }
+      if (target.scope === undefined) {
         continue;
       }
       if (name === 'nextPage') {
@@ -1312,6 +1340,17 @@ export function validateTarget(target, name = 'target') {
   }
   if (target.scope !== undefined && target.scope !== 'item') {
     errors.push(`${name}.scope が item ではありません。`);
+  }
+  if (
+    target.shadow !== undefined &&
+    (!isTextArray(target.shadow) ||
+      target.shadow.length === 0 ||
+      target.shadow.length > MAX_SHADOW_DEPTH ||
+      target.shadow.some((selector) => selector === ''))
+  ) {
+    errors.push(
+      `${name}.shadow が、空でない文字列を 1 個以上 ${MAX_SHADOW_DEPTH} 個以下並べた配列ではありません。`,
+    );
   }
   return errors;
 }

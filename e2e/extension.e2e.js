@@ -111,6 +111,117 @@ test('クリック・入力・選択・ページの移動を記録し、実行�
   await done.close();
 });
 
+test('Shadow DOM：開いた部品と閉じた部品の中の入力とクリックを記録し、実行で再現する（#20）', async () => {
+  const { extensionPage } = browser;
+  const page = await browser.context.newPage();
+  await page.goto(`${server.origin}/shadow-form.html`);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, `${server.origin}/shadow-form.html`);
+
+  const started = await extensionPage.evaluate(
+    (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+    tabId,
+  );
+  assert.deepEqual(started, { ok: true });
+
+  // 開いた部品の中の入力欄です。Playwright のセレクターは、開いた Shadow DOM の中を探せます。
+  await page.click('input[name="name"]');
+  await page.keyboard.type('山田 太郎');
+  // 閉じた部品の中は、ページのスクリプトからも探せないため、位置を押します。
+  /** @param {'note' | 'button'} which */
+  const point = async (which) => {
+    const found = await page.evaluate(
+      (which) => /** @type {any} */ (globalThis).lmRect(which),
+      which,
+    );
+    assert.ok(found, which);
+    return /** @type {{ x: number, y: number }} */ (found);
+  };
+  const note = await point('note');
+  await page.mouse.click(note.x, note.y);
+  await page.keyboard.type('午前中');
+  await page.keyboard.press('Tab');
+  const button = await point('button');
+  await Promise.all([page.waitForURL(/\/done\.html/), page.mouse.click(button.x, button.y)]);
+
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps;
+      }),
+    (steps) => steps.length >= 5,
+  );
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.equal(stopped.ok, true);
+  assert.deepEqual(stopped.errors, []);
+  /** @type {Flow} */
+  const flow = stopped.flow;
+  const steps = /** @type {Step[]} */ (flow.steps);
+  assert.deepEqual(
+    steps.map((step) => step.type),
+    ['navigate', 'input', 'input', 'click', 'navigate'],
+  );
+  const [, name, memo, submit] = steps;
+  assert.ok(name.type === 'input' && memo.type === 'input' && submit.type === 'click');
+  assert.equal(name.value, '山田 太郎');
+  assert.deepEqual(name.target.shadow, ['lm-card']);
+  assert.equal(memo.value, '午前中');
+  assert.deepEqual(memo.target.shadow, ['lm-card', 'lm-pay']);
+  assert.deepEqual(submit.target.shadow, ['lm-card', 'lm-pay']);
+  assert.equal(submit.target.tag, 'button');
+  await page.close();
+
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const [done] = pagesAt('/done.html');
+  assert.ok(done, '送信後のページが開いていません。');
+  const query = new URL(done.url()).searchParams;
+  assert.equal(query.get('name'), '山田 太郎');
+  assert.equal(query.get('note'), '午前中');
+  await done.close();
+
+  // 部品の中の文字が翻訳で置き換わっても、同じ要素を見つけて実行できます。
+  const [opening, ...rest] = steps;
+  assert.ok(opening.type === 'navigate');
+  const translated = await runFlow(extensionPage, {
+    ...flow,
+    steps: [{ ...opening, url: `${opening.url}?translate=1` }, ...rest],
+  });
+  assert.equal(translated.status, 'done', translated.reason ?? '');
+  const [again] = pagesAt('/done.html');
+  assert.ok(again, '翻訳したページで、送信後のページが開いていません。');
+  assert.equal(new URL(again.url()).searchParams.get('note'), '午前中');
+  await again.close();
+});
+
+test('Shadow DOM：部品が見つからない場合は、見つからない部品を示して停止する（#20）', async () => {
+  const { extensionPage } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 17,
+    name: '部品が見つからない',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', url: `${server.origin}/shadow-form.html`, cause: 'user' },
+      {
+        type: 'click',
+        target: { ...target('button', 'button', '送信'), shadow: ['lm-card', 'lm-missing'] },
+      },
+    ],
+  };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'failed');
+  assert.match(entry.reason ?? '', /部品（lm-missing）が見つかりません/);
+  for (const opened of pagesAt('/shadow-form.html')) {
+    await opened.close();
+  }
+});
+
 test('新しいタブで開いた先で PDF を保存し、closeTab で元のタブに戻る', async () => {
   /** @type {Flow} */
   const flow = {

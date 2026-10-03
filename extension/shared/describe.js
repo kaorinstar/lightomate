@@ -10,6 +10,17 @@ import { describeCondition } from './condition.js';
 import { DEFAULT_SAVE_PATH } from './save-path.js';
 
 /** @typedef {import('./flow.js').Step} Step */
+/** @typedef {import('./flow.js').Target} Target */
+
+/**
+ * 手順の説明に使う、要素の名前です。Shadow DOM の中の要素（#20）は、部品の内側にあることを添えます。
+ * 実行で見つからない場合に、利用者が原因を推し量れるようにするためです。
+ * @param {Target} target
+ * @returns {string}
+ */
+export function targetName(target) {
+  return target.shadow ? `${target.label}（部品の内側）` : target.label;
+}
 
 /**
  * @param {Step} step
@@ -22,7 +33,7 @@ export function describeStep(step) {
     case 'click':
       // 新しいタブが開くクリック（#20）は、以降の手順をそのタブで行うことを添えます。
       if (step.newTab) {
-        return `クリック：${step.target.label}（新しいタブで開き、以降はそのタブで実行）`;
+        return `クリック：${targetName(step.target)}（新しいタブで開き、以降はそのタブで実行）`;
       }
       // サイトが提供するファイルのダウンロード（#20）は、保存先を添えます。
       if (step.download) {
@@ -31,23 +42,23 @@ export function describeStep(step) {
         if (step.download.from === 'link') {
           // 一致するリンクをすべて保存する指定（#185）は、その旨を添えます。
           const all = step.download.all === true ? '、一致するリンクをすべて' : '';
-          return `リンク先のファイルを保存：${step.target.label}（${step.download.path} に保存${conflict}${all}）`;
+          return `リンク先のファイルを保存：${targetName(step.target)}（${step.download.path} に保存${conflict}${all}）`;
         }
-        return `クリック：${step.target.label}（ダウンロードを ${step.download.path} に保存${conflict}）`;
+        return `クリック：${targetName(step.target)}（ダウンロードを ${step.download.path} に保存${conflict}）`;
       }
-      return `クリック：${step.target.label}`;
+      return `クリック：${targetName(step.target)}`;
     case 'input':
       return step.secret
-        ? `入力：${step.target.label}（値は記録していません）`
-        : `入力：${step.target.label} ← ${step.value}`;
+        ? `入力：${targetName(step.target)}（値は記録していません）`
+        : `入力：${targetName(step.target)} ← ${step.value}`;
     case 'select':
-      return `選択：${step.target.label} ← ${step.labels.join('、')}`;
+      return `選択：${targetName(step.target)} ← ${step.labels.join('、')}`;
     case 'pause':
       return `一時停止${step.note ? `：${step.note}` : ''}`;
     case 'savePdf':
       return `PDF を保存：${step.path ?? DEFAULT_SAVE_PATH}${step.onConflict === 'overwrite' ? '（同じ名前は上書き）' : ''}`;
     case 'extract':
-      return `読み取り：${step.target.label} → {{${step.name}}}`;
+      return `読み取り：${targetName(step.target)} → {{${step.name}}}`;
     case 'wait':
       return `${step.ms / 1000} 秒待つ`;
     case 'closeTab':

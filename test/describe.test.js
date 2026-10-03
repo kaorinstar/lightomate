@@ -13,6 +13,7 @@ import {
   runStatusText,
   runStatusTone,
   stepKindLabel,
+  targetName,
 } from '../extension/shared/describe.js';
 
 const target = { selectors: ['#a'], tag: 'button', label: '注文履歴', text: '注文履歴' };
@@ -314,5 +315,20 @@ test('年月の既定値の @month-before-last を、前々月と表示する（
     paramColumns({ name: 'm', label: '対象月', type: 'month', default: '@month-before-last' })
       .defaultValue,
     '前々月',
+  );
+});
+
+test('Shadow DOM の中の要素の手順は、説明に部品の内側であることを添える（#20）', () => {
+  const inner = { ...target, label: '送信', shadow: ['checkout-form'] };
+  assert.equal(targetName(inner), '送信（部品の内側）');
+  assert.equal(targetName(target), '注文履歴');
+  assert.equal(describeStep({ type: 'click', target: inner }), 'クリック：送信（部品の内側）');
+  assert.equal(
+    describeStep({ type: 'input', target: { ...inner, label: '名前' }, value: '山田' }),
+    '入力：名前（部品の内側） ← 山田',
+  );
+  assert.equal(
+    describeStep({ type: 'extract', target: { ...inner, label: '注文番号' }, name: 'orderNumber' }),
+    '読み取り：注文番号（部品の内側） → {{orderNumber}}',
   );
 });

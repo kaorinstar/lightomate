@@ -4,7 +4,7 @@
 // Service Worker が手順ごとに読み込みます。同じページに 2 回読み込まれても、受け取りは 1 つだけです。
 // どの手順を実行するかは Service Worker が決めます。このスクリプトは、届いた手順を実行するだけです。
 
-/* global elementKeys, elementTexts, findAllTargets, isPageTranslated, matchStopSelector, searchRoot, showStatusOverlay, waitForTarget */
+/* global elementKeys, elementTexts, findAllTargets, isPageTranslated, matchStopSelector, missingShadowHost, searchRoot, showStatusOverlay, waitForTarget */
 
 (() => {
   const installedKey = '__lightomateRunner';
@@ -150,7 +150,7 @@
 
   /**
    * クリックする要素を探し、押さずに、その要素の文言と、止める要素の指定に一致したかを返します。
-   * @param {{ target: { selectors: string[], tag: string, text?: string, scope?: string } }} step
+   * @param {{ target: { selectors: string[], tag: string, text?: string, scope?: string, shadow?: string[] } }} step
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
    * @param {unknown} stopSelectors サイトごとの止める要素の指定（#54）
@@ -174,7 +174,7 @@
 
   /**
    * 手順の要素を探します。
-   * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} target
+   * @param {{ selectors: string[], tag: string, text?: string, scope?: string, shadow?: string[] }} target
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs
    * @returns {Promise<{ ok: true, element: Element } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
@@ -196,7 +196,7 @@
       return {
         ok: false,
         notFound: true,
-        error: `要素が見つかりません（${Math.round(timeoutMs / 1000)} 秒待ちました）。`,
+        error: `${missingName(target, base.root, '要素')}が見つかりません（${Math.round(timeoutMs / 1000)} 秒待ちました）。`,
         translated: isPageTranslated(),
       };
     }
@@ -204,9 +204,22 @@
   }
 
   /**
+   * 見つからなかったものの名前です。Shadow DOM の中の要素（#20）で、外側の部品が見つからない場合は、その部品を
+   * 示します。部品はあるが内側の要素がない場合と、Shadow DOM の中にない要素では、name のままです。
+   * @param {{ shadow?: string[] }} target
+   * @param {Document | Element} root 探した範囲
+   * @param {string} name 要素の名前
+   * @returns {string}
+   */
+  function missingName(target, root, name) {
+    const host = missingShadowHost(target, root);
+    return host === undefined ? name : `${name}を含む部品（${host}）`;
+  }
+
+  /**
    * if の条件の要素があるかを調べます（#6）。ページは変更しません。
    * 要素がない場合は、上限の時間まで待ってから、ないと判定します。
-   * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} target
+   * @param {{ selectors: string[], tag: string, text?: string, scope?: string, shadow?: string[] }} target
    * @param {unknown} scope 繰り返しで処理中の行の指定
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
    * @returns {Promise<{ ok: true, exists: boolean } | { ok: false, error: string, notFound?: true }>}
@@ -229,7 +242,7 @@
    * 要素がない場合は、上限の時間まで待ってから、見つからないことを返します。「条件を満たさない」とは
    * 扱いません。translated は、ページが Chrome の翻訳で表示されているかです。翻訳された文字では文字の
    * 条件を判定しないために使います。
-   * @param {{ selectors: string[], tag: string, label: string, text?: string, scope?: string }} target
+   * @param {{ selectors: string[], tag: string, label: string, text?: string, scope?: string, shadow?: string[] }} target
    * @param {unknown} scope 繰り返しで処理中の行の指定
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
    * @returns {Promise<{ ok: true, text: string, translated: boolean } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
@@ -248,7 +261,7 @@
       return {
         ok: false,
         notFound: true,
-        error: `条件の要素「${target.label}」が見つかりません（${Math.round(timeoutMs / 1000)} 秒待ちました）。`,
+        error: `${missingName(target, base.root, `条件の要素「${target.label}」`)}が見つかりません（${Math.round(timeoutMs / 1000)} 秒待ちました）。`,
         translated: isPageTranslated(),
       };
     }
@@ -258,7 +271,7 @@
   /**
    * forEach の行の数を数えます（#6）。ページは変更しません。
    * 行が 1 つも見つからない場合は、上限の時間まで待ってから 0 件と判定します。
-   * @param {{ selectors: string[], tag: string, text?: string, scope?: string }} items
+   * @param {{ selectors: string[], tag: string, text?: string, scope?: string, shadow?: string[] }} items
    * @param {unknown} scope 外側の繰り返しで処理中の行の指定
    * @param {number} timeoutMs 行を待つ上限（ミリ秒）
    * @returns {Promise<{ ok: true, count: number, firstKey?: string } | { ok: false, error: string, notFound?: true }>}
@@ -346,7 +359,7 @@
 
   /**
    * 手順を 1 つ実行します。
-   * @param {{ type: string, target: { selectors: string[], tag: string, text?: string, scope?: string }, value?: string, values?: string[], labels?: string[], download?: { from?: string, all?: boolean } }} step
+   * @param {{ type: string, target: { selectors: string[], tag: string, text?: string, scope?: string, shadow?: string[] }, value?: string, values?: string[], labels?: string[], download?: { from?: string, all?: boolean } }} step
    *   値の中のパラメータは、Service Worker で置き換え済みです。
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
@@ -420,7 +433,9 @@
         }
         element.focus();
         setNativeValue(element, step.value ?? '');
-        element.dispatchEvent(new Event('input', { bubbles: true }));
+        // input は、利用者の入力と同じく Shadow DOM の外へも伝えます（composed、#20）。change は、利用者の
+        // 入力でも Shadow DOM の外へ伝わらないため、そのままにします。
+        element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
         element.blur();
         return { ok: true };
@@ -548,7 +563,7 @@
     for (const option of options) {
       option.selected = chosen.includes(option);
     }
-    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
     element.blur();
     return { ok: true };

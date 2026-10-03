@@ -53,9 +53,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜14 のフローは、そのまま版 15 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 16);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
+test('版 1〜16 のフローは、そのまま版 17 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 17);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -1278,5 +1278,55 @@ test('一致するリンクをすべて保存する指定（download.all）は�
   assert.deepEqual(validateFlow({ ...flow, schemaVersion: 16 }), []);
   assert.deepEqual(validateFlow({ ...flow, schemaVersion: 15 }), [
     `steps[${validFlow.steps.length}]: download.all は、schemaVersion が 16 以上のフローでだけ使えます。`,
+  ]);
+});
+
+test('Shadow DOM の中の要素の指定（target.shadow）は、版 17 以上のフローで検証を通り、版 16 以前では誤りになる（#20）', () => {
+  const click = {
+    type: 'click',
+    target: {
+      selectors: ['button.submit'],
+      tag: 'button',
+      label: '送信',
+      shadow: ['checkout-form', 'pay-button'],
+    },
+  };
+  assert.deepEqual(validateStep(click), []);
+  const flow = { ...validFlow, steps: [...validFlow.steps, click] };
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 17 }), []);
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 16 }), [
+    `steps[${validFlow.steps.length}]: target.shadow は、schemaVersion が 17 以上のフローでだけ使えます。`,
+  ]);
+});
+
+test('target.shadow は、空でない文字列を 1〜10 個並べた配列だけを受け付ける（#20）', () => {
+  const error = 'target.shadow が、空でない文字列を 1 個以上 10 個以下並べた配列ではありません。';
+  /** @param {unknown} shadow */
+  const input = (shadow) => ({
+    type: 'input',
+    target: { selectors: ['input'], tag: 'input', label: '名前', shadow },
+    value: 'a',
+  });
+  assert.deepEqual(validateStep(input(['x-card'])), []);
+  assert.deepEqual(validateStep(input(Array(10).fill('x-card'))), []);
+  for (const shadow of [[], [''], 'x-card', [1], Array(11).fill('x-card'), null]) {
+    assert.deepEqual(validateStep(input(shadow)), [error], JSON.stringify(shadow));
+  }
+});
+
+test('target.shadow は、条件の要素に書け、一覧の行（items）と「次へ」（nextPage）には書けない（#20）', () => {
+  const shadowTarget = { selectors: ['span'], tag: 'span', label: '状態', shadow: ['x-status'] };
+  const condition = { type: 'if', condition: { target: shadowTarget, exists: true }, then: [] };
+  assert.deepEqual(validateFlow({ ...validFlow, steps: [condition] }), []);
+
+  const loop = {
+    type: 'forEach',
+    items: { ...shadowTarget, selectors: ['li'], tag: 'li' },
+    nextPage: { selectors: ['a.next'], tag: 'a', label: '次へ', shadow: ['x-pager'] },
+    steps: [],
+  };
+  assert.deepEqual(validateFlow({ ...validFlow, steps: [loop] }), [
+    'steps[0]: items.shadow は書けません。',
+    'steps[0]: nextPage.shadow は書けません。',
   ]);
 });
