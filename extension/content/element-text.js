@@ -4,7 +4,7 @@
 // ES モジュールの extension/shared/ を読み込めないため、ここでは文言を集めて送るだけにします。
 // 同じページに 2 回読み込まれても誤りにならないよう、最上位には関数の宣言だけを置きます。
 
-/* exported elementKeys, elementTexts, isPageTranslated, matchStopSelector */
+/* exported elementKeys, elementTexts, isPageTranslated, matchStopSelector, shadowRootOf */
 
 /**
  * 要素の表示文字列、aria-label、title、value と、要素の中の画像の alt を返します。
@@ -75,6 +75,8 @@ function elementKeys(element) {
 /**
  * 要素、またはその祖先の要素が、止める要素の指定（CSS セレクター）のどれかに一致すれば、
  * その指定を返します（#54）。構文に誤りのある指定は飛ばします。
+ * 要素が Shadow DOM の中にある場合は、外側の部品とその祖先も調べます（#20）。部品の中のボタンでも、
+ * 部品に対する指定で止めるためです。
  * @param {Element} element
  * @param {unknown} selectors Service Worker から受け取った、止める要素の指定
  * @returns {string | undefined}
@@ -83,13 +85,47 @@ function matchStopSelector(element, selectors) {
   if (!Array.isArray(selectors)) {
     return undefined;
   }
-  return selectors.find((selector) => {
-    try {
-      return typeof selector === 'string' && element.closest(selector) !== null;
-    } catch {
-      return false;
-    }
-  });
+  /** @type {Element[]} */
+  const starts = [element];
+  for (let root = element.getRootNode(); root instanceof ShadowRoot;) {
+    starts.push(root.host);
+    root = root.host.getRootNode();
+  }
+  return selectors.find((selector) =>
+    starts.some((start) => {
+      try {
+        return typeof selector === 'string' && start.closest(selector) !== null;
+      } catch {
+        return false;
+      }
+    }),
+  );
+}
+
+/**
+ * 要素の Shadow DOM を返します。閉じた Shadow DOM（ページのスクリプトからも中が見えない種類）も返します（#20）。
+ * Shadow DOM を持たない要素と、入力欄などのブラウザーが内部に持つ部品では null です。
+ * @param {Element} element
+ * @returns {ShadowRoot | null}
+ */
+function shadowRootOf(element) {
+  // 入力欄や動画などは、ブラウザーが内部の部品を Shadow DOM で持つ場合があります。その内側は、記録と実行の
+  // 対象にしません。
+  if (
+    !(element instanceof HTMLElement) ||
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement ||
+    element instanceof HTMLMediaElement
+  ) {
+    return null;
+  }
+  try {
+    return chrome.dom.openOrClosedShadowRoot(element);
+  } catch {
+    // chrome.dom を使えない場合は、開いた Shadow DOM だけを返します。
+    return element.shadowRoot;
+  }
 }
 
 /**
