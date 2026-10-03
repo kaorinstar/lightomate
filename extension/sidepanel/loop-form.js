@@ -212,7 +212,7 @@ export function createLoopForm({ open, container, list, toast }) {
 
   /** 次のページへ送るクリックとして選べる手順の番号です（#182）。 */
   const pagerIndexes = () =>
-    range && rowKey ? pagerSteps(steps, hints, pagers, range.from, range.to, rowKey) : [];
+    range && rowKey ? pagerSteps(steps, hints, pagers, range.from, rowKey) : [];
 
   /**
    * 繰り返す手順の末尾です。次のページへ送るクリックを範囲の中で選んだ場合は、その前までです（#182）。

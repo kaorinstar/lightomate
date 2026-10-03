@@ -264,7 +264,7 @@ export function makeLoop(
     const selectors = pagers[index];
     if (
       typeof key !== 'string' ||
-      !pagerSteps(steps, hints, pagers, start, end, key).includes(index) ||
+      !pagerSteps(steps, hints, pagers, start, key).includes(index) ||
       step?.type !== 'click' ||
       !selectors
     ) {
@@ -333,8 +333,10 @@ export function makeLoop(
 
 /**
  * 次のページへ送るクリックを選んだ場合の、繰り返す手順の末尾と、手順から除く範囲の末尾を返します（#182）。
- * 繰り返す手順の末尾より後から、除く範囲の末尾までの手順を除きます。範囲の末尾と「次へ」の間の一覧へ戻る
- * 移動、「次へ」のクリック、その直後のページの移動です。
+ * 繰り返す手順の末尾より後から、除く範囲の末尾までの手順を除きます。範囲の末尾から「次へ」までの手順
+ * （［戻る］による一覧へ戻る移動など）と、「次へ」の直後のページの移動です。範囲の中で「次へ」より後にある
+ * 手順も除きます。どれも 2 ページ目へ進むまでの操作で、ページ送りに置き換わるためです。
+ * 除く手順は、［繰り返しにする］の欄で手順ごとに示します。
  * @param {Step[]} steps
  * @param {number} to 範囲の末尾
  * @param {number} index 次のページへ送るクリックの番号（pagerSteps の値）
@@ -361,30 +363,22 @@ function isPageNavigation(step) {
 const PAGER_TAGS = ['a', 'button'];
 
 /**
- * 次のページへ送るクリックとして選べる手順の番号を返します（#182）。次をすべて満たす手順です。
+ * 次のページへ送るクリックとして選べる手順の番号を返します（#182）。範囲の 2 番目以降の手順のうち、次をすべて
+ * 満たすものです。記録中に、1 件目の操作と「次へ」の間でほかの場所を押していても選べるよう、位置の条件は
+ * 設けません。間の手順は、選んだ後に除きます（pagerSpan）。
  * - リンクかボタンのクリックで、ページ番号の数で位置が変わらない指定（PagerHint）を作れたもの
  * - 選んだ行の外の要素を押したもの
- * - 1 件目の操作を終えた後に押したもの。範囲の 2 番目以降か、範囲より後の手順で、範囲の末尾との間には
- *   一覧のページへ戻る移動（［戻る］など）だけがあり、範囲の中でその後に続く手順はページの移動だけのもの
  * @param {Step[]} steps
  * @param {RowHint[]} hints
  * @param {PagerHint[]} pagers steps と同じ順の、ページ送りに使う場合の指定
- * @param {number} from
- * @param {number} to
+ * @param {number} from 範囲の先頭
  * @param {string} key 選んだ行の候補（candidateKey の値）
  * @returns {number[]}
  */
-export function pagerSteps(steps, hints, pagers, from, to, key) {
-  const list = steps.slice(0, from).findLast((step) => step.type === 'navigate');
-  /** @param {Step} step */
-  const isReturn = (step) =>
-    step.type === 'navigate' && list?.type === 'navigate' && step.url === list.url;
+export function pagerSteps(steps, hints, pagers, from, key) {
   /** @type {number[]} */
   const indexes = [];
   for (let index = from + 1; index < steps.length; index += 1) {
-    if (index > to + 1 && !isReturn(steps[index - 1])) {
-      break;
-    }
     const step = steps[index];
     const inRow = (usableHint(step, hints[index]) ?? []).some(
       (candidate) => candidateKey(candidate.items) === key,
@@ -396,8 +390,7 @@ export function pagerSteps(steps, hints, pagers, from, to, key) {
       step.target.scope === undefined &&
       PAGER_TAGS.includes(step.target.tag) &&
       pagers[index] &&
-      !inRow &&
-      steps.slice(index + 1, to + 1).every(isPageNavigation)
+      !inRow
     ) {
       indexes.push(index);
     }

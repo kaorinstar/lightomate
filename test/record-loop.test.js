@@ -11,6 +11,7 @@ import {
   loopOptions,
   makeLoop,
   nameableSteps,
+  pagerSpan,
   pagerSteps,
   sanitizePagerHint,
   sanitizeRowHint,
@@ -468,24 +469,18 @@ const nextPage = { selectors: ['li.a-last > a'], tag: 'a', label: '次へ' };
 
 test('次のページへ送るクリックに選べるのは、1 件目の操作の後に押した、行の外のリンクかボタンだけ（#182）', () => {
   const key = candidateKey(orderRow);
-  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, pagedPagers, 1, 4, key), [3]);
-  // 範囲の直後のクリックも選べます。
-  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, pagedPagers, 1, 2, key), [3]);
+  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, pagedPagers, 1, key), [3]);
+  // 範囲の先頭のクリックは選べません。1 件目の操作の前に押したクリックです。
+  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, pagedPagers, 3, key), []);
   // ページ送りに使う指定を作れなかったクリックは選べません。
+  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, [null, null, null, null, null], 1, key), []);
+  // 選んだ行の中のクリックは選べません。
   assert.deepEqual(
-    pagerSteps(pagedSteps, pagedHints, [null, null, null, null, null], 1, 4, key),
+    pagerSteps(pagedSteps, pagedHints, [null, null, ['a.invoice'], null, null], 1, key),
     [],
   );
-  // 範囲の中で、その後に移動以外の手順が続くクリックは選べません。
-  assert.deepEqual(
-    pagerSteps(pagedSteps, pagedHints, [null, null, ['a.invoice'], null, null], 1, 4, key),
-    [],
-  );
-  // 選んだ行の中のクリックは選べません。ページ送りの部品の li を行に選んだ場合も同じです。
-  assert.deepEqual(
-    pagerSteps(pagedSteps, pagedHints, pagedPagers, 1, 4, candidateKey(pagerRow)),
-    [],
-  );
+  // ページ送りの部品の li を行に選んだ場合は、「次へ」もその行の中のクリックのため選べません。
+  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, pagedPagers, 1, candidateKey(pagerRow)), []);
 });
 
 test('次のページへ送るクリックを選ぶと、その要素を nextPage にし、そのクリックと直後の移動を手順から除く（#182）', () => {
@@ -554,7 +549,7 @@ test('PDF を開いた後に［戻る］で一覧へ戻ってから押した「�
   const key = candidateKey(orderRow);
   // ［戻る］は範囲に含められないため、既定の範囲はその前までです。
   assert.deepEqual(defaultLoopRange(withBack, backHints), { from: 1, to: 2 });
-  assert.deepEqual(pagerSteps(withBack, backHints, backPagers, 1, 2, key), [4]);
+  assert.deepEqual(pagerSteps(withBack, backHints, backPagers, 1, key), [4]);
   const result = makeLoop(withBack, backHints, 1, 2, key, [], false, {
     index: 4,
     pagers: backPagers,
@@ -564,11 +559,35 @@ test('PDF を開いた後に［戻る］で一覧へ戻ってから押した「�
   const loop = result.steps[1];
   assert.ok(loop.type === 'forEach');
   assert.deepEqual(loop.nextPage, nextPage);
+});
 
-  // 一覧とは別のページへ移動した後のクリックは選べません。
+test('1 件目の操作と「次へ」の間でほかの場所を押していても選べ、間の手順を除き、その後の手順は残す（#182）', () => {
   /** @type {Step[]} */
-  const elsewhere = withBack.map((step, index) =>
-    index === 3 ? { type: 'navigate', url: 'https://shop.example.com/help', cause: 'user' } : step,
+  const withOthers = [
+    ...pagedSteps.slice(0, 3),
+    { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+    // ほかの拡張機能がページに加えたアイコンなど、ページ送りと関係のないクリックです。
+    { type: 'click', target: { selectors: ['#other-icon'], tag: 'span', label: 'enable' } },
+    ...pagedSteps.slice(3),
+    { type: 'savePdf', path: 'Lightomate/{{flow.name}}/後' },
+  ];
+  const otherHints = [...pagedHints.slice(0, 3), null, null, ...pagedHints.slice(3), null];
+  const otherPagers = [null, null, null, null, null, ['li.a-last > a'], null, null];
+  const key = candidateKey(orderRow);
+  assert.deepEqual(pagerSteps(withOthers, otherHints, otherPagers, 1, key), [5]);
+  assert.deepEqual(pagerSpan(withOthers, 2, 5), { innerEnd: 2, removeEnd: 6 });
+  const result = makeLoop(withOthers, otherHints, 1, 2, key, [], false, {
+    index: 5,
+    pagers: otherPagers,
+  });
+  assert.ok(result.ok);
+  assert.deepEqual(
+    result.steps.map((step) => step.type),
+    ['navigate', 'forEach', 'savePdf'],
   );
-  assert.deepEqual(pagerSteps(elsewhere, backHints, backPagers, 1, 2, key), []);
+  const loop = result.steps[1];
+  assert.ok(loop.type === 'forEach');
+  assert.deepEqual(loop.nextPage, nextPage);
+  assert.equal(loop.steps.length, 2);
+  assert.deepEqual(result.pagers, [null, null, null]);
 });

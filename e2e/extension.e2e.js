@@ -1605,6 +1605,7 @@ test('ページ送り：記録で押した「次へ」をページ送りにす�
     { ok: true },
   );
   // 1 件目の注文番号の文字と明細書を押し、［戻る］で一覧へ戻ってから「次へ」を押します（Amazon と同じ流れ）。
+  // 「次へ」の前に、ページ送りと関係のない場所（ほかの拡張機能のアイコンなど）も押します。
   await site.click('.order:nth-child(1) .order-number');
   await site.click('.order:nth-child(1) a.invoice');
   await waitUntil(
@@ -1617,6 +1618,7 @@ test('ページ送り：記録で押した「次へ」をページ送りにす�
   );
   await site.goBack();
   await site.waitForURL(listUrl);
+  await site.click('#other-icon');
   await site.click('li.next > a');
   const recorded = await waitUntil(
     () =>
@@ -1624,17 +1626,17 @@ test('ページ送り：記録で押した「次へ」をページ送りにす�
         const { recording } = await chrome.storage.session.get('recording');
         return /** @type {{ steps: Step[], rowHints: any[], pagerHints: any[] }} */ (recording);
       }),
-    (recording) => recording.steps.length >= 6,
+    (recording) => recording.steps.length >= 7,
   );
   assert.deepEqual(
     recorded.steps.map((step) => step.type),
-    ['navigate', 'click', 'click', 'navigate', 'click', 'navigate'],
+    ['navigate', 'click', 'click', 'navigate', 'click', 'click', 'navigate'],
   );
   // 記録の指定は何番目の li かをたどるため、2 ページ目では「次へ」を指しません。ページ送りの指定は位置に頼りません。
-  assert.ok(recorded.pagerHints[4].includes('li.next > a'), JSON.stringify(recorded.pagerHints[4]));
+  assert.ok(recorded.pagerHints[5].includes('li.next > a'), JSON.stringify(recorded.pagerHints[5]));
   await site.waitForURL(`${listUrl}?p=2`);
   const structural =
-    recorded.steps[4].type === 'click' && recorded.steps[4].target.selectors.at(-1);
+    recorded.steps[5].type === 'click' && recorded.steps[5].target.selectors.at(-1);
   assert.equal(await site.locator(String(structural)).count(), 0, String(structural));
 
   // サイドパネルで、注文番号をファイル名に使い、「次へ」のクリックで次のページへ送る繰り返しにします。
@@ -1644,16 +1646,17 @@ test('ページ送り：記録で押した「次へ」をページ送りにす�
   await panel.click('#recording-loop');
   const form = panel.locator('#recording-loop-form');
   await form.getByLabel('この文字をファイル名に使う').check();
-  // 「次へ」は［戻る］（範囲に含められない手順）の後にありますが、次のページへ送るクリックに選べます。
+  // 「次へ」は［戻る］（範囲に含められない手順）とほかのクリックの後にありますが、次のページへ送るクリックに
+  // 選べます。
   const pager = form.getByLabel('このクリックで次のページへ送る');
   assert.equal(await pager.count(), 1);
   await pager.check();
   assert.match(
     await form.locator('.alert').innerText(),
-    /手順 5 のクリックで次のページへ送り、最後のページまで（最大 10 ページ）繰り返します。/,
+    /手順 6 のクリックで次のページへ送り、最後のページまで（最大 10 ページ）繰り返します。/,
   );
-  // ［戻る］と、「次へ」の後の移動は、ページ送りに置き換えるため除くことを示します。
-  assert.equal(await form.getByText('→ ページ送りに置き換えるため、手順から除きます').count(), 2);
+  // ［戻る］、ほかの場所のクリック、「次へ」の後の移動は、ページ送りに置き換えるため除くことを示します。
+  assert.equal(await form.getByText('→ ページ送りに置き換えるため、手順から除きます').count(), 3);
   await form.getByRole('button', { name: '全ページで繰り返す' }).click();
   await waitUntil(
     () => panel.locator('#steps > li').count(),
