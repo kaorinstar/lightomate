@@ -60,7 +60,10 @@ function showStatusOverlay(text, color, textColor) {
   badge.append(title, detail);
 
   shadow.append(style, frame, badge);
-  document.documentElement.append(host);
+  // iframe の中（#20）では表示しません。最上位のページの枠と重なり、iframe の中だけを囲む枠は紛らわしいためです。
+  if (window.top === window) {
+    document.documentElement.append(host);
+  }
   // 文字だけを置き換えます。枠を作り直さないため、切り替わりで画面がちらつきません。
   return Object.assign(host, {
     /** @param {string} value */

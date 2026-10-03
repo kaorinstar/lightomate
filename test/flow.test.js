@@ -6,6 +6,7 @@ import {
   SCHEMA_VERSION,
   flowOrigins,
   formatFlowJson,
+  frameKey,
   orderFlow,
   replaceJsonFields,
   replaceJsonName,
@@ -53,9 +54,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜16 のフローは、そのまま版 17 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 17);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
+test('版 1〜17 のフローは、そのまま版 18 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 18);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -1329,4 +1330,90 @@ test('target.shadow は、条件の要素に書け、一覧の行（items）と�
     'steps[0]: items.shadow は書けません。',
     'steps[0]: nextPage.shadow は書けません。',
   ]);
+});
+
+test('iframe の中の要素の指定（target.frame）は、版 18 以上のフローで検証を通り、版 17 以前では誤りになる（#20）', () => {
+  const input = {
+    type: 'input',
+    target: {
+      selectors: ['input[name="cardnumber"]'],
+      tag: 'input',
+      label: 'カード番号',
+      frame: { url: 'https://pay.example.net/elements/card.html' },
+    },
+    secret: true,
+  };
+  assert.deepEqual(validateStep(input), []);
+  const flow = {
+    ...validFlow,
+    extraOrigins: ['https://pay.example.net'],
+    steps: [...validFlow.steps, input],
+  };
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 18 }), []);
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 17 }), [
+    `steps[${validFlow.steps.length}]: target.frame は、schemaVersion が 18 以上のフローでだけ使えます。`,
+  ]);
+});
+
+test('target.frame.url は、http・https の URL で、? と # を含まないものだけを受け付ける（#20）', () => {
+  const error =
+    'target.frame.url が、https:// または http:// で始まり、? と # を含まない URL ではありません。';
+  /** @param {unknown} frame */
+  const click = (frame) => ({
+    type: 'click',
+    target: { selectors: ['button'], tag: 'button', label: '支払う', frame },
+  });
+  assert.deepEqual(validateStep(click({ url: 'https://pay.example.net/card' })), []);
+  for (const frame of [
+    { url: 'https://pay.example.net/card?session=1' },
+    { url: 'https://pay.example.net/card#top' },
+    { url: 'https://pay.example.net' },
+    { url: 'ftp://pay.example.net/card' },
+    { url: 'about:blank' },
+    { url: 1 },
+    'https://pay.example.net/card',
+    null,
+  ]) {
+    assert.deepEqual(validateStep(click(frame)), [error], JSON.stringify(frame));
+  }
+});
+
+test('target.frame は、iframe のサイトがフローのサイトにあり、items、nextPage、scope と同時でない場合だけ書ける（#20）', () => {
+  const frame = { url: 'https://pay.example.net/card' };
+  const click = { type: 'click', target: { ...target, frame } };
+  assert.deepEqual(validateFlow({ ...validFlow, steps: [click] }), [
+    'steps[0]: target.frame のサイト「https://pay.example.net」が、フローの origin にも extraOrigins にもありません。',
+  ]);
+  const flow = { ...validFlow, extraOrigins: ['https://pay.example.net'] };
+  // 最上位のページと同じサイトの iframe は、extraOrigins に加えずに書けます。
+  assert.deepEqual(
+    validateFlow({
+      ...validFlow,
+      steps: [
+        { type: 'click', target: { ...target, frame: { url: 'https://www.example.com/frame' } } },
+      ],
+    }),
+    [],
+  );
+  const loop = {
+    type: 'forEach',
+    items: { selectors: ['li'], tag: 'li', label: '行', frame },
+    nextPage: { selectors: ['a.next'], tag: 'a', label: '次へ', frame },
+    steps: [{ type: 'click', target: { ...target, scope: 'item', frame } }],
+  };
+  assert.deepEqual(validateFlow({ ...flow, steps: [loop] }), [
+    'steps[0]: items.frame は書けません。',
+    'steps[0]: nextPage.frame は書けません。',
+    'steps[0].steps[0]: target.frame と target.scope は同時に書けません。',
+  ]);
+});
+
+test('iframe の指定に使う URL は、オリジンとパスだけを残す（#20）', () => {
+  assert.equal(
+    frameKey('https://pay.example.net/elements/card.html?session=abc#x'),
+    'https://pay.example.net/elements/card.html',
+  );
+  assert.equal(frameKey('https://pay.example.net'), 'https://pay.example.net/');
+  assert.equal(frameKey('about:blank'), undefined);
+  assert.equal(frameKey('javascript:void(0)'), undefined);
 });

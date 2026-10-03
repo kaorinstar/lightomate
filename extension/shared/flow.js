@@ -24,7 +24,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -51,10 +51,11 @@ export const SCHEMA_VERSION = 17;
  * 版 16 は、版 15 に、一致するリンクのファイルをすべて保存する指定（click の download の all）を加えたものです
  * （#185）。
  * 版 17 は、版 16 に、Shadow DOM の中の要素の指定（target の shadow）を加えたものです（#20）。
+ * 版 18 は、版 17 に、iframe の中の要素の指定（target の frame）を加えたものです（#20）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
 export const SUPPORTED_SCHEMA_VERSIONS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 ];
 
 /**
@@ -106,6 +107,9 @@ const SCOPE_MIN_SCHEMA_VERSION = 6;
 /** target の shadow を使える最も古い版です（#20）。 */
 const SHADOW_MIN_SCHEMA_VERSION = 17;
 
+/** target の frame を使える最も古い版です（#20）。 */
+const FRAME_MIN_SCHEMA_VERSION = 18;
+
 /**
  * target の shadow に並べられる部品の数（Shadow DOM の段数）の上限です（#20）。
  * content/selector.js の shadowHosts は上限を設けず、超えた手順はこの検証で受け付けません。
@@ -145,6 +149,16 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string[]} [shadow] 要素が Shadow DOM（部品の中身を外から隠す仕組み）の中にある場合の、外側の部品を
  *   指すセレクター。最も外側の部品から順に並べます。要素は、最も内側の部品の Shadow DOM の中で探します（#20）。
  *   forEach の items と nextPage には書けません。版 17 で加えました。
+ * @property {FrameTarget} [frame] 要素が iframe（ページの中に埋め込まれた別のページ）の中にある場合の、その iframe の
+ *   指定です（#20）。最上位のページに直接埋め込まれた iframe だけを扱います。forEach の items と nextPage には書けず、
+ *   scope とも同時に書けません。版 18 で加えました。
+ */
+
+/**
+ * 要素がある iframe の指定です（#20）。
+ * @typedef {object} FrameTarget
+ * @property {string} url iframe の中のページの URL のうち、オリジンとパスです。? 以降と # 以降は含めません。
+ *   読み込むたびに変わる値が ? 以降に付くことが多いためです。この値が一致する iframe の中で要素を探します
  */
 
 /**
@@ -631,6 +645,28 @@ function validateStepList(list, path, depth, inLoop, context, inRepeat = false) 
         } else if (version !== undefined && version < SHADOW_MIN_SCHEMA_VERSION) {
           errors.push(
             `${at}: ${name}.shadow は、schemaVersion が ${SHADOW_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+          );
+        }
+      }
+      if (target.frame !== undefined) {
+        if (name === 'items' || name === 'nextPage') {
+          // 一覧の行と「次へ」は、最上位のページで探します。iframe の中の一覧は対象外です（#20）。
+          errors.push(`${at}: ${name}.frame は書けません。`);
+        } else if (version !== undefined && version < FRAME_MIN_SCHEMA_VERSION) {
+          errors.push(
+            `${at}: ${name}.frame は、schemaVersion が ${FRAME_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+          );
+        } else if (target.scope !== undefined) {
+          // 一覧の行は最上位のページにあるため、iframe の中の要素は行の内側にありません。
+          errors.push(`${at}: ${name}.frame と ${name}.scope は同時に書けません。`);
+        }
+        const frameUrl = isRecord(target.frame) ? target.frame.url : undefined;
+        const frameOrigin =
+          typeof frameUrl === 'string' ? parseWebUrl(frameUrl)?.origin : undefined;
+        // iframe のサイトも、実行の前に操作の許可を確かめる対象にするためです（#41）。
+        if (origins !== undefined && frameOrigin !== undefined && !origins.includes(frameOrigin)) {
+          errors.push(
+            `${at}: ${name}.frame のサイト「${frameOrigin}」が、フローの origin にも extraOrigins にもありません。`,
           );
         }
       }
@@ -1341,6 +1377,14 @@ export function validateTarget(target, name = 'target') {
   if (target.scope !== undefined && target.scope !== 'item') {
     errors.push(`${name}.scope が item ではありません。`);
   }
+  if (target.frame !== undefined) {
+    const url = isRecord(target.frame) ? target.frame.url : undefined;
+    if (typeof url !== 'string' || frameKey(url) !== url) {
+      errors.push(
+        `${name}.frame.url が、https:// または http:// で始まり、? と # を含まない URL ではありません。`,
+      );
+    }
+  }
   if (
     target.shadow !== undefined &&
     (!isTextArray(target.shadow) ||
@@ -1401,6 +1445,17 @@ function parseWebUrl(value) {
  */
 export function isWebUrl(value) {
   return parseWebUrl(value) !== null;
+}
+
+/**
+ * iframe の中のページの URL から、iframe の指定（target の frame の url）に使う値を返します（#20）。
+ * オリジンとパスだけを残し、? 以降と # 以降は除きます。Web ページの URL でない場合は undefined です。
+ * @param {string} value
+ * @returns {string | undefined}
+ */
+export function frameKey(value) {
+  const url = parseWebUrl(value);
+  return url ? `${url.origin}${url.pathname}` : undefined;
 }
 
 /**

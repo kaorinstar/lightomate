@@ -224,6 +224,188 @@ test('Shadow DOM：部品が見つからない場合は、見つからない部�
   }
 });
 
+/**
+ * iframe の中の入力欄とボタンを持つお支払いの画面（#20）で、名義の入力と［確認へ］のクリックを記録し、記録した
+ * フローを返します。
+ * @param {string} frameUrl 埋め込む iframe のページの URL
+ * @returns {Promise<Flow>}
+ */
+async function recordFramePayment(frameUrl) {
+  const { extensionPage } = browser;
+  const hostUrl = `${server.origin}/frame-host.html?frame=${encodeURIComponent(frameUrl)}`;
+  const page = await browser.context.newPage();
+  await page.goto(hostUrl);
+  const card = page.frameLocator('iframe');
+  await card.locator('input[name="holder"]').waitFor();
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, hostUrl);
+  const started = await extensionPage.evaluate(
+    (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+    tabId,
+  );
+  assert.deepEqual(started, { ok: true });
+
+  await card.locator('input[name="holder"]').click();
+  await page.keyboard.type('YAMADA TARO');
+  await page.keyboard.press('Tab');
+  await Promise.all([page.waitForURL(/\/done\.html/), card.locator('#confirm').click()]);
+
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps;
+      }),
+    (steps) => steps.length >= 4,
+  );
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.equal(stopped.ok, true);
+  assert.deepEqual(stopped.errors, []);
+  await page.close();
+  return stopped.flow;
+}
+
+/**
+ * 記録したお支払いのフローの手順を確かめ、実行して、iframe に入力した名義が完了のページに届くことを確かめます。
+ * @param {Flow} flow
+ * @param {string} frameOrigin iframe のサイト
+ */
+async function assertFramePaymentRuns(flow, frameOrigin) {
+  const steps = /** @type {Step[]} */ (flow.steps);
+  assert.deepEqual(
+    steps.map((step) => step.type),
+    ['navigate', 'input', 'click', 'navigate'],
+  );
+  const [, holder, confirm] = steps;
+  assert.ok(holder.type === 'input' && confirm.type === 'click');
+  assert.equal(holder.value, 'YAMADA TARO');
+  // iframe の指定には、読み込むたびに変わる ? 以降を含めません。
+  assert.deepEqual(holder.target.frame, { url: `${frameOrigin}/frame-card.html` });
+  assert.deepEqual(confirm.target.frame, { url: `${frameOrigin}/frame-card.html` });
+  // 手順の origin は、最上位のページのサイトです。
+  assert.equal('origin' in holder ? holder.origin : undefined, undefined);
+
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const [done] = pagesAt('/done.html');
+  assert.ok(done, '完了のページが開いていません。');
+  assert.equal(new URL(done.url()).searchParams.get('holder'), 'YAMADA TARO');
+  await done.close();
+}
+
+test('iframe：同じサイトの iframe の中の入力とクリックを記録し、実行で再現する（#20）', async () => {
+  const flow = await recordFramePayment(`${server.origin}/frame-card.html`);
+  assert.equal(flow.extraOrigins, undefined);
+  await assertFramePaymentRuns(flow, server.origin);
+});
+
+test('iframe：別のサイトの iframe の中の入力とクリックを記録し、iframe のサイトをフローのサイトに加える（#20）', async () => {
+  const other = await startServer();
+  try {
+    const flow = await recordFramePayment(`${other.origin}/frame-card.html`);
+    assert.deepEqual(flow.extraOrigins, [other.origin]);
+    await assertFramePaymentRuns(flow, other.origin);
+  } finally {
+    await other.close();
+  }
+});
+
+test('iframe：許可のないサイトの iframe は記録せず、そのサイトをサイドパネルに知らせる（#20）', async () => {
+  const { extensionPage } = browser;
+  // テスト用の拡張機能は 127.0.0.1 だけを許可しているため、localhost は許可のないサイトです。
+  const port = new URL(server.origin).port;
+  const blocked = `http://localhost:${port}`;
+  const hostUrl = `${server.origin}/frame-host.html?frame=${encodeURIComponent(`${blocked}/frame-card.html`)}`;
+  const page = await browser.context.newPage();
+  await page.goto(hostUrl);
+  await page.frameLocator('iframe').locator('input[name="holder"]').waitFor();
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, hostUrl);
+  const started = await extensionPage.evaluate(
+    (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+    tabId,
+  );
+  assert.deepEqual(started, { ok: true });
+  const recordingPage = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const stored = await chrome.storage.session.get('recordingPage');
+        return /** @type {{ blockedFrames?: string[] } | undefined} */ (stored.recordingPage);
+      }),
+    (value) => Array.isArray(value?.blockedFrames),
+  );
+  assert.deepEqual(recordingPage, {
+    origin: server.origin,
+    allowed: true,
+    blockedFrames: [blocked],
+  });
+
+  // 許可のない iframe の中の操作は、記録しません。［確認へ］で起きた最上位のページの移動だけを記録します。
+  await Promise.all([
+    page.waitForURL(/\/done\.html/),
+    page.frameLocator('iframe').locator('#confirm').click(),
+  ]);
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps;
+      }),
+    (steps) => steps.length >= 2,
+  );
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.deepEqual(
+    /** @type {Step[]} */ (stopped.flow.steps).map((step) => step.type),
+    ['navigate', 'navigate'],
+  );
+  await page.close();
+});
+
+test('iframe：一致する iframe が 2 つある場合は、どちらにも入力せずに停止する（#20）', async () => {
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 18,
+    name: '一致する iframe が 2 つ',
+    origin: server.origin,
+    steps: [
+      {
+        type: 'navigate',
+        url: `${server.origin}/frame-host.html?count=2`,
+        cause: 'user',
+      },
+      {
+        type: 'input',
+        target: {
+          ...target('input[name="holder"]', 'input', '名義'),
+          frame: { url: `${server.origin}/frame-card.html` },
+        },
+        value: 'YAMADA TARO',
+      },
+    ],
+  };
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'failed');
+  assert.match(entry.reason ?? '', /一致する iframe が 2 個あり/);
+  const [opened] = pagesAt('/frame-host.html');
+  assert.ok(opened);
+  const values = await Promise.all(
+    opened
+      .frames()
+      .slice(1)
+      .map((frame) => frame.locator('input[name="holder"]').inputValue()),
+  );
+  assert.deepEqual(values, ['', '']);
+  await opened.close();
+});
+
 test('新しいタブで開いた先で PDF を保存し、closeTab で元のタブに戻る', async () => {
   /** @type {Flow} */
   const flow = {
