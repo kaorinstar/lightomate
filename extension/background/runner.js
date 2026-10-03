@@ -953,6 +953,7 @@ class ResolveError extends Error {}
 
 /**
  * 文字と日付の条件の値に、パラメータの値を当てはめます（#103）。値の形式は、判定するときに確かめます。
+ * 日付が指定した月より前かの条件（before、#162）も含めます（#183 で当てはめ漏れを修正しました）。
  * @param {import('../shared/flow.js').Condition} condition
  * @param {Record<string, string>} values
  * @returns {import('../shared/flow.js').Condition}
@@ -960,7 +961,7 @@ class ResolveError extends Error {}
 function resolveCondition(condition, values) {
   /** @type {Record<string, unknown>} */
   const resolved = { ...condition };
-  for (const name of ['contains', 'equals', 'month', 'from', 'to']) {
+  for (const name of ['contains', 'equals', 'month', 'before', 'from', 'to']) {
     const value = resolved[name];
     if (typeof value === 'string') {
       resolved[name] = renderTemplate(value, values);

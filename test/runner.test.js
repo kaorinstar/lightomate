@@ -289,6 +289,37 @@ test('if と while の文字・日付の条件にも、パラメータの値を�
   ]);
 });
 
+test('日付が指定した月より前かの条件（before）にも、パラメータの値を当てはめる（#183）', () => {
+  const date = { selectors: ['.date'], tag: 'span', label: '注文日' };
+  /** @type {import('../extension/shared/flow.js').Flow} */
+  const conditional = {
+    ...flow,
+    schemaVersion: 13,
+    steps: [
+      flow.steps[0],
+      {
+        type: 'forEach',
+        items: { selectors: ['tr'], tag: 'tr', label: '注文' },
+        steps: [
+          {
+            type: 'if',
+            condition: { target: date, before: '{{month}}' },
+            then: [{ type: 'break' }],
+          },
+        ],
+      },
+    ],
+  };
+  const result = resolveSteps(conditional, { q: 'ねじ' }, {}, new Date(2026, 8, 24));
+  assert.ok(result.ok);
+  const loop = result.steps[1];
+  assert.ok(loop.type === 'forEach');
+  assert.deepEqual(loop.steps[0].type === 'if' && loop.steps[0].condition, {
+    target: date,
+    before: '2026-08',
+  });
+});
+
 test('何ページ目かは、外側に while がある場合も、最も外側の forEach で数える（#103）', () => {
   const items = { selectors: ['tr'], tag: 'tr', label: '注文' };
   const next = { selectors: ['a.next'], tag: 'a', label: '次へ' };

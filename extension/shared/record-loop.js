@@ -7,9 +7,11 @@
 
 import { PAGE_STEP_TYPES, validateTarget } from './flow.js';
 import { CONTROL_STEP_TYPES, flattenSteps } from './control-flow.js';
+import { parseDate } from './condition.js';
 
 /** @typedef {import('./flow.js').Step} Step */
 /** @typedef {import('./flow.js').Target} Target */
+/** @typedef {import('./params.js').Param} Param */
 
 /**
  * 操作した要素を含む一覧の行の候補です。
@@ -217,7 +219,10 @@ export function loopOptionLabel(option, options) {
  * @param {{ index?: unknown, pagers?: PagerHint[] }} [paging] 次のページへ送るクリックの番号と、steps と同じ順の
  *   ページ送りに使う場合の指定（#182）。index を書いた場合は、そのクリックの要素を nextPage にし、そのクリックと
  *   直後のページの移動、範囲の末尾との間の一覧のページへ戻る移動を手順から除きます
- * @returns {{ ok: true, steps: Step[], hints: RowHint[], pagers: PagerHint[] } | { ok: false, error: string }}
+ * @param {{ index?: unknown, stopAtOlder?: unknown, params?: Param[] }} [filter] 対象の月の行だけを行う条件に使う
+ *   日付の手順の番号と、対象の月より古い行に達したら終えるか、フローのパラメータ（#183）。index を書いた場合は、
+ *   行の手順を、その日付が対象の月の場合だけ行う条件（if の month）で囲み、年月のパラメータを加えます
+ * @returns {{ ok: true, steps: Step[], hints: RowHint[], pagers: PagerHint[], param?: Param } | { ok: false, error: string }}
  */
 export function makeLoop(
   steps,
@@ -228,6 +233,7 @@ export function makeLoop(
   nameIndexes = [],
   withSite = false,
   paging = {},
+  filter = {},
 ) {
   if (
     !Number.isInteger(from) ||
@@ -313,6 +319,49 @@ export function makeLoop(
   if (names.length > 0) {
     nameSaveSteps(inner, withSite === true ? ['site.host', ...names] : names);
   }
+
+  // 対象の月の行だけを行う条件（#183）。日付の手順は、ファイル名にも使う場合は読み取りとして残し、使わない場合は
+  // 除きます。日付の文字を押しても、ページは変わらないためです。
+  /** @type {Step[]} */
+  let rowSteps = inner;
+  /** @type {Param | undefined} */
+  let param;
+  if (filter.index !== undefined && filter.index !== null) {
+    const index = /** @type {number} */ (filter.index);
+    if (typeof key !== 'string' || !dateSteps(steps, hints, start, innerEnd, key).includes(index)) {
+      return {
+        ok: false,
+        error:
+          '対象の月の条件に使う手順が正しくありません。手順の一覧を確かめてから選び直してください。',
+      };
+    }
+    const offset = index - start;
+    const dateStep = inner[offset];
+    const rest = inner.filter((_, position) => position !== offset);
+    if (!('target' in dateStep) || rest.length === 0) {
+      return {
+        ok: false,
+        error: '対象の月の条件の後に行う手順がありません。範囲を選び直してください。',
+      };
+    }
+    const month = monthParam(filter.params ?? []);
+    param = month.add;
+    const value = `{{${month.name}}}`;
+    const { target } = dateStep;
+    rowSteps = [
+      ...(filter.stopAtOlder === true
+        ? [
+            /** @type {Step} */ ({
+              type: 'if',
+              condition: { target, before: value },
+              then: [{ type: 'break' }],
+            }),
+          ]
+        : []),
+      ...(dateStep.type === 'extract' ? [dateStep] : []),
+      { type: 'if', condition: { target, month: value }, then: rest },
+    ];
+  }
   // 記録から作る繰り返しでは、行の中の要素が見つからない行（キャンセル済みの注文など）を飛ばします（#174）。
   // 飛ばした行は、実行のカードと実行履歴に報告します。
   /** @type {Step} */
@@ -321,14 +370,74 @@ export function makeLoop(
     items: option.items,
     ...(nextPage ? { nextPage } : {}),
     onMissing: 'skip',
-    steps: inner,
+    steps: rowSteps,
   };
   return {
     ok: true,
     steps: [...steps.slice(0, start), loop, ...steps.slice(removeEnd + 1)],
     hints: [...hints.slice(0, start), null, ...hints.slice(removeEnd + 1)],
     pagers: [...pagers.slice(0, start), null, ...pagers.slice(removeEnd + 1)],
+    ...(param ? { param } : {}),
   };
+}
+
+/** 記録から作る条件で加える、年月のパラメータの説明です（#183）。 */
+export const MONTH_PARAM_LABEL = '対象月';
+
+/**
+ * 対象の月の条件に使う年月のパラメータの名前を決めます（#183）。month がない場合は加え、年月の month がある場合は
+ * それを使います。別の種類の month がある場合は、month2、month3 … のうち使える名前にします。
+ * @param {Param[]} params フローのパラメータ
+ * @returns {{ name: string, add?: Param }}
+ */
+export function monthParam(params) {
+  for (let number = 1; ; number += 1) {
+    const name = number === 1 ? 'month' : `month${number}`;
+    const existing = params.find((item) => item.name === name);
+    if (!existing) {
+      return {
+        name,
+        add: { name, label: MONTH_PARAM_LABEL, type: 'month', default: '@previous-month' },
+      };
+    }
+    if (existing.type === 'month') {
+      return { name };
+    }
+  }
+}
+
+/**
+ * 対象の月の条件に使える日付の手順の番号を返します（#183）。範囲の中の、選んだ行の中の文字（リンクやボタン
+ * 以外の要素）のクリックで、記録した文字が日付として読めるものです。読めない文字を条件にすると、実行の
+ * 1 行目で停止するためです。
+ * @param {Step[]} steps
+ * @param {RowHint[]} hints
+ * @param {number} from
+ * @param {number} to 範囲の末尾（次のページへ送るクリックを選んだ場合は、その前まで）
+ * @param {string} key 選んだ行の候補（candidateKey の値）
+ * @returns {number[]}
+ */
+export function dateSteps(steps, hints, from, to, key) {
+  /** @type {number[]} */
+  const indexes = [];
+  for (let index = from; index <= to && index < steps.length; index += 1) {
+    const step = steps[index];
+    const inRow = (usableHint(step, hints[index]) ?? []).some(
+      (candidate) => candidateKey(candidate.items) === key,
+    );
+    if (
+      step.type === 'click' &&
+      step.download === undefined &&
+      step.newTab === undefined &&
+      !ACTION_TAGS.includes(step.target.tag) &&
+      step.target.text !== undefined &&
+      parseDate(step.target.text).ok &&
+      inRow
+    ) {
+      indexes.push(index);
+    }
+  }
+  return indexes;
 }
 
 /**

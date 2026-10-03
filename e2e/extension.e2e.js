@@ -1117,7 +1117,8 @@ async function recordLoop(translate) {
   const form = panel.locator('#recording-loop-form');
   // 既定の範囲は、行の中を操作した最初の手順（2 番目）から、一覧のページへ戻った手順の前までです。
   // ページを開く手順（1 番目と 6 番目）には、印を付けられません。
-  const boxes = form.locator('input[type="checkbox"]');
+  // 手順の印だけを数えます。日付の手順の下の「この日付が対象の月の行だけ行う」（#183）などは含めません。
+  const boxes = form.locator('.lm-loop-pick > li > input[type="checkbox"]');
   assert.equal(await boxes.count(), 6);
   for (const index of [0, 5]) {
     assert.equal(await boxes.nth(index).isDisabled(), true, `${index + 1} 番目の手順`);
@@ -1687,6 +1688,99 @@ test('ページ送り：記録で押した「次へ」をページ送りにす�
     ['P1-1', 'P1-2', 'P2-1', 'P2-2', 'P3-1', 'P3-2'].map(
       (number) => `Lightomate/ページ送り/${number}.pdf`,
     ),
+  );
+  for (const page of pagesAt('/paged-orders.html')) {
+    await page.close();
+  }
+});
+
+test('対象の月：記録で押した注文日を条件にすると、対象の月の注文だけを保存し、古い月の行で終える（#183）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/paged-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  // 1 件目の注文日、注文番号、明細書を押し、［戻る］で一覧へ戻ってから「次へ」を押します。
+  await site.click('.order:nth-child(1) .order-date');
+  await site.click('.order:nth-child(1) .order-number');
+  await site.click('.order:nth-child(1) a.invoice');
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps;
+      }),
+    (steps) => steps.length >= 4 && steps[3].type === 'click' && steps[3].download?.from === 'link',
+  );
+  await site.goBack();
+  await site.waitForURL(listUrl);
+  await site.click('li.next > a');
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps.length;
+      }),
+    (count) => count >= 7,
+  );
+
+  // サイドパネルで、注文番号をファイル名に使い、注文日を対象の月の条件にし、「次へ」で次のページへ送ります。
+  const id = new URL(extensionPage.url()).host;
+  const panel = await browser.context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
+  await panel.click('#recording-loop');
+  const form = panel.locator('#recording-loop-form');
+  await form.getByLabel('この文字をファイル名に使う').nth(1).check();
+  // 日付として読める注文日の手順にだけ、条件の印が出ます。
+  const dateToggle = form.getByLabel('この日付が対象の月の行だけ行う');
+  assert.equal(await dateToggle.count(), 1);
+  await dateToggle.check();
+  assert.match(
+    await form.locator('.alert').innerText(),
+    /手順 2 の日付が、実行するときに入力する対象の月（既定は前月）の行だけ行います。/,
+  );
+  // 古い行で終える印は、既定で付いています。
+  assert.equal(await form.getByLabel(/対象の月より古い行に達したら/).isChecked(), true);
+  await form.getByLabel('このクリックで次のページへ送る').check();
+  await form.getByRole('button', { name: '全ページで繰り返す' }).click();
+  await waitUntil(
+    () => panel.locator('#steps > li').count(),
+    (count) => count === 2,
+  );
+  await panel.close();
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.deepEqual(stopped.errors, []);
+  await site.close();
+
+  /** @type {Flow} */
+  const recordedFlow = stopped.flow;
+  assert.equal(recordedFlow.params?.[0].type, 'month');
+  // 実行した日に左右されないよう、対象の月に 2026 年 8 月を入力して実行します。
+  /** @type {Flow} */
+  const flow = { ...recordedFlow, name: '対象の月', interval: { min: 500, max: 500 } };
+  const entry = await runFlow(extensionPage, flow, { month: '2026-08' });
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  // 9 月の行は条件を満たさないため保存せず、7 月の行（3 ページ目の 1 行目）で終えます。終えたため、その後の
+  // 8 月の行（3 ページ目の 2 行目、P3-2）も保存しません。
+  assert.deepEqual(
+    await waitUntil(
+      async () =>
+        listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/対象の月/')),
+      (list) => list.length >= 2,
+    ),
+    ['Lightomate/対象の月/P2-1.pdf', 'Lightomate/対象の月/P2-2.pdf'],
   );
   for (const page of pagesAt('/paged-orders.html')) {
     await page.close();

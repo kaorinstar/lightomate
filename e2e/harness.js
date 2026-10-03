@@ -164,20 +164,24 @@ export async function launchBrowser() {
  * フローを保存して実行し、実行の履歴に結果が記録されるまで待ちます。
  * @param {import('playwright').Page} extensionPage
  * @param {Flow} flow
+ * @param {Record<string, string>} [params] 実行するときに入力するパラメータの値
  * @returns {Promise<HistoryEntry>}
  */
-export async function runFlow(extensionPage, flow) {
-  const started = await extensionPage.evaluate(async (flow) => {
-    await chrome.storage.local.remove('history');
-    const stored = { id: 'e2e', createdAt: '', updatedAt: '', flow };
-    await chrome.storage.local.set({ flows: { e2e: stored } });
-    return chrome.runtime.sendMessage({
-      kind: 'runner/start',
-      flowId: 'e2e',
-      params: {},
-      secrets: {},
-    });
-  }, flow);
+export async function runFlow(extensionPage, flow, params = {}) {
+  const started = await extensionPage.evaluate(
+    async ({ flow, params }) => {
+      await chrome.storage.local.remove('history');
+      const stored = { id: 'e2e', createdAt: '', updatedAt: '', flow };
+      await chrome.storage.local.set({ flows: { e2e: stored } });
+      return chrome.runtime.sendMessage({
+        kind: 'runner/start',
+        flowId: 'e2e',
+        params,
+        secrets: {},
+      });
+    },
+    { flow, params },
+  );
   if (!started?.ok) {
     throw new Error(`実行を開始できませんでした：${JSON.stringify(started)}`);
   }

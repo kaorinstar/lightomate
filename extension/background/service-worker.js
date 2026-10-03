@@ -126,6 +126,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.names,
         message.withSite,
         message.nextPage,
+        message.dateStep,
+        message.stopAtOlder,
       ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
       return true;
 

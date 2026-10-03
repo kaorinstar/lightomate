@@ -38,6 +38,8 @@ import { toLinkDownload } from '../shared/file-link.js';
  *   記録した手順を「各行で繰り返す」に変えるときに使います。フロー定義には含めません
  * @property {PagerHint[]} [pagerHints] steps と同じ順の、押した要素を繰り返しのページ送りに使う場合の指定（#182）。
  *   フロー定義には含めません
+ * @property {import('../shared/params.js').Param[]} [params] 繰り返しにするときに加えたパラメータ（対象の月の
+ *   条件の年月、#183）。記録を停止すると、フローの params になります
  * @property {string} [lastHref] 最後に記録した手順がリンクのクリックの場合の、そのリンク先（#185）。直後にファイルへ
  *   移動したときに、同じ種類のリンクを探す指定を作るために使います。フロー定義には含めません
  */
@@ -161,6 +163,7 @@ export function stopRecording() {
       name: `記録 ${new Date(recording.startedAt).toLocaleString('ja-JP')}`,
       origin: recording.origin,
       ...(recording.extraOrigins?.length ? { extraOrigins: recording.extraOrigins } : {}),
+      ...(recording.params?.length ? { params: recording.params } : {}),
       steps: recording.steps,
     };
     await chrome.storage.session.set({
@@ -268,9 +271,21 @@ export function resetRecording() {
  * @param {unknown} [names] ファイル名に使う手順の番号（#179）
  * @param {unknown} [withSite] ファイル名の先頭にサイト名を入れるか（#179）
  * @param {unknown} [nextPage] 次のページへ送るクリックの番号（#182）。ページ送りをしない場合は省きます
+ * @param {unknown} [dateStep] 対象の月の行だけを行う条件に使う日付の手順の番号（#183）。条件を付けない場合は省きます
+ * @param {unknown} [stopAtOlder] 対象の月より古い行に達したら繰り返しを終えるか（#183）
  * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
  */
-export function makeRecordedLoop(from, to, key, count, names, withSite, nextPage) {
+export function makeRecordedLoop(
+  from,
+  to,
+  key,
+  count,
+  names,
+  withSite,
+  nextPage,
+  dateStep,
+  stopAtOlder,
+) {
   return enqueue(async () => {
     const recording = await getRecording();
     const lastFlow = recording ? undefined : await getLastFlow();
@@ -287,13 +302,22 @@ export function makeRecordedLoop(from, to, key, count, names, withSite, nextPage
     }
     const hints = alignHints(steps, recording ? recording.rowHints : await getLastFlowHints());
     const pagers = alignHints(steps, recording ? recording.pagerHints : await getLastFlowPagers());
-    const result = makeLoop(steps, hints, from, to, key, names, withSite, {
-      index: nextPage,
-      pagers,
-    });
+    const params = (recording ? recording.params : lastFlow?.params) ?? [];
+    const result = makeLoop(
+      steps,
+      hints,
+      from,
+      to,
+      key,
+      names,
+      withSite,
+      { index: nextPage, pagers },
+      { index: dateStep, stopAtOlder, params },
+    );
     if (!result.ok) {
       return result;
     }
+    const nextParams = result.param ? [...params, result.param] : params;
     if (recording) {
       await chrome.storage.session.set({
         [RECORDING_KEY]: {
@@ -301,11 +325,16 @@ export function makeRecordedLoop(from, to, key, count, names, withSite, nextPage
           steps: result.steps,
           rowHints: result.hints,
           pagerHints: result.pagers,
+          ...(nextParams.length > 0 ? { params: nextParams } : {}),
         },
       });
     } else if (lastFlow) {
       await chrome.storage.session.set({
-        [LAST_FLOW_KEY]: { ...lastFlow, steps: result.steps },
+        [LAST_FLOW_KEY]: {
+          ...lastFlow,
+          ...(nextParams.length > 0 ? { params: nextParams } : {}),
+          steps: result.steps,
+        },
         [LAST_FLOW_HINTS_KEY]: result.hints,
         [LAST_FLOW_PAGERS_KEY]: result.pagers,
       });

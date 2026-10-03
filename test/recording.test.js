@@ -266,3 +266,38 @@ test('記録した「次へ」を選んで繰り返しにすると nextPage に�
   });
   assert.deepEqual(session.lastFlowPagerHints, [null]);
 });
+
+test('日付の手順を対象の月の条件にすると、年月のパラメータを記録に加え、停止後のフローに引き継ぐ（#183）', async () => {
+  const datedSteps = [
+    recordedSteps[0],
+    {
+      type: 'click',
+      target: { selectors: ['#d'], tag: 'span', label: '2026年9月1日', text: '2026年9月1日' },
+    },
+    recordedSteps[2],
+  ];
+  const datedHints = [
+    null,
+    [
+      {
+        items: row,
+        count: 3,
+        inner: { selectors: ['span.date'], tag: 'span', label: '注文日', scope: 'item' },
+      },
+    ],
+    rowHints[2],
+  ];
+  const { session } = fakeChrome({
+    recording: { ...recording, steps: datedSteps, rowHints: datedHints },
+  });
+  assert.deepEqual(await makeRecordedLoop(1, 2, rowKey, 3, [], false, undefined, 1, true), {
+    ok: true,
+  });
+  assert.deepEqual(/** @type {any} */ (session.recording).params, [
+    { name: 'month', label: '対象月', type: 'month', default: '@previous-month' },
+  ]);
+  const stopped = await stopRecording();
+  assert.ok(stopped.ok);
+  assert.deepEqual(stopped.errors, []);
+  assert.equal(stopped.flow?.params?.[0].name, 'month');
+});
