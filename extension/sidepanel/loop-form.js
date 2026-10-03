@@ -7,6 +7,7 @@
 import { DEFAULT_MAX_PAGES } from '../shared/control-flow.js';
 import { describeStep } from '../shared/describe.js';
 import {
+  dateSteps,
   defaultLoopRange,
   excludedReason,
   loopOptionLabel,
@@ -66,6 +67,13 @@ export function createLoopForm({ open, container, list, toast }) {
    * @type {number | null}
    */
   let paging = null;
+  /**
+   * 対象の月の行だけを行う条件に使う日付の手順の番号です（#183）。条件を付けない場合は null です。
+   * @type {number | null}
+   */
+  let dating = null;
+  /** 対象の月より古い行に達したら繰り返しを終えるか（#183）です。購入履歴は新しい順のため、既定で付けます。 */
+  let stopAtOlder = true;
 
   const fieldset = document.createElement('fieldset');
   fieldset.className = 'lm-loop-form';
@@ -168,6 +176,16 @@ export function createLoopForm({ open, container, list, toast }) {
     if (inRange && nameableIndexes().includes(index)) {
       content.append(nameToggle(index));
     }
+    // 行の中の日付の文字は、対象の月の行だけを行う条件に使えます（#183）。
+    if (dateIndexes().includes(index)) {
+      content.append(dateToggle(index));
+      if (dating === index && !naming.includes(index)) {
+        const used = document.createElement('small');
+        used.className = 'd-block lm-loop-changed';
+        used.textContent = '→ 条件の判定に使い、クリックは行いません';
+        content.append(used);
+      }
+    }
     // 1 件目の操作の後に押した「次へ」は、繰り返しのページ送りに使えます（#182）。
     if (pagerIndexes().includes(index)) {
       content.append(pagerToggle(index));
@@ -257,6 +275,60 @@ export function createLoopForm({ open, container, list, toast }) {
     return toggle;
   };
 
+  /** 対象の月の条件に使える日付の手順の番号です（#183）。 */
+  const dateIndexes = () =>
+    range && rowKey ? dateSteps(steps, hints, range.from, loopEnd(range), rowKey) : [];
+
+  /**
+   * 「この日付が対象の月の行だけ行う」の切り替えです（#183）。選べるのは 1 つだけです。
+   * @param {number} index
+   * @returns {HTMLLabelElement}
+   */
+  const dateToggle = (index) => {
+    const toggle = document.createElement('label');
+    toggle.className = 'lm-loop-name lm-sub';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'lm-check';
+    check.id = `${id}-date-${index}`;
+    check.checked = dating === index;
+    check.disabled = locked;
+    check.addEventListener('change', () => {
+      dating = check.checked ? index : null;
+      draw();
+      document.getElementById(check.id)?.focus();
+    });
+    toggle.append(check, document.createTextNode(' この日付が対象の月の行だけ行う'));
+    return toggle;
+  };
+
+  /**
+   * 「対象の月より古い行に達したら終える」の切り替えです（#183）。
+   * @returns {HTMLLabelElement}
+   */
+  const olderToggle = () => {
+    const toggle = document.createElement('label');
+    toggle.className = 'lm-loop-name lm-sub';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'lm-check';
+    check.id = `${id}-older`;
+    check.checked = stopAtOlder;
+    check.disabled = locked;
+    check.addEventListener('change', () => {
+      stopAtOlder = check.checked;
+      draw();
+      document.getElementById(check.id)?.focus();
+    });
+    toggle.append(
+      check,
+      document.createTextNode(
+        ' 対象の月より古い行に達したら、残りの行とページを開かずに終える（一覧が新しい順の場合）',
+      ),
+    );
+    return toggle;
+  };
+
   /** 範囲の中で、ファイル名に使える手順の番号です（#179）。 */
   const nameableIndexes = () => (range ? nameableSteps(steps, range.from, range.to) : []);
 
@@ -320,6 +392,9 @@ export function createLoopForm({ open, container, list, toast }) {
     if (paging !== null && !pagerIndexes().includes(paging)) {
       paging = null;
     }
+    if (dating !== null && !dateIndexes().includes(dating)) {
+      dating = null;
+    }
     const scopes = range && chosen ? stepScopes(steps, hints, range.from, range.to, rowKey) : [];
 
     pick.replaceChildren(
@@ -360,6 +435,12 @@ export function createLoopForm({ open, container, list, toast }) {
           summary.append(caution);
         }
         summary.append(siteToggle());
+      }
+      if (dating !== null) {
+        const month = document.createElement('small');
+        month.className = 'd-block lm-sub';
+        month.textContent = `手順 ${dating + 1} の日付が、実行するときに入力する対象の月（既定は前月）の行だけ行います。`;
+        summary.append(month, olderToggle());
       }
       if (paging !== null) {
         const pages = document.createElement('small');
@@ -408,6 +489,8 @@ export function createLoopForm({ open, container, list, toast }) {
     naming = [];
     withSite = false;
     paging = null;
+    dating = null;
+    stopAtOlder = true;
     draw();
     container.hidden = false;
     list.hidden = true;
@@ -426,6 +509,7 @@ export function createLoopForm({ open, container, list, toast }) {
     const { from, to } = range;
     const end = loopEnd(range);
     const nextPage = paging ?? undefined;
+    const dateStep = dating ?? undefined;
     submit.disabled = true;
     try {
       const response = await chrome.runtime.sendMessage({
@@ -436,6 +520,8 @@ export function createLoopForm({ open, container, list, toast }) {
         names: naming,
         withSite,
         nextPage,
+        dateStep,
+        stopAtOlder,
         count: steps.length,
       });
       if (!response?.ok) {

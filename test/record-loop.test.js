@@ -5,11 +5,13 @@ import assert from 'node:assert/strict';
 
 import {
   candidateKey,
+  dateSteps,
   defaultLoopRange,
   excludedReason,
   loopOptionLabel,
   loopOptions,
   makeLoop,
+  monthParam,
   nameableSteps,
   pagerSpan,
   pagerSteps,
@@ -590,4 +592,124 @@ test('1 件目の操作と「次へ」の間でほかの場所を押していて
   assert.deepEqual(loop.nextPage, nextPage);
   assert.equal(loop.steps.length, 2);
   assert.deepEqual(result.pagers, [null, null, null]);
+});
+
+/** 注文日の文字を押してから明細書を保存した記録です（#183）。 */
+/** @type {Step[]} */
+const datedSteps = namedSteps.map((step, index) =>
+  index === 1 && step.type === 'click'
+    ? { ...step, target: { ...step.target, text: '2026年9月11日' } }
+    : index === 2 && step.type === 'click'
+      ? { ...step, target: { ...step.target, text: '503-1' } }
+      : step,
+);
+
+test('対象の月の条件に使えるのは、行の中の文字のクリックで、記録した文字が日付として読めるものだけ（#183）', () => {
+  const key = candidateKey(orderRow);
+  assert.deepEqual(dateSteps(datedSteps, namedHints, 1, 5, key), [1]);
+  // 記録した文字がない手順は使えません。
+  assert.deepEqual(dateSteps(namedSteps, namedHints, 1, 5, key), []);
+  // 選んだ行の外の文字は使えません。
+  assert.deepEqual(dateSteps(datedSteps, namedHints, 1, 5, candidateKey(headCell)), []);
+});
+
+test('日付の手順を選ぶと、行の手順を対象の月の条件で囲み、古い行で終える条件と年月のパラメータを加える（#183）', () => {
+  const key = candidateKey(orderRow);
+  const result = makeLoop(
+    datedSteps,
+    namedHints,
+    1,
+    5,
+    key,
+    [2],
+    false,
+    {},
+    {
+      index: 1,
+      stopAtOlder: true,
+    },
+  );
+  assert.ok(result.ok);
+  assert.deepEqual(result.param, {
+    name: 'month',
+    label: '対象月',
+    type: 'month',
+    default: '@previous-month',
+  });
+  const loop = result.steps[1];
+  assert.ok(loop.type === 'forEach');
+  const date = { selectors: ['span.date'], tag: 'span', label: 'span.date', scope: 'item' };
+  assert.deepEqual(loop.steps[0], {
+    type: 'if',
+    condition: { target: date, before: '{{month}}' },
+    then: [{ type: 'break' }],
+  });
+  const filtered = loop.steps[1];
+  assert.ok(filtered.type === 'if');
+  assert.deepEqual(filtered.condition, { target: date, month: '{{month}}' });
+  // 日付のクリックは除き、残りの手順（注文番号の読み取り、［領収書等］、保存、その後のクリック）を条件の中に置きます。
+  assert.deepEqual(
+    filtered.then.map((step) => step.type),
+    ['extract', 'click', 'click', 'click'],
+  );
+  assert.deepEqual(
+    validateFlow({
+      schemaVersion: SCHEMA_VERSION,
+      name: '記録',
+      origin: 'https://shop.example.com',
+      params: result.param ? [result.param] : [],
+      steps: result.steps,
+    }),
+    [],
+  );
+});
+
+test('日付をファイル名にも使う場合は、読み取りを条件より前に残す。古い行で終えない場合は終える条件を置かない（#183）', () => {
+  const result = makeLoop(
+    datedSteps,
+    namedHints,
+    1,
+    5,
+    candidateKey(orderRow),
+    [1, 2],
+    false,
+    {},
+    {
+      index: 1,
+      stopAtOlder: false,
+    },
+  );
+  assert.ok(result.ok);
+  const loop = result.steps[1];
+  assert.ok(loop.type === 'forEach');
+  assert.deepEqual(
+    loop.steps.map((step) => step.type),
+    ['extract', 'if'],
+  );
+  assert.equal(loop.steps[0].type === 'extract' && loop.steps[0].name, 'fileName1');
+});
+
+test('日付として使えない手順を選んだ場合は変換しない（#183）', () => {
+  for (const index of [2, 3, '1']) {
+    const result = makeLoop(
+      datedSteps,
+      namedHints,
+      1,
+      5,
+      candidateKey(orderRow),
+      [],
+      false,
+      {},
+      {
+        index,
+      },
+    );
+    assert.equal(result.ok, false, String(index));
+  }
+});
+
+test('年月の month がある場合はそれを使い、別の種類の month がある場合は month2 を加える（#183）', () => {
+  assert.deepEqual(monthParam([{ name: 'month', label: '月', type: 'month' }]), { name: 'month' });
+  assert.equal(monthParam([{ name: 'month', label: '月', type: 'text' }]).name, 'month2');
+  assert.equal(monthParam([]).add?.name, 'month');
 });
