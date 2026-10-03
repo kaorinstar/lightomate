@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>注文履歴（ページ送り）</title>
+  </head>
+  <body>
+    <!-- 記録した「次へ」を繰り返しのページ送りにする指定（#182）の確認に使います。3 ページに分かれ、
+         Amazon の購入履歴と同じく、ページ番号の数でページごとに「次へ」が何番目の li かが変わります。
+         最後のページでは、「次へ」はリンクではなくなります。行と番号は paged-orders.js が作ります。 -->
+    <div id="orders"></div>
+    <div id="pager"><ul class="pagination"></ul></div>
+    <!-- ほかの拡張機能がページに加えるアイコンの代わりです。記録中に「次へ」の前に押しても、「次へ」を
+         ページ送りに選べることを確かめます。 -->
+    <span id="other-icon">enable</span>
+    <script src="paged-orders.js"></script>
+  </body>
+</html>

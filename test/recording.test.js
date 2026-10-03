@@ -236,3 +236,33 @@ test('件数が一致しない繰り返しの指示と、行の候補を持た�
   const none = await makeRecordedLoop(1, 2, rowKey, 3);
   assert.equal(none.ok, false);
 });
+
+test('記録した「次へ」を選んで繰り返しにすると nextPage になり、停止後と削除後もページ送りの指定がそろう（#182）', async () => {
+  const pagedSteps = [
+    ...recordedSteps.slice(0, 3),
+    {
+      type: 'click',
+      target: { selectors: ['ul > li:nth-of-type(4) > a'], tag: 'a', label: '次へ' },
+    },
+    { type: 'navigate', url: 'https://www.example.com/orders?p=2', cause: 'page' },
+  ];
+  const pagerHints = [null, null, null, ['li.a-last > a'], null];
+  const { session } = fakeChrome({
+    recording: { ...recording, steps: pagedSteps, rowHints: [...rowHints, null, null], pagerHints },
+  });
+  const stopped = await stopRecording();
+  assert.ok(stopped.ok);
+  assert.deepEqual(session.lastFlowPagerHints, pagerHints);
+  // 先頭の手順を削除しても、ページ送りの指定は手順と同じ順のままです。
+  assert.deepEqual(await removeRecordedStep(0, 5), { ok: true });
+  assert.deepEqual(session.lastFlowPagerHints, pagerHints.slice(1));
+  assert.deepEqual(await makeRecordedLoop(0, 3, rowKey, 4, [], false, 2), { ok: true });
+  const flow = /** @type {any} */ (session.lastFlow);
+  assert.equal(flow.steps.length, 1);
+  assert.deepEqual(flow.steps[0].nextPage, {
+    selectors: ['li.a-last > a'],
+    tag: 'a',
+    label: '次へ',
+  });
+  assert.deepEqual(session.lastFlowPagerHints, [null]);
+});

@@ -6,7 +6,7 @@
 // Service Worker から停止の連絡を受けると終了します。
 // 記録した手順は Service Worker へ送り、ここでは保存しません。
 
-/* global buildTarget, elementKeys, elementTexts, isPageTranslated, matchStopSelector, rowCandidates, showNotice, showStatusOverlay */
+/* global buildTarget, elementKeys, elementTexts, isPageTranslated, matchStopSelector, pagerSelectors, rowCandidates, showNotice, showStatusOverlay */
 
 (() => {
   /** 同じページに 2 回読み込まれた場合に、記録が二重にならないようにする目印です。 */
@@ -59,6 +59,7 @@
       matchStopSelector(event.target, scope.__lightomateStopSelectors),
       elementKeys(element),
       rowCandidates(element),
+      pagerSelectors(element),
     );
   };
 
@@ -140,12 +141,21 @@
    * @param {string} [matchedSelector] クリックした要素が一致した、止める要素の指定
    * @param {string[]} [keys] クリックした要素の、翻訳で変わらない手がかり（#97）
    * @param {object[]} [rows] 操作した要素を含む一覧の行の候補（#167）。後で「各行で繰り返す」に変えるときに使います
+   * @param {string[]} [pager] 押した要素を、繰り返しのページ送りに使う場合の指定（#182）
    */
-  function send(step, texts, matchedSelector, keys, rows) {
+  function send(step, texts, matchedSelector, keys, rows, pager) {
     // 記録したときにページが翻訳されていたことを残します。実行時に見つからなかった場合の説明に使います（#99）。
     const recorded = isPageTranslated() ? { ...step, translated: true } : step;
     chrome.runtime
-      .sendMessage({ kind: 'recording/step', step: recorded, texts, matchedSelector, keys, rows })
+      .sendMessage({
+        kind: 'recording/step',
+        step: recorded,
+        texts,
+        matchedSelector,
+        keys,
+        rows,
+        pager,
+      })
       .catch(() => {
         // 拡張機能を再読み込みした後など、Service Worker と接続できない場合は記録を続けられません。
         overlay.remove();

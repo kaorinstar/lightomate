@@ -4,6 +4,7 @@
 // 手順の一覧にチェックボックスを付け、印を付けた範囲を色と左の線で示します。範囲の手順には、要素を
 // 「1 件の中」で探すか「ページ全体」で探すかの印を付けます。一覧の行は CSS セレクターではなく件数で示します。
 
+import { DEFAULT_MAX_PAGES } from '../shared/control-flow.js';
 import { describeStep } from '../shared/describe.js';
 import {
   defaultLoopRange,
@@ -11,6 +12,8 @@ import {
   loopOptionLabel,
   loopOptions,
   nameableSteps,
+  pagerSpan,
+  pagerSteps,
   stepScopes,
   toggleRange,
 } from '../shared/record-loop.js';
@@ -18,6 +21,7 @@ import { showNotice, showToast } from '../shared/ui.js';
 
 /** @typedef {import('../shared/flow.js').Step} Step */
 /** @typedef {import('../shared/record-loop.js').RowHint} RowHint */
+/** @typedef {import('../shared/record-loop.js').PagerHint} PagerHint */
 
 /** 欄の項目に付ける id の連番です。2 つの区画で同じ id にならないようにします。 */
 let nextId = 0;
@@ -27,7 +31,14 @@ let nextId = 0;
  * @param {{ open: HTMLButtonElement, container: HTMLElement, list: HTMLElement, toast: HTMLElement }} parts
  *   open は欄を開くボタン、container は欄を置く場所、list は区画の手順の一覧（欄を開いている間は隠します）、
  *   toast は成功の知らせを出す場所です
- * @returns {{ update: (steps: Step[], hints: RowHint[] | undefined, locked: boolean) => void }}
+ * @returns {{
+ *   update: (
+ *     steps: Step[],
+ *     hints: RowHint[] | undefined,
+ *     locked: boolean,
+ *     pagers?: PagerHint[] | undefined,
+ *   ) => void,
+ * }}
  */
 export function createLoopForm({ open, container, list, toast }) {
   const id = `loop-${(nextId += 1)}`;
@@ -35,6 +46,8 @@ export function createLoopForm({ open, container, list, toast }) {
   let steps = [];
   /** @type {RowHint[]} */
   let hints = [];
+  /** @type {PagerHint[]} */
+  let pagers = [];
   /** フローの実行中は、手順を変えないようにします。 */
   let locked = false;
   /** @type {{ from: number, to: number } | null} */
@@ -48,6 +61,11 @@ export function createLoopForm({ open, container, list, toast }) {
   let naming = [];
   /** ファイル名の先頭にサイト名を入れるか（#179）です。 */
   let withSite = false;
+  /**
+   * 次のページへ送るクリックの番号です（#182）。ページ送りをしない場合は null です。
+   * @type {number | null}
+   */
+  let paging = null;
 
   const fieldset = document.createElement('fieldset');
   fieldset.className = 'lm-loop-form';
@@ -150,6 +168,17 @@ export function createLoopForm({ open, container, list, toast }) {
     if (inRange && nameableIndexes().includes(index)) {
       content.append(nameToggle(index));
     }
+    // 1 件目の操作の後に押した「次へ」は、繰り返しのページ送りに使えます（#182）。
+    if (pagerIndexes().includes(index)) {
+      content.append(pagerToggle(index));
+    }
+    // ページ送りに置き換える、一覧へ戻る移動と「次へ」の後の移動は、手順から除くことを示します（#182）。
+    if (removedByPaging(index)) {
+      const removed = document.createElement('small');
+      removed.className = 'd-block lm-loop-changed';
+      removed.textContent = '→ ページ送りに置き換えるため、手順から除きます';
+      content.append(removed);
+    }
     item.append(box, content);
     if (scope) {
       const badge = document.createElement('span');
@@ -180,6 +209,53 @@ export function createLoopForm({ open, container, list, toast }) {
    */
   const isSaveStepForName = (step) =>
     step.type === 'savePdf' || (step.type === 'click' && step.download !== undefined);
+
+  /** 次のページへ送るクリックとして選べる手順の番号です（#182）。 */
+  const pagerIndexes = () =>
+    range && rowKey ? pagerSteps(steps, hints, pagers, range.from, rowKey) : [];
+
+  /**
+   * 繰り返す手順の末尾です。次のページへ送るクリックを範囲の中で選んだ場合は、その前までです（#182）。
+   * @param {{ from: number, to: number }} current
+   * @returns {number}
+   */
+  const loopEnd = (current) => (paging === null ? current.to : Math.min(current.to, paging - 1));
+
+  /**
+   * ページ送りに置き換えるため、手順から除く移動の手順かを返します（#182）。「次へ」のクリック自体は除きます。
+   * @param {number} index
+   * @returns {boolean}
+   */
+  const removedByPaging = (index) => {
+    if (!range || paging === null || index === paging) {
+      return false;
+    }
+    const { innerEnd, removeEnd } = pagerSpan(steps, range.to, paging);
+    return index > innerEnd && index <= removeEnd;
+  };
+
+  /**
+   * 「このクリックで次のページへ送る」の切り替えです（#182）。選べるのは 1 つだけです。
+   * @param {number} index
+   * @returns {HTMLLabelElement}
+   */
+  const pagerToggle = (index) => {
+    const toggle = document.createElement('label');
+    toggle.className = 'lm-loop-name lm-sub';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'lm-check';
+    check.id = `${id}-pager-${index}`;
+    check.checked = paging === index;
+    check.disabled = locked;
+    check.addEventListener('change', () => {
+      paging = check.checked ? index : null;
+      draw();
+      document.getElementById(check.id)?.focus();
+    });
+    toggle.append(check, document.createTextNode(' このクリックで次のページへ送る'));
+    return toggle;
+  };
 
   /** 範囲の中で、ファイル名に使える手順の番号です（#179）。 */
   const nameableIndexes = () => (range ? nameableSteps(steps, range.from, range.to) : []);
@@ -241,6 +317,9 @@ export function createLoopForm({ open, container, list, toast }) {
       rowKey = options[0]?.key ?? '';
     }
     const chosen = options.find((option) => option.key === rowKey);
+    if (paging !== null && !pagerIndexes().includes(paging)) {
+      paging = null;
+    }
     const scopes = range && chosen ? stepScopes(steps, hints, range.from, range.to, rowKey) : [];
 
     pick.replaceChildren(
@@ -257,10 +336,9 @@ export function createLoopForm({ open, container, list, toast }) {
     rowField.hidden = options.length < 2;
 
     if (range && chosen) {
+      const end = loopEnd(range);
       const span =
-        range.from === range.to
-          ? `手順 ${range.from + 1}`
-          : `手順 ${range.from + 1}〜${range.to + 1}`;
+        range.from === end ? `手順 ${range.from + 1}` : `手順 ${range.from + 1}〜${end + 1}`;
       summary.replaceChildren(
         document.createTextNode('このページの一覧 '),
         strong(`${chosen.count} 件`),
@@ -283,6 +361,14 @@ export function createLoopForm({ open, container, list, toast }) {
         }
         summary.append(siteToggle());
       }
+      if (paging !== null) {
+        const pages = document.createElement('small');
+        pages.className = 'd-block lm-sub';
+        pages.textContent =
+          `手順 ${paging + 1} のクリックで次のページへ送り、最後のページまで（最大 ${DEFAULT_MAX_PAGES} ページ）繰り返します。` +
+          'このクリックは、繰り返しの中では行いません。';
+        summary.append(pages);
+      }
       if (scopes.includes('item')) {
         const note = document.createElement('small');
         note.className = 'd-block lm-sub';
@@ -290,7 +376,7 @@ export function createLoopForm({ open, container, list, toast }) {
         summary.append(note);
       }
       summary.hidden = false;
-      submit.textContent = `${chosen.count} 件で繰り返す`;
+      submit.textContent = paging === null ? `${chosen.count} 件で繰り返す` : '全ページで繰り返す';
       notice.hidden = true;
     } else {
       summary.hidden = true;
@@ -321,6 +407,7 @@ export function createLoopForm({ open, container, list, toast }) {
     rowKey = '';
     naming = [];
     withSite = false;
+    paging = null;
     draw();
     container.hidden = false;
     list.hidden = true;
@@ -337,6 +424,8 @@ export function createLoopForm({ open, container, list, toast }) {
       return;
     }
     const { from, to } = range;
+    const end = loopEnd(range);
+    const nextPage = paging ?? undefined;
     submit.disabled = true;
     try {
       const response = await chrome.runtime.sendMessage({
@@ -346,6 +435,7 @@ export function createLoopForm({ open, container, list, toast }) {
         key: rowKey,
         names: naming,
         withSite,
+        nextPage,
         count: steps.length,
       });
       if (!response?.ok) {
@@ -353,11 +443,12 @@ export function createLoopForm({ open, container, list, toast }) {
         return;
       }
       close();
+      const span = from === end ? `手順 ${from + 1}` : `手順 ${from + 1}〜${end + 1}`;
       showToast(
         toast,
-        from === to
-          ? `手順 ${from + 1} を、一覧の 1 件ごとに繰り返す手順にしました。`
-          : `手順 ${from + 1}〜${to + 1} を、一覧の 1 件ごとに繰り返す手順にしました。`,
+        nextPage === undefined
+          ? `${span} を、一覧の 1 件ごとに繰り返す手順にしました。`
+          : `${span} を、一覧の 1 件ごとに、最後のページまで繰り返す手順にしました。`,
       );
     } catch (error) {
       showNotice(notice, String(error), 'error');
@@ -370,11 +461,12 @@ export function createLoopForm({ open, container, list, toast }) {
   open.hidden = true;
 
   return {
-    update(nextSteps, nextHints, nextLocked) {
+    update(nextSteps, nextHints, nextLocked, nextPagers) {
       const previousLength = steps.length;
       steps = nextSteps;
       locked = nextLocked;
       hints = nextSteps.map((_, index) => nextHints?.[index] ?? null);
+      pagers = nextSteps.map((_, index) => nextPagers?.[index] ?? null);
       const possible = Boolean(defaultLoopRange(steps, hints));
       open.disabled = locked;
       if (container.hidden) {

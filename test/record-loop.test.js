@@ -11,6 +11,9 @@ import {
   loopOptions,
   makeLoop,
   nameableSteps,
+  pagerSpan,
+  pagerSteps,
+  sanitizePagerHint,
   sanitizeRowHint,
   stepScopes,
   toggleRange,
@@ -424,4 +427,167 @@ test('ファイル名を選ばない場合は、保存の手順の保存先を�
   const loop = result.steps[1];
   assert.ok(loop.type === 'forEach');
   assert.deepEqual(loop.steps[3], { ...namedSteps[4], target: namedHints[4]?.[0].inner });
+});
+
+/** ページ送りの部品の li も、同じ形の行の候補になります（#182）。 */
+const pagerRow = { selectors: ['ul.a-pagination > li'], tag: 'li', label: '一覧の行（li）' };
+
+/** @type {Step[]} */
+const pagedSteps = [
+  { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+  { type: 'click', target: pageTarget('#receipt-1', '領収書等') },
+  { type: 'click', target: pageTarget('#invoice-1', '明細書') },
+  { type: 'click', target: pageTarget('html > body > ul > li:nth-of-type(4) > a', '次へ') },
+  { type: 'navigate', url: 'https://shop.example.com/orders?p=2', cause: 'page' },
+];
+/** @type {RowHint[]} */
+const pagedHints = [
+  null,
+  ...['a.receipt', 'a.invoice'].map((selector) => [
+    {
+      items: orderRow,
+      count: 10,
+      inner: {
+        selectors: [selector],
+        tag: 'a',
+        label: selector,
+        scope: /** @type {const} */ ('item'),
+      },
+    },
+  ]),
+  [
+    {
+      items: pagerRow,
+      count: 4,
+      inner: { selectors: ['a'], tag: 'a', label: '次へ', scope: /** @type {const} */ ('item') },
+    },
+  ],
+  null,
+];
+const pagedPagers = [null, null, null, ['li.a-last > a'], null];
+const nextPage = { selectors: ['li.a-last > a'], tag: 'a', label: '次へ' };
+
+test('次のページへ送るクリックに選べるのは、1 件目の操作の後に押した、行の外のリンクかボタンだけ（#182）', () => {
+  const key = candidateKey(orderRow);
+  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, pagedPagers, 1, key), [3]);
+  // 範囲の先頭のクリックは選べません。1 件目の操作の前に押したクリックです。
+  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, pagedPagers, 3, key), []);
+  // ページ送りに使う指定を作れなかったクリックは選べません。
+  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, [null, null, null, null, null], 1, key), []);
+  // 選んだ行の中のクリックは選べません。
+  assert.deepEqual(
+    pagerSteps(pagedSteps, pagedHints, [null, null, ['a.invoice'], null, null], 1, key),
+    [],
+  );
+  // ページ送りの部品の li を行に選んだ場合は、「次へ」もその行の中のクリックのため選べません。
+  assert.deepEqual(pagerSteps(pagedSteps, pagedHints, pagedPagers, 1, candidateKey(pagerRow)), []);
+});
+
+test('次のページへ送るクリックを選ぶと、その要素を nextPage にし、そのクリックと直後の移動を手順から除く（#182）', () => {
+  for (const to of [4, 3, 2]) {
+    const result = makeLoop(pagedSteps, pagedHints, 1, to, candidateKey(orderRow), [], false, {
+      index: 3,
+      pagers: pagedPagers,
+    });
+    assert.ok(result.ok, String(to));
+    assert.equal(result.steps.length, 2);
+    const loop = result.steps[1];
+    assert.ok(loop.type === 'forEach');
+    // 何番目の li かをたどる記録の指定と、表示の文字は使いません。
+    assert.deepEqual(loop.nextPage, nextPage);
+    assert.deepEqual(
+      loop.steps.map((step) => step.type === 'click' && step.target.selectors[0]),
+      ['a.receipt', 'a.invoice'],
+    );
+    assert.deepEqual(result.hints, [null, null]);
+    assert.deepEqual(result.pagers, [null, null]);
+    assert.deepEqual(
+      validateFlow({
+        schemaVersion: SCHEMA_VERSION,
+        name: '記録',
+        origin: 'https://shop.example.com',
+        steps: result.steps,
+      }),
+      [],
+    );
+  }
+});
+
+test('次のページへ送れない手順を選んだ場合は変換せず、選ばない場合は「次へ」も繰り返しの中に置く（#182）', () => {
+  const key = candidateKey(orderRow);
+  for (const index of [1, 2, 4, '3']) {
+    const result = makeLoop(pagedSteps, pagedHints, 1, 4, key, [], false, {
+      index,
+      pagers: pagedPagers,
+    });
+    assert.equal(result.ok, false, String(index));
+  }
+  const plain = makeLoop(pagedSteps, pagedHints, 1, 4, key);
+  assert.ok(plain.ok);
+  const loop = plain.steps[1];
+  assert.ok(loop.type === 'forEach');
+  assert.equal(loop.nextPage, undefined);
+  assert.equal(loop.steps.length, 4);
+});
+
+test('ページから届いたページ送りの指定は、文字列の配列だけを受け付ける（#182）', () => {
+  assert.deepEqual(sanitizePagerHint(['li.a-last > a']), ['li.a-last > a']);
+  for (const value of [undefined, [], [''], [1], 'li.a-last > a', Array(11).fill('a')]) {
+    assert.equal(sanitizePagerHint(value), null, JSON.stringify(value));
+  }
+});
+
+test('PDF を開いた後に［戻る］で一覧へ戻ってから押した「次へ」も選べ、戻る移動も除く（#182）', () => {
+  /** @type {Step[]} */
+  const withBack = [
+    ...pagedSteps.slice(0, 3),
+    { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+    ...pagedSteps.slice(3),
+  ];
+  const backHints = [...pagedHints.slice(0, 3), null, ...pagedHints.slice(3)];
+  const backPagers = [null, null, null, null, ['li.a-last > a'], null];
+  const key = candidateKey(orderRow);
+  // ［戻る］は範囲に含められないため、既定の範囲はその前までです。
+  assert.deepEqual(defaultLoopRange(withBack, backHints), { from: 1, to: 2 });
+  assert.deepEqual(pagerSteps(withBack, backHints, backPagers, 1, key), [4]);
+  const result = makeLoop(withBack, backHints, 1, 2, key, [], false, {
+    index: 4,
+    pagers: backPagers,
+  });
+  assert.ok(result.ok);
+  assert.equal(result.steps.length, 2);
+  const loop = result.steps[1];
+  assert.ok(loop.type === 'forEach');
+  assert.deepEqual(loop.nextPage, nextPage);
+});
+
+test('1 件目の操作と「次へ」の間でほかの場所を押していても選べ、間の手順を除き、その後の手順は残す（#182）', () => {
+  /** @type {Step[]} */
+  const withOthers = [
+    ...pagedSteps.slice(0, 3),
+    { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+    // ほかの拡張機能がページに加えたアイコンなど、ページ送りと関係のないクリックです。
+    { type: 'click', target: { selectors: ['#other-icon'], tag: 'span', label: 'enable' } },
+    ...pagedSteps.slice(3),
+    { type: 'savePdf', path: 'Lightomate/{{flow.name}}/後' },
+  ];
+  const otherHints = [...pagedHints.slice(0, 3), null, null, ...pagedHints.slice(3), null];
+  const otherPagers = [null, null, null, null, null, ['li.a-last > a'], null, null];
+  const key = candidateKey(orderRow);
+  assert.deepEqual(pagerSteps(withOthers, otherHints, otherPagers, 1, key), [5]);
+  assert.deepEqual(pagerSpan(withOthers, 2, 5), { innerEnd: 2, removeEnd: 6 });
+  const result = makeLoop(withOthers, otherHints, 1, 2, key, [], false, {
+    index: 5,
+    pagers: otherPagers,
+  });
+  assert.ok(result.ok);
+  assert.deepEqual(
+    result.steps.map((step) => step.type),
+    ['navigate', 'forEach', 'savePdf'],
+  );
+  const loop = result.steps[1];
+  assert.ok(loop.type === 'forEach');
+  assert.deepEqual(loop.nextPage, nextPage);
+  assert.equal(loop.steps.length, 2);
+  assert.deepEqual(result.pagers, [null, null, null]);
 });
