@@ -654,14 +654,28 @@ async function refreshCurrentPage() {
  */
 function renderRecordingSite(recording, page) {
   const other = page && page.origin !== recording.origin ? page : undefined;
-  elements.recordingSite.hidden = !other;
-  elements.recordingAllow.hidden = !other || other.allowed;
-  elements.recordingAllow.dataset.origin = other && !other.allowed ? other.origin : '';
-  elements.recordingSiteText.textContent = !other
-    ? ''
-    : other.allowed
-      ? `${other.origin} でも記録しています。`
-      : `${other.origin} は許可していないため、記録していません。このサイトでの操作も記録する場合は、アドレスバーのサイト名が利用しているサービスのものか確かめてから、下のボタンを押してください。`;
+  // 表示中のページに埋め込まれた iframe のうち、許可がないサイトのものです（#20）。最上位のページで記録している
+  // 場合だけ知らせます。1 件ずつ許可を求めます。
+  const blockedFrame = page?.allowed ? page.blockedFrames?.[0] : undefined;
+  const blockedSite = other && !other.allowed ? other.origin : blockedFrame;
+  elements.recordingSite.hidden = !other && blockedFrame === undefined;
+  elements.recordingAllow.hidden = blockedSite === undefined;
+  elements.recordingAllow.dataset.origin = blockedSite ?? '';
+  /** @type {string[]} */
+  const lines = [];
+  if (other) {
+    lines.push(
+      other.allowed
+        ? `${other.origin} でも記録しています。`
+        : `${other.origin} は許可していないため、記録していません。このサイトでの操作も記録する場合は、アドレスバーのサイト名が利用しているサービスのものか確かめてから、下のボタンを押してください。`,
+    );
+  }
+  if (blockedFrame !== undefined && blockedSite === blockedFrame) {
+    lines.push(
+      `このページの枠（iframe）の中に表示されている ${blockedFrame} は許可していないため、枠の中の操作を記録していません。枠の中の操作も記録する場合は、決済などで利用しているサービスのサイトか確かめてから、下のボタンを押してください。`,
+    );
+  }
+  elements.recordingSiteText.textContent = lines.join('');
 }
 
 /** 記録と実行の状態に合わせて、画面を表示し直します。 */

@@ -14,6 +14,7 @@ import { getFlow } from '../common/flow-store.js';
 import { addHistory } from '../common/history-store.js';
 import {
   flowOrigins,
+  frameKey,
   isWebUrl,
   stepOrigin,
   validateFlow,
@@ -118,6 +119,9 @@ const ELEMENT_TIMEOUT_MS = 10_000;
  * 手順の要素を待つ上限（10 秒）より短くします。
  */
 const CONDITION_TIMEOUT_MS = 3_000;
+
+/** iframe の中の要素（#20）で、一致する iframe が表示されるのを待つ間に、探し直す間隔です。 */
+const FRAME_POLL_INTERVAL_MS = 250;
 
 /** ページの移動と読み込みを待つ上限です。 */
 const NAVIGATION_TIMEOUT_MS = 30_000;
@@ -528,8 +532,11 @@ async function waitForPage(runId, tabId, promise) {
     try {
       await throwIfStopRequested(runId);
     } catch (error) {
-      // ページで要素を待つ処理も止めます。
-      await sendToPageBriefly(tabId, { kind: 'runner/abort' });
+      // ページで要素を待つ処理も止めます。iframe の中で待っている場合（#20）もあるため、すべてのフレームに送ります。
+      await Promise.race([
+        chrome.tabs.sendMessage(tabId, { kind: 'runner/abort' }).catch(() => {}),
+        sleep(PAGE_MESSAGE_TIMEOUT_MS),
+      ]);
       throw error;
     }
   }
@@ -2332,6 +2339,19 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
   await injectContent(runId, tabId);
   // ログインの有効期限切れなどで認証の画面が表示されている場合は、操作せずに一時停止します（#18）。
   await throwIfAuthScreen(runId, tabId, url, step, expectedUrl);
+  // iframe の中の要素（#20）は、一致する iframe の中で探して操作します。止める要素の指定は、要素がある iframe の
+  // サイトの指定も使います。
+  const target = 'target' in step ? step.target : undefined;
+  const frameId = await findTargetFrame(runId, tabId, target);
+  const stopSelectors =
+    target?.frame === undefined
+      ? rule.selectors
+      : [
+          ...new Set([
+            ...rule.selectors,
+            ...(await getStopRule(new URL(target.frame.url).origin)).selectors,
+          ]),
+        ];
 
   if (step.type === 'click') {
     const inspected = await requestPage(
@@ -2342,15 +2362,16 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
         step,
         scope,
         timeoutMs: ELEMENT_TIMEOUT_MS,
-        stopSelectors: rule.selectors,
+        stopSelectors,
       },
       recordedTranslation(flow, step),
+      frameId,
     );
     // 利用者が明示した指定のため、文言による判定より先に確かめます。
     // ページから届いた値は、指定の一覧に含まれるものだけを受け付けます。
     if (
       typeof inspected.matchedSelector === 'string' &&
-      rule.selectors.includes(inspected.matchedSelector)
+      stopSelectors.includes(inspected.matchedSelector)
     ) {
       throw new Halted(stopRuleNote('selector', inspected.matchedSelector));
     }
@@ -2378,8 +2399,60 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
     tabId,
     { kind: 'runner/step', step, scope, timeoutMs: ELEMENT_TIMEOUT_MS },
     recordedTranslation(flow, step),
+    frameId,
   );
   return { documentId, response };
+}
+
+/**
+ * 要素の指定に frame がある場合（#20）に、一致する iframe を探し、実行用のスクリプトを読み込んで、その iframe の
+ * フレームの番号を返します。frame がない場合は、最上位のページ（0）です。
+ * 一致するのは、最上位のページに直接埋め込まれた iframe のうち、中のページの URL のオリジンとパスが指定と同じもの
+ * です。表示が遅れる場合に備え、要素と同じ時間まで待ちます。見つからない場合はやり直しの対象にします。
+ * 一致する iframe が複数ある場合は、どちらに入力するかを推測で決めず、停止します。入力値を意図しない欄に
+ * 入力しないためです。
+ * @param {string} runId
+ * @param {number} tabId
+ * @param {import('../shared/flow.js').Target | undefined} target
+ * @returns {Promise<number>}
+ */
+async function findTargetFrame(runId, tabId, target) {
+  if (target?.frame === undefined) {
+    return 0;
+  }
+  const key = target.frame.url;
+  const deadline = Date.now() + ELEMENT_TIMEOUT_MS;
+  for (;;) {
+    const frames = (await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null)) ?? [];
+    const matches = frames.filter(
+      (frame) => frame.frameId !== 0 && frame.parentFrameId === 0 && frameKey(frame.url) === key,
+    );
+    if (matches.length > 1) {
+      throw new Error(
+        `要素を含む枠（${key}）に一致する iframe が ${matches.length} 個あり、どれで操作するか決められないため、停止しました。`,
+      );
+    }
+    if (matches.length === 1) {
+      const [{ frameId }] = matches;
+      await waitForPage(
+        runId,
+        tabId,
+        chrome.scripting.executeScript({
+          target: { tabId, frameIds: [frameId] },
+          files: CONTENT_FILES,
+        }),
+      );
+      return frameId;
+    }
+    if (Date.now() >= deadline) {
+      throw new ElementNotFound(
+        `要素を含む枠（${key}）が見つかりません（${Math.round(ELEMENT_TIMEOUT_MS / 1000)} 秒待ちました）。`,
+        undefined,
+      );
+    }
+    await throwIfStopRequested(runId);
+    await sleep(FRAME_POLL_INTERVAL_MS);
+  }
 }
 
 /**
@@ -2437,10 +2510,19 @@ async function readPage(runId, flow, tabId, message) {
   }
   await injectContent(runId, tabId);
   const documentId = await getDocumentId(tabId);
-  const response = await requestPage(runId, tabId, {
-    ...message,
-    timeoutMs: CONDITION_TIMEOUT_MS,
-  });
+  // 条件の要素が iframe の中にある場合は、その iframe の中で探します（#20）。
+  const target =
+    'target' in message
+      ? /** @type {import('../shared/flow.js').Target} */ (message.target)
+      : undefined;
+  const frameId = await findTargetFrame(runId, tabId, target);
+  const response = await requestPage(
+    runId,
+    tabId,
+    { ...message, timeoutMs: CONDITION_TIMEOUT_MS },
+    undefined,
+    frameId,
+  );
   return { documentId, url, response };
 }
 
@@ -2572,12 +2654,14 @@ async function waitForDownload(runId, downloadId, label = 'PDF') {
  * @param {object} message
  * @param {boolean | undefined} [recorded] 手順を記録したときにページが翻訳されていたか。不明な場合は
  *   undefined です。要素や選択肢が見つからなかった場合に、翻訳の有無の説明を加えるために使います（#99）
+ * @param {number} [frameId] 依頼するフレーム。既定は最上位のページです。iframe の中の要素（#20）の場合は、その
+ *   iframe です
  * @returns {Promise<Record<string, any>>}
  */
-async function requestPage(runId, tabId, message, recorded) {
+async function requestPage(runId, tabId, message, recorded, frameId = 0) {
   // 要素を待っている間（最大 10 秒）も停止の指示に応じられるよう、応答を待ちながら指示を確かめます。
   // ダイアログが開いている間は応答がないため、ダイアログへの対応もこの間に行います（#88）。
-  const reply = chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).catch((error) => {
+  const reply = chrome.tabs.sendMessage(tabId, message, { frameId }).catch((error) => {
     // 調べるだけの依頼は、要素を待っている間にページが移動して通信が途切れた場合も、やり直します（#90）。
     if (isReadOnlyRequest(message)) {
       throw new ElementNotFound(

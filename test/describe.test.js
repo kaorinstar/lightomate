@@ -332,3 +332,20 @@ test('Shadow DOM の中の要素の手順は、説明に部品の内側である
     '読み取り：注文番号（部品の内側） → {{orderNumber}}',
   );
 });
+
+test('iframe の中の要素の手順は、説明に枠のサイトを添える（#20）', () => {
+  const inFrame = {
+    ...target,
+    label: 'カード番号',
+    frame: { url: 'https://pay.example.net/card' },
+  };
+  assert.equal(targetName(inFrame), 'カード番号（https://pay.example.net の枠の中）');
+  assert.equal(
+    targetName({ ...inFrame, shadow: ['card-field'] }),
+    'カード番号（https://pay.example.net の枠の中、部品の内側）',
+  );
+  assert.equal(
+    describeStep({ type: 'input', target: inFrame, secret: true }),
+    '入力：カード番号（https://pay.example.net の枠の中）（値は記録していません）',
+  );
+});

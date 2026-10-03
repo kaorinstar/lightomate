@@ -13,13 +13,34 @@ import { DEFAULT_SAVE_PATH } from './save-path.js';
 /** @typedef {import('./flow.js').Target} Target */
 
 /**
- * 手順の説明に使う、要素の名前です。Shadow DOM の中の要素（#20）は、部品の内側にあることを添えます。
- * 実行で見つからない場合に、利用者が原因を推し量れるようにするためです。
+ * 手順の説明に使う、要素の名前です。iframe の中の要素（#20）は、枠の中にあることとそのサイトを、Shadow DOM の中の
+ * 要素（#20）は、部品の内側にあることを添えます。実行で見つからない場合に、利用者が原因を推し量れるようにするためです。
  * @param {Target} target
  * @returns {string}
  */
 export function targetName(target) {
-  return target.shadow ? `${target.label}（部品の内側）` : target.label;
+  /** @type {string[]} */
+  const notes = [];
+  if (target.frame) {
+    notes.push(`${frameSite(target.frame.url)} の枠の中`);
+  }
+  if (target.shadow) {
+    notes.push('部品の内側');
+  }
+  return notes.length > 0 ? `${target.label}（${notes.join('、')}）` : target.label;
+}
+
+/**
+ * iframe の指定の URL のサイト（オリジン）です。URL として読めない場合は、指定の値のままです。
+ * @param {string} url
+ * @returns {string}
+ */
+function frameSite(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
 }
 
 /**

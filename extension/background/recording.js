@@ -9,6 +9,7 @@ import {
   MAX_STEPS,
   PAGE_STEP_TYPES,
   SCHEMA_VERSION,
+  frameKey,
   isWebUrl,
   orderFlow,
   validateFlow,
@@ -50,6 +51,8 @@ import { toLinkDownload } from '../shared/file-link.js';
  * @typedef {object} RecordingPage
  * @property {string} origin 表示中のページのオリジン
  * @property {boolean} allowed そのサイトを操作する許可があり、記録しているか
+ * @property {string[]} [blockedFrames] 表示中のページに埋め込まれた iframe のうち、操作の許可がないため記録して
+ *   いない iframe のサイト（#20）。サイドパネルが［このサイトを許可して記録］を表示するために使います
  */
 
 const RECORDING_KEY = 'recording';
@@ -422,7 +425,7 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
     if (
       !recording ||
       sender.tab?.id !== recording.tabId ||
-      sender.frameId !== 0 ||
+      sender.frameId === undefined ||
       !sender.url ||
       !isWebUrl(sender.url) ||
       validateStep(step).length > 0 ||
@@ -432,25 +435,38 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
     ) {
       return;
     }
-    const origin = new URL(sender.url).origin;
+    // iframe の中の操作（#20）は、最上位のページに直接埋め込まれた iframe のものだけを受け付けます。
+    // 手順の origin は最上位のページのサイトにし、iframe のサイトは要素の指定（target の frame）に残します。
+    const inFrame = sender.frameId !== 0;
+    const pageUrl = inFrame ? await topFrameUrl(recording.tabId, sender.frameId) : sender.url;
+    if (pageUrl === undefined) {
+      return;
+    }
+    const origin = new URL(pageUrl).origin;
+    const frameOrigin = new URL(sender.url).origin;
     const extraOrigins = recording.extraOrigins ?? [];
     const isExtra = origin !== recording.origin;
-    if (
-      isExtra &&
-      !extraOrigins.includes(origin) &&
-      (extraOrigins.length >= MAX_EXTRA_ORIGINS ||
-        !(await chrome.permissions.contains({ origins: [`${origin}/*`] })))
-    ) {
+    /** 新しく extraOrigins に加えるサイトです。 */
+    const added = [...new Set([origin, frameOrigin])].filter(
+      (site) => site !== recording.origin && !extraOrigins.includes(site),
+    );
+    if (extraOrigins.length + added.length > MAX_EXTRA_ORIGINS) {
       return;
+    }
+    for (const site of added) {
+      if (!(await chrome.permissions.contains({ origins: [`${site}/*`] }))) {
+        return;
+      }
     }
     // content script から届いた origin は使いません。
     const received = { .../** @type {Record<string, unknown>} */ (step) };
     delete received.origin;
     // サイトごとの指定を先に確かめます。利用者が明示した指定のため、文言による判定より優先します。
+    // iframe の中の操作では、要素がある iframe のサイトの指定を使います（#20）。
     const ruled = applyStopRuleToRecordedStep(
       /** @type {Step} */ (received),
       recording.steps.at(-1),
-      await getStopRule(origin),
+      await getStopRule(frameOrigin),
       sender.url,
       typeof matchedSelector === 'string' ? matchedSelector : undefined,
     );
@@ -476,19 +492,33 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
     if (recorded) {
       if (isExtra && PAGE_STEP_TYPES.includes(recorded.type)) {
         recorded = /** @type {Step} */ ({ ...recorded, origin });
-        if (!extraOrigins.includes(origin)) {
-          recording.extraOrigins = [...extraOrigins, origin];
-        }
       }
-      // 一時停止に変えた手順は要素を操作しないため、行の候補を添えません。
-      const hint = recorded.type === received.type ? sanitizeRowHint(rows) : null;
+      // iframe の中の要素には、その iframe の指定を付けます（#20）。ページから届いた指定は使いません。
+      if ('target' in recorded) {
+        const target = { ...recorded.target };
+        delete target.frame;
+        const key = inFrame ? frameKey(sender.url) : undefined;
+        recorded = /** @type {Step} */ ({
+          ...recorded,
+          target: key === undefined ? target : { ...target, frame: { url: key } },
+        });
+      }
+      if (added.length > 0) {
+        recording.extraOrigins = [...extraOrigins, ...added];
+      }
+      // 一時停止に変えた手順は要素を操作しないため、行の候補を添えません。iframe の中の要素も、一覧の行は
+      // 最上位のページで探すため、添えません（#20）。
+      const hint = recorded.type === received.type && !inFrame ? sanitizeRowHint(rows) : null;
       recording.rowHints = [...alignHints(recording.steps, recording.rowHints), hint];
-      // ページ送りに使えるのは、そのまま記録したクリックだけです（#182）。
+      // ページ送りに使えるのは、最上位のページでそのまま記録したクリックだけです（#182）。
       const pagerHint =
-        recorded.type === 'click' && received.type === 'click' ? sanitizePagerHint(pager) : null;
+        recorded.type === 'click' && received.type === 'click' && !inFrame
+          ? sanitizePagerHint(pager)
+          : null;
       recording.pagerHints = [...alignHints(recording.steps, recording.pagerHints), pagerHint];
       // 押したリンクのリンク先は、そのページと同じサイトの URL だけを残します（#185）。
       if (
+        !inFrame &&
         recorded.type === 'click' &&
         typeof href === 'string' &&
         isWebUrl(href) &&
@@ -553,8 +583,19 @@ export function onCommitted(details) {
  */
 export async function onDOMContentLoaded(details) {
   const recording = await getRecording();
-  if (recording && details.tabId === recording.tabId && details.frameId === 0) {
+  if (!recording || details.tabId !== recording.tabId) {
+    return;
+  }
+  if (details.frameId === 0) {
     await attach(recording);
+  } else if (details.parentFrameId === 0) {
+    // 最上位のページに埋め込まれた iframe が読み込まれた場合です（#20）。最上位のページで記録している場合だけ、
+    // iframe にも読み込みます。
+    const stored = await chrome.storage.session.get(RECORDING_PAGE_KEY);
+    const page = /** @type {RecordingPage | undefined} */ (stored[RECORDING_PAGE_KEY]);
+    if (page?.allowed) {
+      await attachFrames(recording, page);
+    }
   }
 }
 
@@ -597,12 +638,23 @@ async function attach(recording) {
   if (!allowed) {
     return;
   }
+  await injectRecorder(recording.tabId, 0, origin);
+  await attachFrames(recording, page);
+}
+
+/**
+ * 記録用のスクリプトを、タブの 1 つのフレームに読み込みます。
+ * @param {number} tabId
+ * @param {number} frameId
+ * @param {string} origin そのフレームのページのサイト。サイトごとの止める要素の指定（#54）を選ぶために使います
+ */
+async function injectRecorder(tabId, frameId, origin) {
   try {
     // サイトごとの止める要素の指定（#54）を、記録用のスクリプトより先にページへ置きます。
     // 記録用のスクリプトは extension/shared/ を読み込めないため、値として渡します。
     const { selectors } = await getStopRule(origin);
     await chrome.scripting.executeScript({
-      target: { tabId: recording.tabId, frameIds: [0] },
+      target: { tabId, frameIds: [frameId] },
       func: (/** @type {string[]} */ stopSelectors) => {
         /** @type {Record<string, unknown>} */ (
           /** @type {unknown} */ (globalThis)
@@ -611,7 +663,7 @@ async function attach(recording) {
       args: [selectors],
     });
     await chrome.scripting.executeScript({
-      target: { tabId: recording.tabId, frameIds: [0] },
+      target: { tabId, frameIds: [frameId] },
       files: CONTENT_FILES,
     });
   } catch (error) {
@@ -621,8 +673,65 @@ async function attach(recording) {
 }
 
 /**
+ * 記録中のタブの、最上位のページに直接埋め込まれた iframe のうち、操作の許可があるサイトのものに、記録用の
+ * スクリプトを読み込みます（#20）。許可がないサイトの iframe には読み込まず、そのサイトをサイドパネルに知らせます。
+ * 2 段以上の埋め込み（iframe の中の iframe）は対象にしません。
+ * @param {Recording} recording
+ * @param {RecordingPage} page 最上位のページの表示の状態。許可がない iframe のサイトを加えて保存し直します
+ */
+async function attachFrames(recording, page) {
+  const frames =
+    (await chrome.webNavigation.getAllFrames({ tabId: recording.tabId }).catch(() => null)) ?? [];
+  /** @type {Set<string>} */
+  const blocked = new Set();
+  for (const frame of frames) {
+    if (frame.frameId === 0 || frame.parentFrameId !== 0 || !isWebUrl(frame.url)) {
+      continue;
+    }
+    const origin = new URL(frame.url).origin;
+    const allowed =
+      origin === recording.origin ||
+      (await chrome.permissions.contains({ origins: [`${origin}/*`] }));
+    if (allowed) {
+      await injectRecorder(recording.tabId, frame.frameId, origin);
+    } else {
+      blocked.add(origin);
+    }
+  }
+  const stored = await chrome.storage.session.get(RECORDING_PAGE_KEY);
+  const current = /** @type {RecordingPage | undefined} */ (stored[RECORDING_PAGE_KEY]);
+  // 最上位のページを移動した後に、移動の前のページの iframe の結果で上書きしないためです。
+  if (current && current.origin !== page.origin) {
+    return;
+  }
+  /** @type {RecordingPage} */
+  const next = { origin: page.origin, allowed: page.allowed };
+  if (blocked.size > 0) {
+    next.blockedFrames = [...blocked].sort();
+  }
+  await chrome.storage.session.set({ [RECORDING_PAGE_KEY]: next });
+}
+
+/**
+ * iframe の送信元が、最上位のページに直接埋め込まれた iframe であれば、最上位のページの URL を返します（#20）。
+ * そうでない場合と、最上位のページが Web ページでない場合は undefined です。
+ * @param {number} tabId
+ * @param {number} frameId
+ * @returns {Promise<string | undefined>}
+ */
+async function topFrameUrl(tabId, frameId) {
+  const frame = await chrome.webNavigation.getFrame({ tabId, frameId }).catch(() => null);
+  if (!frame || frame.parentFrameId !== 0) {
+    return undefined;
+  }
+  const top = await chrome.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => null);
+  return top && isWebUrl(top.url) ? top.url : undefined;
+}
+
+/**
  * 記録中のタブで表示しているサイトでも記録を始めます（#41）。サイドパネルの［このサイトを許可して記録］で、
  * 許可を得た後に呼び出します。記録中のタブが今そのサイトを表示していることと、許可があることを確かめます。
+ * 最上位のページに埋め込まれた iframe のサイト（#20）も、同じように受け付けます。
  * @param {unknown} origin
  * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
  */
@@ -638,7 +747,7 @@ export async function allowRecordingOrigin(origin) {
     typeof origin !== 'string' ||
     !frame ||
     !isWebUrl(frame.url) ||
-    new URL(frame.url).origin !== origin
+    (new URL(frame.url).origin !== origin && !(await hasChildFrame(recording.tabId, origin)))
   ) {
     return { ok: false, error: '記録中のタブが、そのサイトのページを表示していません。' };
   }
@@ -660,13 +769,30 @@ export async function allowRecordingOrigin(origin) {
 }
 
 /**
- * 記録の表示を消し、ページの記録用のスクリプトを止めます。
+ * 最上位のページに、指定したサイトの iframe が直接埋め込まれているかを判定します（#20）。
+ * @param {number} tabId
+ * @param {string} origin
+ * @returns {Promise<boolean>}
+ */
+async function hasChildFrame(tabId, origin) {
+  const frames = (await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null)) ?? [];
+  return frames.some(
+    (frame) =>
+      frame.frameId !== 0 &&
+      frame.parentFrameId === 0 &&
+      isWebUrl(frame.url) &&
+      new URL(frame.url).origin === origin,
+  );
+}
+
+/**
+ * 記録の表示を消し、ページの記録用のスクリプトを止めます。iframe の中のスクリプト（#20）も止めます。
  * @param {number} tabId
  */
 async function detach(tabId) {
   try {
     await chrome.action.setBadgeText({ tabId, text: '' });
-    await chrome.tabs.sendMessage(tabId, { kind: 'recorder/stop' }, { frameId: 0 });
+    await chrome.tabs.sendMessage(tabId, { kind: 'recorder/stop' });
   } catch {
     // タブが閉じられた場合や、記録用のスクリプトがないページ（別のサイト）の場合は失敗します。
   }
