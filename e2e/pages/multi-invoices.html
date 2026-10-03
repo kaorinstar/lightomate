@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>注文履歴（明細書が複数ある注文）</title>
+  </head>
+  <body>
+    <!-- 明細書のリンクが複数ある注文で、すべての明細書を保存する確認（#185）に使います。Amazon の購入履歴と同じく、
+         ［領収書等］を押すと、行の外に小さな枠を作って開きます。枠の id の番号は開くたびに増え、閉じた枠は
+         隠したままページに残ります。明細書が複数ある注文では、リンクの文字に番号が付きます。
+         行と枠は multi-invoices.js が作ります。 -->
+    <div id="orders"></div>
+    <script src="multi-invoices.js"></script>
+  </body>
+</html>

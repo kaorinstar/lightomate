@@ -1426,17 +1426,39 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             }
             throw error;
           }
+          /** @type {string[]} */
+          let moreLinks = [];
           if (downloading && step.type === 'click' && step.download?.from === 'link') {
             // リンク先のファイルを保存する指定（#172）では、ページがクリックせずに返したリンク先を保存します。
             // 保存先とファイル名は、クリックで始まるダウンロードと同じく watchDownload が決めます。
-            await downloadLink(flow, done.response.href).catch((error) => {
+            try {
+              moreLinks = step.download.all === true ? extraLinks(done.response.hrefs) : [];
+              await downloadLink(flow, done.response.href);
+            } catch (error) {
               downloading.cancel();
               throw error;
-            });
+            }
           }
           if (downloading) {
             const file = await downloading.wait(runId);
             savedFiles.get(runId)?.push(file);
+          }
+          // 一致するリンクをすべて保存する指定（#185）では、2 件目以降を、名前に _2、_3 … を付けて保存します。
+          // もう一度実行しても同じ名前になるため、上書きの指定では同じ明細書のファイルが増えません。
+          for (const [offset, href] of moreLinks.entries()) {
+            if (step.type !== 'click' || !step.download) {
+              break;
+            }
+            const more = watchDownload(
+              runId,
+              { ...step.download, path: numberedPath(step.download.path, offset + 2) },
+              pathValues,
+            );
+            await downloadLink(flow, href).catch((error) => {
+              more.cancel();
+              throw error;
+            });
+            savedFiles.get(runId)?.push(await more.wait(runId));
           }
           documentBefore = done.documentId;
           if (opened) {
@@ -1613,6 +1635,39 @@ function watchDownload(runId, download, values) {
       }
     },
   };
+}
+
+/** 一致するリンクをすべて保存する指定（#185）で、1 つの手順で保存するファイルの上限です。 */
+const MAX_LINKS_PER_STEP = 10;
+
+/**
+ * 保存先のひな形の、ファイル名の末尾に番号を付けます（#185）。拡張子を書いたひな形では、拡張子の前に付けます。
+ * 例：`Lightomate/a/{{n}}` と 2 から `Lightomate/a/{{n}}_2`、`Lightomate/a/明細書.pdf` と 2 から `Lightomate/a/明細書_2.pdf`
+ * @param {string} path
+ * @param {number} number
+ * @returns {string}
+ */
+export function numberedPath(path, number) {
+  const extension = /\.[a-z0-9]{1,5}$/i.exec(path);
+  return extension
+    ? `${path.slice(0, extension.index)}_${number}${extension[0]}`
+    : `${path}_${number}`;
+}
+
+/**
+ * 一致するリンクをすべて保存する指定（#185）で、ページから届いたリンク先のうち、2 件目以降を返します。
+ * 上限より多い場合は、意図しないリンクにも一致している可能性があるため、保存を始める前に停止します。
+ * @param {unknown} hrefs ページから届いたリンク先（1 件目を含みます）
+ * @returns {string[]}
+ */
+function extraLinks(hrefs) {
+  const list = Array.isArray(hrefs) ? hrefs.filter((href) => typeof href === 'string') : [];
+  if (list.length > MAX_LINKS_PER_STEP) {
+    throw new Error(
+      `保存するリンクが ${list.length} 件見つかりました。上限の ${MAX_LINKS_PER_STEP} 件を超えるため、意図しないリンクにも一致している可能性があります。保存せずに停止しました。`,
+    );
+  }
+  return list.slice(1);
 }
 
 /**

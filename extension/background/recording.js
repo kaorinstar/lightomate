@@ -38,6 +38,8 @@ import { toLinkDownload } from '../shared/file-link.js';
  *   記録した手順を「各行で繰り返す」に変えるときに使います。フロー定義には含めません
  * @property {PagerHint[]} [pagerHints] steps と同じ順の、押した要素を繰り返しのページ送りに使う場合の指定（#182）。
  *   フロー定義には含めません
+ * @property {string} [lastHref] 最後に記録した手順がリンクのクリックの場合の、そのリンク先（#185）。直後にファイルへ
+ *   移動したときに、同じ種類のリンクを探す指定を作るために使います。フロー定義には含めません
  */
 
 /**
@@ -382,9 +384,10 @@ async function getLastFlow() {
  * @param {unknown} [keys] クリックした要素の、翻訳で変わらない手がかり（content/element-text.js、#97）
  * @param {unknown} [rows] 操作した要素を含む一覧の行の候補（content/picker-rows.js の rowCandidates、#167）
  * @param {unknown} [pager] 押した要素をページ送りに使う場合の指定（content/picker-rows.js の pagerSelectors、#182）
+ * @param {unknown} [href] 押したリンクのリンク先（#185）
  * @returns {Promise<void>}
  */
-export function addStep(step, sender, texts, matchedSelector, keys, rows, pager) {
+export function addStep(step, sender, texts, matchedSelector, keys, rows, pager, href) {
   return enqueue(async () => {
     const recording = await getRecording();
     if (
@@ -455,6 +458,17 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager)
       const pagerHint =
         recorded.type === 'click' && received.type === 'click' ? sanitizePagerHint(pager) : null;
       recording.pagerHints = [...alignHints(recording.steps, recording.pagerHints), pagerHint];
+      // 押したリンクのリンク先は、そのページと同じサイトの URL だけを残します（#185）。
+      if (
+        recorded.type === 'click' &&
+        typeof href === 'string' &&
+        isWebUrl(href) &&
+        new URL(href).origin === origin
+      ) {
+        recording.lastHref = href;
+      } else {
+        delete recording.lastHref;
+      }
       recording.steps.push(recorded);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
     }
@@ -483,7 +497,13 @@ export function onCommitted(details) {
     // リンクのクリックで PDF などのファイルへ移動した場合は、移動を記録せず、クリックをリンク先のファイルを
     // 保存する指定に変えます（#172）。表示画面で開くだけでは、ファイルが保存されないためです。
     const cause = navigationCause(details);
-    const converted = toLinkDownload(recording.steps.at(-1), details.url, cause);
+    const converted = toLinkDownload(
+      recording.steps.at(-1),
+      details.url,
+      cause,
+      recording.lastHref,
+    );
+    delete recording.lastHref;
     if (converted) {
       recording.steps[recording.steps.length - 1] = converted;
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });

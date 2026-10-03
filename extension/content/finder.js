@@ -49,6 +49,8 @@ function waitForTarget(target, timeoutMs, signal, root = document) {
 
 /**
  * 要素を探します。セレクターを優先する順に試し、表示されている要素だけを対象にします。
+ * 1 つのセレクターに複数の要素が一致する場合は、表示されている最初の要素を使います。前に開いて隠した小さな枠の
+ * リンクが、ページの先にある場合などに備えます（#185）。
  * どのセレクターでも見つからない場合は、タグ名と表示文字列が一致する要素が 1 つだけあれば、それを使います。
  * @param {{ selectors: string[], tag: string, text?: string }} target
  * @param {Document | Element} [root] 探す範囲
@@ -56,13 +58,15 @@ function waitForTarget(target, timeoutMs, signal, root = document) {
  */
 function findTarget(target, root = document) {
   for (const selector of target.selectors) {
-    let element = null;
+    /** @type {Element[]} */
+    let elements = [];
     try {
-      element = root.querySelector(selector);
+      elements = Array.from(root.querySelectorAll(selector));
     } catch {
       // 誤ったセレクター（JSON を手で編集した場合など）は飛ばします。
     }
-    if (element && isDisplayed(element)) {
+    const element = elements.find(isDisplayed);
+    if (element) {
       return element;
     }
   }
