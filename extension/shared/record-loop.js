@@ -25,6 +25,13 @@ import { CONTROL_STEP_TYPES, flattenSteps } from './control-flow.js';
  */
 
 /**
+ * 手順 1 件に添える、押した要素を繰り返しのページ送り（nextPage）に使う場合の指定です（#182）。
+ * ページ番号の数で位置が変わらないセレクターだけを持ちます（content/picker-rows.js の pagerSelectors）。
+ * リンクかボタンのクリック以外の手順と、指定を作れなかった手順は null です。
+ * @typedef {string[] | null} PagerHint
+ */
+
+/**
  * 繰り返しの行として選べる候補です。
  * @typedef {object} LoopOption
  * @property {string} key 候補を見分ける値（行の指定のセレクター）
@@ -76,6 +83,33 @@ export function sanitizeRowHint(value) {
     });
   }
   return candidates;
+}
+
+/** ページ送りに使う指定のセレクターの数と、1 つの長さの上限です（#182）。 */
+const MAX_PAGER_SELECTORS = 10;
+const MAX_SELECTOR_LENGTH = 2000;
+
+/**
+ * ページから届いた、ページ送りに使う場合の指定を確かめ、写した値を返します（#182）。形が誤っている場合と、
+ * 空の場合は null です。
+ * @param {unknown} value
+ * @returns {PagerHint}
+ */
+export function sanitizePagerHint(value) {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_PAGER_SELECTORS ||
+    !value.every(
+      (selector) =>
+        typeof selector === 'string' &&
+        selector.trim() !== '' &&
+        selector.length <= MAX_SELECTOR_LENGTH,
+    )
+  ) {
+    return null;
+  }
+  return [.../** @type {string[]} */ (value)];
 }
 
 /**
@@ -180,9 +214,21 @@ export function loopOptionLabel(option, options) {
  * @param {unknown} key 選んだ行の候補（candidateKey の値）
  * @param {unknown} [nameIndexes] ファイル名に使う手順の番号（0 から数えます、#179）。選んだ順にファイル名に並べます
  * @param {unknown} [withSite] ファイル名の先頭にサイト名（{{site.host}}）を入れるか（#179）
- * @returns {{ ok: true, steps: Step[], hints: RowHint[] } | { ok: false, error: string }}
+ * @param {{ index?: unknown, pagers?: PagerHint[] }} [paging] 次のページへ送るクリックの番号と、steps と同じ順の
+ *   ページ送りに使う場合の指定（#182）。index を書いた場合は、そのクリックの要素を nextPage にし、そのクリックと
+ *   直後のページの移動、範囲の末尾との間の一覧のページへ戻る移動を手順から除きます
+ * @returns {{ ok: true, steps: Step[], hints: RowHint[], pagers: PagerHint[] } | { ok: false, error: string }}
  */
-export function makeLoop(steps, hints, from, to, key, nameIndexes = [], withSite = false) {
+export function makeLoop(
+  steps,
+  hints,
+  from,
+  to,
+  key,
+  nameIndexes = [],
+  withSite = false,
+  paging = {},
+) {
   if (
     !Number.isInteger(from) ||
     !Number.isInteger(to) ||
@@ -206,7 +252,35 @@ export function makeLoop(steps, hints, from, to, key, nameIndexes = [], withSite
     }
   }
 
-  const option = loopOptions(steps, hints, start, end).find((item) => item.key === key);
+  const pagers = steps.map((_, index) => paging.pagers?.[index] ?? null);
+  // 次のページへ送るクリックと、その直後のページの移動は、繰り返しの中に置かず、nextPage にします（#182）。
+  let innerEnd = end;
+  let removeEnd = end;
+  /** @type {Target | undefined} */
+  let nextPage;
+  if (paging.index !== undefined && paging.index !== null) {
+    const index = /** @type {number} */ (paging.index);
+    const step = steps[index];
+    const selectors = pagers[index];
+    if (
+      typeof key !== 'string' ||
+      !pagerSteps(steps, hints, pagers, start, end, key).includes(index) ||
+      step?.type !== 'click' ||
+      !selectors
+    ) {
+      return {
+        ok: false,
+        error:
+          '次のページへ送る手順が正しくありません。手順の一覧を確かめてから選び直してください。',
+      };
+    }
+    ({ innerEnd, removeEnd } = pagerSpan(steps, end, index));
+    // 表示の文字（text）は書きません。見つからない場合に文字で探すと、最後のページの押せない「次へ」を
+    // 押すことがあるためです。
+    nextPage = { selectors: [...selectors], tag: step.target.tag, label: step.target.label };
+  }
+
+  const option = loopOptions(steps, hints, start, innerEnd).find((item) => item.key === key);
   if (!option) {
     return {
       ok: false,
@@ -215,7 +289,7 @@ export function makeLoop(steps, hints, from, to, key, nameIndexes = [], withSite
   }
 
   const naming = Array.isArray(nameIndexes) ? nameIndexes : [];
-  const nameable = nameableSteps(steps, start, end);
+  const nameable = nameableSteps(steps, start, innerEnd);
   if (
     naming.some((index) => !Number.isInteger(index) || !nameable.includes(index)) ||
     new Set(naming).size !== naming.length
@@ -228,7 +302,7 @@ export function makeLoop(steps, hints, from, to, key, nameIndexes = [], withSite
   const names = fileNames(steps, naming.length);
 
   /** @type {Step[]} */
-  const inner = range.map((step, offset) => {
+  const inner = steps.slice(start, innerEnd + 1).map((step, offset) => {
     const candidate = usableHint(step, hints[start + offset])?.find(
       (item) => candidateKey(item.items) === key,
     );
@@ -242,12 +316,93 @@ export function makeLoop(steps, hints, from, to, key, nameIndexes = [], withSite
   // 記録から作る繰り返しでは、行の中の要素が見つからない行（キャンセル済みの注文など）を飛ばします（#174）。
   // 飛ばした行は、実行のカードと実行履歴に報告します。
   /** @type {Step} */
-  const loop = { type: 'forEach', items: option.items, onMissing: 'skip', steps: inner };
+  const loop = {
+    type: 'forEach',
+    items: option.items,
+    ...(nextPage ? { nextPage } : {}),
+    onMissing: 'skip',
+    steps: inner,
+  };
   return {
     ok: true,
-    steps: [...steps.slice(0, start), loop, ...steps.slice(end + 1)],
-    hints: [...hints.slice(0, start), null, ...hints.slice(end + 1)],
+    steps: [...steps.slice(0, start), loop, ...steps.slice(removeEnd + 1)],
+    hints: [...hints.slice(0, start), null, ...hints.slice(removeEnd + 1)],
+    pagers: [...pagers.slice(0, start), null, ...pagers.slice(removeEnd + 1)],
   };
+}
+
+/**
+ * 次のページへ送るクリックを選んだ場合の、繰り返す手順の末尾と、手順から除く範囲の末尾を返します（#182）。
+ * 繰り返す手順の末尾より後から、除く範囲の末尾までの手順を除きます。範囲の末尾と「次へ」の間の一覧へ戻る
+ * 移動、「次へ」のクリック、その直後のページの移動です。
+ * @param {Step[]} steps
+ * @param {number} to 範囲の末尾
+ * @param {number} index 次のページへ送るクリックの番号（pagerSteps の値）
+ * @returns {{ innerEnd: number, removeEnd: number }}
+ */
+export function pagerSpan(steps, to, index) {
+  let removeEnd = index;
+  while (isPageNavigation(steps[removeEnd + 1])) {
+    removeEnd += 1;
+  }
+  return { innerEnd: Math.min(to, index - 1), removeEnd: Math.max(removeEnd, to) };
+}
+
+/**
+ * リンクのクリックなど、ページの操作による移動の手順かを判定します（#182）。
+ * @param {Step | undefined} step
+ * @returns {boolean}
+ */
+function isPageNavigation(step) {
+  return step?.type === 'navigate' && step.cause === 'page';
+}
+
+/** ページ送りに使えるクリックの対象です（#182）。 */
+const PAGER_TAGS = ['a', 'button'];
+
+/**
+ * 次のページへ送るクリックとして選べる手順の番号を返します（#182）。次をすべて満たす手順です。
+ * - リンクかボタンのクリックで、ページ番号の数で位置が変わらない指定（PagerHint）を作れたもの
+ * - 選んだ行の外の要素を押したもの
+ * - 1 件目の操作を終えた後に押したもの。範囲の 2 番目以降か、範囲より後の手順で、範囲の末尾との間には
+ *   一覧のページへ戻る移動（［戻る］など）だけがあり、範囲の中でその後に続く手順はページの移動だけのもの
+ * @param {Step[]} steps
+ * @param {RowHint[]} hints
+ * @param {PagerHint[]} pagers steps と同じ順の、ページ送りに使う場合の指定
+ * @param {number} from
+ * @param {number} to
+ * @param {string} key 選んだ行の候補（candidateKey の値）
+ * @returns {number[]}
+ */
+export function pagerSteps(steps, hints, pagers, from, to, key) {
+  const list = steps.slice(0, from).findLast((step) => step.type === 'navigate');
+  /** @param {Step} step */
+  const isReturn = (step) =>
+    step.type === 'navigate' && list?.type === 'navigate' && step.url === list.url;
+  /** @type {number[]} */
+  const indexes = [];
+  for (let index = from + 1; index < steps.length; index += 1) {
+    if (index > to + 1 && !isReturn(steps[index - 1])) {
+      break;
+    }
+    const step = steps[index];
+    const inRow = (usableHint(step, hints[index]) ?? []).some(
+      (candidate) => candidateKey(candidate.items) === key,
+    );
+    if (
+      step.type === 'click' &&
+      step.download === undefined &&
+      step.newTab === undefined &&
+      step.target.scope === undefined &&
+      PAGER_TAGS.includes(step.target.tag) &&
+      pagers[index] &&
+      !inRow &&
+      steps.slice(index + 1, to + 1).every(isPageNavigation)
+    ) {
+      indexes.push(index);
+    }
+  }
+  return indexes;
 }
 
 /**

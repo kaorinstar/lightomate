@@ -7,8 +7,8 @@
 //
 // 行の見分けには、タグと class だけを使います。表示の文字は、翻訳で置き換わるため使いません（CLAUDE.md）。
 
-/* global buildTarget, looksGenerated, visibleText */
-/* exported buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, originalElement, resolveRows, rowCandidates */
+/* global buildTarget, looksGenerated, pointsTo, structuralSelector, visibleText */
+/* exported buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, originalElement, pagerSelectors, resolveRows, rowCandidates */
 
 /**
  * 押した要素が、Chrome の翻訳がページに差し込んだ要素であれば、その外側の本来の要素を返します。
@@ -331,4 +331,72 @@ function buildPageTarget(element) {
   );
   const structural = target.selectors.slice(-1);
   return { ...target, selectors: [...target.selectors.slice(0, -1), ...added, ...structural] };
+}
+
+/**
+ * 記録で押したリンクかボタンを、繰り返しのページ送り（nextPage）に使う場合の指定を返します（#182）。
+ * ページ番号の数で位置が変わらない指定だけを返します。何番目の要素かをたどる指定（buildTarget の最後の
+ * 指定）は、ページ番号のリンクを押したり、最後のページで別のページへ戻ったりするため含めません。
+ * 表示の文字を値に持つ属性（aria-label、placeholder）の指定も含めません。翻訳で文字が変わると見つからず、
+ * 途中のページで繰り返しが終わるためです（CLAUDE.md の翻訳の規則）。
+ * 作れない場合は空の配列です。
+ * @param {Element} element
+ * @returns {string[]}
+ */
+function pagerSelectors(element) {
+  const tag = element.tagName.toLowerCase();
+  if (tag !== 'a' && tag !== 'button') {
+    return [];
+  }
+  const selectors = buildPageTarget(element)
+    .selectors.slice(0, -1)
+    .filter((selector) => !/\[(aria-label|placeholder)=/.test(selector));
+  // rel="next" は、次のページへのリンクであることをページ自身が示す属性です。
+  const rel = `${tag}[rel~="next"]`;
+  if ((element.getAttribute('rel') ?? '').split(/\s+/).includes('next') && pointsTo(rel, element)) {
+    selectors.unshift(rel);
+  }
+  const last = lastOfTypeSelector(element);
+  if (last !== null && !selectors.includes(last)) {
+    selectors.push(last);
+  }
+  return selectors;
+}
+
+/**
+ * 何番目の要素かをたどる指定のうち、要素から 3 段上までを「同じタグの最後の要素」でたどる指定を返します（#182）。
+ * 例：`#pager > ul > li:last-of-type > a`。class のないページ送りで、「次へ」が常に最後にある場合に使います。
+ * 3 段の中に、最後でも唯一でもない要素がある場合は、位置で変わるため null です。それより上は、何番目の要素かを
+ * たどる指定のままです。ページ送りの部品より外側の並びは、ページ番号の数で変わらないためです。
+ * @param {Element} element
+ * @returns {string | null}
+ */
+function lastOfTypeSelector(element) {
+  /** @type {string[]} */
+  const parts = [];
+  /** @type {Element} */
+  let current = element;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const parent = current.parentElement;
+    if (!parent || parent === document.documentElement) {
+      break;
+    }
+    const tag = current.tagName.toLowerCase();
+    const sameTag = Array.from(parent.children).filter(
+      (child) => child.tagName === current.tagName,
+    );
+    if (sameTag.length === 1) {
+      parts.unshift(tag);
+    } else if (sameTag.at(-1) === current) {
+      parts.unshift(`${tag}:last-of-type`);
+    } else {
+      return null;
+    }
+    current = parent;
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  const selector = `${structuralSelector(current)} > ${parts.join(' > ')}`;
+  return pointsTo(selector, element) ? selector : null;
 }

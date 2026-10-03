@@ -125,6 +125,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.count,
         message.names,
         message.withSite,
+        message.nextPage,
       ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
       return true;
 
@@ -256,6 +257,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.matchedSelector,
         message.keys,
         message.rows,
+        message.pager,
       ).catch((error) => console.error('手順を記録できませんでした。', error));
       return false;
 

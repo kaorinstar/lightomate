@@ -18,12 +18,13 @@ import { guardRecordedStep } from '../shared/purchase-guard.js';
 import { applyStopRuleToRecordedStep } from '../shared/stop-rules.js';
 import { getStopRule } from '../common/stop-rules-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
-import { makeLoop, sanitizeRowHint } from '../shared/record-loop.js';
+import { makeLoop, sanitizePagerHint, sanitizeRowHint } from '../shared/record-loop.js';
 import { toLinkDownload } from '../shared/file-link.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
 /** @typedef {import('../shared/record-loop.js').RowHint} RowHint */
+/** @typedef {import('../shared/record-loop.js').PagerHint} PagerHint */
 
 /**
  * 記録中の状態です。
@@ -35,6 +36,8 @@ import { toLinkDownload } from '../shared/file-link.js';
  * @property {Step[]} steps 記録した手順
  * @property {RowHint[]} [rowHints] steps と同じ順の、操作した要素を含む一覧の行の候補（#167）。
  *   記録した手順を「各行で繰り返す」に変えるときに使います。フロー定義には含めません
+ * @property {PagerHint[]} [pagerHints] steps と同じ順の、押した要素を繰り返しのページ送りに使う場合の指定（#182）。
+ *   フロー定義には含めません
  */
 
 /**
@@ -50,6 +53,8 @@ const RECORDING_PAGE_KEY = 'recordingPage';
 const LAST_FLOW_KEY = 'lastFlow';
 /** 保存前の手順（lastFlow の steps）と同じ順の、一覧の行の候補です（#167）。 */
 const LAST_FLOW_HINTS_KEY = 'lastFlowRowHints';
+/** 保存前の手順と同じ順の、ページ送りに使う場合の指定です（#182）。 */
+const LAST_FLOW_PAGERS_KEY = 'lastFlowPagerHints';
 
 /** 手順の削除を、表示が古いために断ったときの理由です。 */
 const STALE_STEPS_ERROR =
@@ -122,9 +127,10 @@ export function startRecording(tabId) {
       // 実行時に同じページから始められるよう、記録を始めたページを最初の手順にします。
       steps: [{ type: 'navigate', url: frame.url, cause: 'user' }],
       rowHints: [null],
+      pagerHints: [null],
     };
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
-    await chrome.storage.session.remove([LAST_FLOW_KEY, LAST_FLOW_HINTS_KEY]);
+    await chrome.storage.session.remove([LAST_FLOW_KEY, LAST_FLOW_HINTS_KEY, LAST_FLOW_PAGERS_KEY]);
     await attach(recording);
     return { ok: true };
   });
@@ -158,6 +164,7 @@ export function stopRecording() {
     await chrome.storage.session.set({
       [LAST_FLOW_KEY]: flow,
       [LAST_FLOW_HINTS_KEY]: alignHints(recording.steps, recording.rowHints),
+      [LAST_FLOW_PAGERS_KEY]: alignHints(recording.steps, recording.pagerHints),
     });
     await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
     await detach(recording.tabId);
@@ -186,7 +193,12 @@ export function removeRecordedStep(index, count) {
       const rowHints = /** @type {RowHint[]} */ (
         withoutStep(alignHints(recording.steps, recording.rowHints), index, count)
       );
-      await chrome.storage.session.set({ [RECORDING_KEY]: { ...recording, steps, rowHints } });
+      const pagerHints = /** @type {PagerHint[]} */ (
+        withoutStep(alignHints(recording.steps, recording.pagerHints), index, count)
+      );
+      await chrome.storage.session.set({
+        [RECORDING_KEY]: { ...recording, steps, rowHints, pagerHints },
+      });
       return { ok: true };
     }
 
@@ -199,12 +211,18 @@ export function removeRecordedStep(index, count) {
       return { ok: false, error: STALE_STEPS_ERROR };
     }
     if (steps.length === 0) {
-      await chrome.storage.session.remove([LAST_FLOW_KEY, LAST_FLOW_HINTS_KEY]);
+      await chrome.storage.session.remove([
+        LAST_FLOW_KEY,
+        LAST_FLOW_HINTS_KEY,
+        LAST_FLOW_PAGERS_KEY,
+      ]);
     } else {
       const hints = alignHints(lastFlow.steps, await getLastFlowHints());
+      const pagers = alignHints(lastFlow.steps, await getLastFlowPagers());
       await chrome.storage.session.set({
         [LAST_FLOW_KEY]: { ...lastFlow, steps },
         [LAST_FLOW_HINTS_KEY]: withoutStep(hints, index, count),
+        [LAST_FLOW_PAGERS_KEY]: withoutStep(pagers, index, count),
       });
     }
     return { ok: true };
@@ -227,6 +245,7 @@ export function resetRecording() {
       RECORDING_KEY,
       LAST_FLOW_KEY,
       LAST_FLOW_HINTS_KEY,
+      LAST_FLOW_PAGERS_KEY,
       RECORDING_PAGE_KEY,
     ]);
     if (recording) {
@@ -246,9 +265,10 @@ export function resetRecording() {
  * @param {unknown} count 表示していた手順の件数
  * @param {unknown} [names] ファイル名に使う手順の番号（#179）
  * @param {unknown} [withSite] ファイル名の先頭にサイト名を入れるか（#179）
+ * @param {unknown} [nextPage] 次のページへ送るクリックの番号（#182）。ページ送りをしない場合は省きます
  * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
  */
-export function makeRecordedLoop(from, to, key, count, names, withSite) {
+export function makeRecordedLoop(from, to, key, count, names, withSite, nextPage) {
   return enqueue(async () => {
     const recording = await getRecording();
     const lastFlow = recording ? undefined : await getLastFlow();
@@ -264,18 +284,28 @@ export function makeRecordedLoop(from, to, key, count, names, withSite) {
       };
     }
     const hints = alignHints(steps, recording ? recording.rowHints : await getLastFlowHints());
-    const result = makeLoop(steps, hints, from, to, key, names, withSite);
+    const pagers = alignHints(steps, recording ? recording.pagerHints : await getLastFlowPagers());
+    const result = makeLoop(steps, hints, from, to, key, names, withSite, {
+      index: nextPage,
+      pagers,
+    });
     if (!result.ok) {
       return result;
     }
     if (recording) {
       await chrome.storage.session.set({
-        [RECORDING_KEY]: { ...recording, steps: result.steps, rowHints: result.hints },
+        [RECORDING_KEY]: {
+          ...recording,
+          steps: result.steps,
+          rowHints: result.hints,
+          pagerHints: result.pagers,
+        },
       });
     } else if (lastFlow) {
       await chrome.storage.session.set({
         [LAST_FLOW_KEY]: { ...lastFlow, steps: result.steps },
         [LAST_FLOW_HINTS_KEY]: result.hints,
+        [LAST_FLOW_PAGERS_KEY]: result.pagers,
       });
     }
     return { ok: true };
@@ -283,15 +313,22 @@ export function makeRecordedLoop(from, to, key, count, names, withSite) {
 }
 
 /**
- * 手順と同じ数の、行の候補の配列を返します。候補を持たない記録（この機能より前に始めた記録など）では、
- * 足りない分を null で補います。
+ * 手順と同じ数の、手順に添える値（行の候補、ページ送りに使う場合の指定）の配列を返します。値を持たない記録
+ * （この機能より前に始めた記録など）では、足りない分を null で補います。
+ * @template T
  * @param {Step[]} steps
- * @param {unknown} hints
- * @returns {RowHint[]}
+ * @param {T[] | undefined} hints
+ * @returns {(T | null)[]}
  */
 function alignHints(steps, hints) {
   const list = Array.isArray(hints) ? hints : [];
-  return steps.map((_, index) => /** @type {RowHint} */ (list[index] ?? null));
+  return steps.map((_, index) => list[index] ?? null);
+}
+
+/** @returns {Promise<PagerHint[] | undefined>} */
+async function getLastFlowPagers() {
+  const stored = await chrome.storage.session.get(LAST_FLOW_PAGERS_KEY);
+  return /** @type {PagerHint[] | undefined} */ (stored[LAST_FLOW_PAGERS_KEY]);
 }
 
 /** @returns {Promise<RowHint[] | undefined>} */
@@ -344,9 +381,10 @@ async function getLastFlow() {
  * @param {unknown} matchedSelector クリックした要素が一致した、止める要素の指定
  * @param {unknown} [keys] クリックした要素の、翻訳で変わらない手がかり（content/element-text.js、#97）
  * @param {unknown} [rows] 操作した要素を含む一覧の行の候補（content/picker-rows.js の rowCandidates、#167）
+ * @param {unknown} [pager] 押した要素をページ送りに使う場合の指定（content/picker-rows.js の pagerSelectors、#182）
  * @returns {Promise<void>}
  */
-export function addStep(step, sender, texts, matchedSelector, keys, rows) {
+export function addStep(step, sender, texts, matchedSelector, keys, rows, pager) {
   return enqueue(async () => {
     const recording = await getRecording();
     if (
@@ -413,6 +451,10 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows) {
       // 一時停止に変えた手順は要素を操作しないため、行の候補を添えません。
       const hint = recorded.type === received.type ? sanitizeRowHint(rows) : null;
       recording.rowHints = [...alignHints(recording.steps, recording.rowHints), hint];
+      // ページ送りに使えるのは、そのまま記録したクリックだけです（#182）。
+      const pagerHint =
+        recorded.type === 'click' && received.type === 'click' ? sanitizePagerHint(pager) : null;
+      recording.pagerHints = [...alignHints(recording.steps, recording.pagerHints), pagerHint];
       recording.steps.push(recorded);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
     }
@@ -448,6 +490,7 @@ export function onCommitted(details) {
       return;
     }
     recording.rowHints = [...alignHints(recording.steps, recording.rowHints), null];
+    recording.pagerHints = [...alignHints(recording.steps, recording.pagerHints), null];
     recording.steps.push({ type: 'navigate', url: details.url, cause });
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
   });

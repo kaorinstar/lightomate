@@ -80,6 +80,7 @@ import {
 /** @typedef {import('../background/recording.js').Recording} Recording */
 /** @typedef {import('../background/recording.js').RecordingPage} RecordingPage */
 /** @typedef {import('../shared/record-loop.js').RowHint} RowHint */
+/** @typedef {import('../shared/record-loop.js').PagerHint} PagerHint */
 /** @typedef {import('../background/runner.js').RunState} RunState */
 /** @typedef {import('../common/flow-store.js').StoredFlow} StoredFlow */
 /** @typedef {import('../common/batch-store.js').StoredBatch} StoredBatch */
@@ -365,7 +366,7 @@ elements.saveFlow.addEventListener('click', async () => {
     showNotice(elements.saveNotice, `保存できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
-  await chrome.storage.session.remove(['lastFlow', 'lastFlowRowHints']);
+  await chrome.storage.session.remove(['lastFlow', 'lastFlowRowHints', 'lastFlowPagerHints']);
   showSaved(result.id, name, result.name);
 });
 
@@ -691,7 +692,7 @@ async function render() {
       ...stepItems(recording.steps, running, elements.recordingNotice),
     );
     elements.recordingDiscard.disabled = running || recording.steps.length === 0;
-    recordingLoopForm.update(recording.steps, recording.rowHints, running);
+    recordingLoopForm.update(recording.steps, recording.rowHints, running, recording.pagerHints);
     // 最後に記録した手順が見えるよう、一覧の末尾まで移動します。
     elements.steps.scrollTop = elements.steps.scrollHeight;
   }
@@ -713,6 +714,7 @@ async function render() {
     lastFlow?.steps ?? [],
     /** @type {RowHint[] | undefined} */ (stored.lastFlowRowHints),
     running,
+    /** @type {PagerHint[] | undefined} */ (stored.lastFlowPagerHints),
   );
   if (lastFlow && !elements.flowName.value) {
     elements.flowName.value = lastFlow.name;

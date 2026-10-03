@@ -235,3 +235,39 @@ test('行の候補は、外側の行も含めて 5 件までにする', () => {
   );
   assert.equal(candidates[0].items.selectors[0], 'div.l0');
 });
+
+test('記録で押した「次へ」は、ページ番号の数で位置が変わらない指定だけをページ送りに使う（#182）', () => {
+  // Amazon の購入履歴と同じ形です。ページ番号の数で、「次へ」が何番目の li かが変わります。
+  const first = page(`
+    <div id="pager"><ul class="a-pagination"><li class="a-disabled">前へ</li><li class="a-selected"><a href="#">1</a></li><li class="a-normal"><a href="?p=2">2</a></li><li class="a-last"><a href="?p=2">次へ</a></li></ul></div>`);
+  const selectors = plain(first.window.pagerSelectors(first.$('li.a-last > a')));
+  assert.deepEqual(selectors, ['li.a-last > a', 'html > body > div > ul > li:last-of-type > a']);
+  // 何番目の li かをたどる指定（buildTarget の最後の指定）は含めません。
+  assert.ok(selectors.every((/** @type {string} */ selector) => !selector.includes('nth-of-type')));
+
+  const second = page(`
+    <div id="pager"><ul class="a-pagination"><li class="a-normal"><a href="?p=1">前へ</a></li><li class="a-normal"><a href="?p=1">1</a></li><li class="a-selected"><a href="#">2</a></li><li class="a-normal"><a href="?p=3">3</a></li><li class="a-last"><a href="?p=3">次へ</a></li></ul></div>`);
+  for (const selector of selectors) {
+    assert.equal(second.document.querySelector(selector)?.getAttribute('href'), '?p=3', selector);
+  }
+  // 最後のページでは「次へ」がリンクではなくなります。どの指定でも見つからず、最後のページと判定されます。
+  const last = page(`
+    <div id="pager"><ul class="a-pagination"><li class="a-normal"><a href="?p=2">前へ</a></li><li class="a-normal"><a href="?p=1">1</a></li><li class="a-normal"><a href="?p=2">2</a></li><li class="a-selected"><a href="#">3</a></li><li class="a-disabled a-last">次へ</li></ul></div>`);
+  for (const selector of selectors) {
+    assert.equal(last.document.querySelector(selector), null, selector);
+  }
+});
+
+test('ページ送りの指定には、翻訳で変わる aria-label を使わず、リンクとボタン以外では作らない（#182）', () => {
+  const { window, $ } = page(`
+    <nav><a href="?p=1">1</a><a href="?p=2">2</a><a aria-label="次のページ" href="?p=2">→</a></nav><span class="text">文字</span>`);
+  const selectors = plain(window.pagerSelectors($('a[aria-label]')));
+  assert.deepEqual(selectors, ['html > body > nav > a:last-of-type']);
+  assert.deepEqual(plain(window.pagerSelectors($('span.text'))), []);
+});
+
+test('rel="next" のリンクは、その属性の指定を先に使う（#182）', () => {
+  const { window, $ } = page(`
+    <div><a href="?p=1">1</a><a rel="next" href="?p=2">次へ</a><a href="?p=9">最後</a></div>`);
+  assert.deepEqual(plain(window.pagerSelectors($('a[rel]'))), ['a[rel~="next"]']);
+});
