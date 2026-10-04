@@ -7,6 +7,7 @@ import {
   flowOrigins,
   formatFlowJson,
   frameKey,
+  frameLooseKey,
   orderFlow,
   replaceJsonFields,
   replaceJsonName,
@@ -1416,4 +1417,36 @@ test('iframe の指定に使う URL は、オリジンとパスだけを残す�
   assert.equal(frameKey('https://pay.example.net'), 'https://pay.example.net/');
   assert.equal(frameKey('about:blank'), undefined);
   assert.equal(frameKey('javascript:void(0)'), undefined);
+});
+
+test('iframe の URL の比べ方：更新で変わる文字（16 進数で 8 文字以上の部分）だけを除く（#191）', () => {
+  const card = 'https://js.stripe.com/v3/elements-inner-card-d60a909b60552386985297d380f33162.html';
+  const updated =
+    'https://js.stripe.com/v3/elements-inner-card-0123456789abcdef0123456789abcdef.html';
+  const iban = 'https://js.stripe.com/v3/elements-inner-iban-755370d71b2763411a5ba25f08b8b1af.html';
+  assert.equal(frameLooseKey(card), 'https://js.stripe.com/v3/elements-inner-card-*.html');
+  assert.equal(frameLooseKey(card), frameLooseKey(updated));
+  // 欄の種類の語が異なる iframe は、同じとみなしません。
+  assert.notEqual(frameLooseKey(card), frameLooseKey(iban));
+  // サイトが異なる iframe は、同じとみなしません。
+  assert.notEqual(
+    frameLooseKey(card),
+    frameLooseKey(card.replace('js.stripe.com', 'js.example.com')),
+  );
+  // 7 文字以下の部分、16 進数以外を含む部分、v3 のような部分は除きません。
+  assert.equal(
+    frameLooseKey('https://a.example/v3/card-abcdef1.html'),
+    'https://a.example/v3/card-abcdef1.html',
+  );
+  assert.equal(
+    frameLooseKey('https://a.example/v4/card-abcdefgh0.html'),
+    'https://a.example/v4/card-abcdefgh0.html',
+  );
+  assert.notEqual(
+    frameLooseKey('https://a.example/v3/card.html'),
+    frameLooseKey('https://a.example/v4/card.html'),
+  );
+  // パスの区切りの直後・直前の部分も対象です。
+  assert.equal(frameLooseKey('https://a.example/0123abcd/x_89abcdef'), 'https://a.example/*/x_*');
+  assert.equal(frameLooseKey('about:blank'), undefined);
 });

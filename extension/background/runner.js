@@ -15,6 +15,7 @@ import { addHistory } from '../common/history-store.js';
 import {
   flowOrigins,
   frameKey,
+  frameLooseKey,
   isWebUrl,
   stepOrigin,
   validateFlow,
@@ -106,6 +107,8 @@ import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../sh
  * @property {number} [schemaVersion] 実行しているフローの形式の版。実行履歴に記録します（#93）
  * @property {'schedule'} [trigger] 定期実行（#22）で始めた場合に 'schedule' です。通知と実行履歴に使います
  * @property {SkippedRow[]} [skipped] 行の中の要素が見つからず飛ばした行（#174）。実行履歴にも記録します
+ * @property {string[]} [notes] 実行の結果に添える補足（#191）。iframe のページの名前の一部を除いて見つけたことなど、
+ *   成功した実行でも利用者が知っておくべきことです。実行履歴にも記録します
  * @property {string} startedAt
  */
 
@@ -582,6 +585,23 @@ export async function listRunStates() {
 /** @param {RunState} state */
 async function setRunState(state) {
   await chrome.storage.session.set({ [RUN_KEY_PREFIX + state.runId]: state });
+}
+
+/** 実行の補足（notes）の件数の上限です（#191）。 */
+const MAX_RUN_NOTES = 5;
+
+/**
+ * 実行の補足（notes）を 1 件加えます（#191）。同じ補足は 1 度だけ加えます。繰り返しの各行で同じ枠を探す場合などに、
+ * 同じ文が並ばないようにするためです。
+ * @param {string} runId
+ * @param {string} note
+ */
+async function addRunNote(runId, note) {
+  const state = await getRunState(runId);
+  const notes = state?.notes ?? [];
+  if (state && !notes.includes(note) && notes.length < MAX_RUN_NOTES) {
+    await setRunState({ ...state, notes: [...notes, note] });
+  }
 }
 
 /**
@@ -2408,7 +2428,9 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
  * 要素の指定に frame がある場合（#20）に、一致する iframe を探し、実行用のスクリプトを読み込んで、その iframe の
  * フレームの番号を返します。frame がない場合は、最上位のページ（0）です。
  * 一致するのは、最上位のページに直接埋め込まれた iframe のうち、中のページの URL のオリジンとパスが指定と同じもの
- * です。表示が遅れる場合に備え、要素と同じ時間まで待ちます。見つからない場合はやり直しの対象にします。
+ * です。同じものがない場合は、提供元の更新で変わる文字を除いて比べます（#191）。決済サービスなどの iframe の
+ * ページの名前は、更新のたびに変わるためです。この場合は、そのことを実行の補足（notes）に残します。
+ * 表示が遅れる場合に備え、要素と同じ時間まで待ちます。見つからない場合はやり直しの対象にします。
  * 一致する iframe が複数ある場合は、どちらに入力するかを推測で決めず、停止します。入力値を意図しない欄に
  * 入力しないためです。
  * @param {string} runId
@@ -2424,16 +2446,26 @@ async function findTargetFrame(runId, tabId, target) {
   const deadline = Date.now() + ELEMENT_TIMEOUT_MS;
   for (;;) {
     const frames = (await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null)) ?? [];
-    const matches = frames.filter(
-      (frame) => frame.frameId !== 0 && frame.parentFrameId === 0 && frameKey(frame.url) === key,
-    );
+    const children = frames.filter((frame) => frame.frameId !== 0 && frame.parentFrameId === 0);
+    const exact = children.filter((frame) => frameKey(frame.url) === key);
+    const looseKey = frameLooseKey(key);
+    const matches =
+      exact.length > 0 || looseKey === undefined
+        ? exact
+        : children.filter((frame) => frameLooseKey(frame.url) === looseKey);
     if (matches.length > 1) {
       throw new Error(
         `要素を含む枠（${key}）に一致する iframe が ${matches.length} 個あり、どれで操作するか決められないため、停止しました。`,
       );
     }
     if (matches.length === 1) {
-      const [{ frameId }] = matches;
+      const [{ frameId, url }] = matches;
+      if (exact.length === 0) {
+        await addRunNote(
+          runId,
+          `枠のページの名前が記録時と異なるため、名前のうち更新で変わる部分を除いて見つけました（記録時：${key}、実行時：${frameKey(url) ?? url}）。`,
+        );
+      }
       await waitForPage(
         runId,
         tabId,

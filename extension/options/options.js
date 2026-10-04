@@ -2493,6 +2493,13 @@ async function renderHistory() {
         skipped.textContent = skippedText(entry.skipped);
         reason.append(skipped);
       }
+      // 実行の補足（#191）も、完了した実行で示します。
+      for (const note of entry.notes ?? []) {
+        const text = document.createElement('div');
+        text.className = 'lm-sub';
+        text.textContent = note;
+        reason.append(text);
+      }
 
       const files = document.createElement('td');
       files.className = 'lm-sub';

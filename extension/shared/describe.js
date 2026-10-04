@@ -255,15 +255,15 @@ export function runStatusTone(status) {
  * 完了した場合も、飛ばした行を報告します。
  * @param {{ flowName: string, status: string, stepIndex: number, total: number, items?: number[],
  *   page?: number, loops?: ('item' | 'round')[], error?: string, note?: string, midStep?: boolean,
- *   skipped?: import('./history.js').SkippedRow[] }} run
+ *   skipped?: import('./history.js').SkippedRow[], notes?: string[] }} run
  * @param {Step | undefined} step stepIndex の手順
  * @returns {string}
  */
 export function runDetailText(run, step) {
   const base = runDetailBase(run, step);
-  // 行の中の要素が見つからず飛ばした行（#174）は、どの結果でも報告します。
+  // 行の中の要素が見つからず飛ばした行（#174）と、実行の補足（#191）は、どの結果でも報告します。
   const skipped = skippedText(run.skipped);
-  return [base, skipped].filter((text) => text !== '').join(' ');
+  return [base, skipped, ...(run.notes ?? [])].filter((text) => text !== '').join(' ');
 }
 
 /** 飛ばした行の説明に並べる件数の上限です。超えた分は件数だけを示します。 */

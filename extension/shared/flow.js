@@ -1459,6 +1459,23 @@ export function frameKey(value) {
 }
 
 /**
+ * iframe の指定の URL から、提供元の更新で変わる文字を除いた値を返します（#191）。
+ * 決済サービスなどの iframe のページの名前は、更新のたびに変わる文字（ハッシュ）を含みます。例：
+ * https://js.stripe.com/v3/elements-inner-card-d60a909b60552386985297d380f33162.html
+ * パスを区切り（/、-、_、.）で分けた各部分のうち、16 進数の文字だけで 8 文字以上のものを * に置き換えます。
+ * card や iban のような語と、v3 のような部分は残すため、別の欄の iframe や別の版のページとは一致しません。
+ * Web ページの URL でない場合は undefined です。
+ * @param {string} value
+ * @returns {string | undefined}
+ */
+export function frameLooseKey(value) {
+  const url = parseWebUrl(value);
+  return url
+    ? `${url.origin}${url.pathname.replace(/(?<=^|[/_.-])[0-9a-f]{8,}(?=$|[/_.-])/gi, '*')}`
+    : undefined;
+}
+
+/**
  * パスなどを含まない、Web ページのオリジンそのものかを判定します。
  * @param {string} value
  * @returns {boolean}

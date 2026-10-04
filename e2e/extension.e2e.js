@@ -406,6 +406,48 @@ test('iframe：一致する iframe が 2 つある場合は、どちらにも入
   await opened.close();
 });
 
+test('iframe：枠のページの名前のハッシュが記録時と異なっても、その枠の中で入力し、実行履歴に補足を残す（#191）', async () => {
+  const recorded = `${server.origin}/frame-card-0123456789abcdef.html`;
+  const current = `${server.origin}/frame-card-fedcba9876543210.html`;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 18,
+    name: '名前の変わった枠',
+    origin: server.origin,
+    steps: [
+      {
+        type: 'navigate',
+        url: `${server.origin}/frame-host.html?frame=${encodeURIComponent(current)}`,
+        cause: 'user',
+      },
+      {
+        type: 'input',
+        target: { ...target('input[name="holder"]', 'input', '名義'), frame: { url: recorded } },
+        value: 'YAMADA TARO',
+      },
+      {
+        type: 'click',
+        target: { ...target('#confirm', 'button', '確認へ'), frame: { url: recorded } },
+      },
+      {
+        type: 'navigate',
+        url: `${server.origin}/done.html?holder=YAMADA+TARO`,
+        cause: 'page',
+      },
+    ],
+  };
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  // 同じ枠を 2 つの手順で探しますが、補足は 1 件だけ残します。
+  assert.deepEqual(entry.notes, [
+    `枠のページの名前が記録時と異なるため、名前のうち更新で変わる部分を除いて見つけました（記録時：${recorded}、実行時：${current}）。`,
+  ]);
+  const [done] = pagesAt('/done.html');
+  assert.ok(done, '完了のページが開いていません。');
+  assert.equal(new URL(done.url()).searchParams.get('holder'), 'YAMADA TARO');
+  await done.close();
+});
+
 test('新しいタブで開いた先で PDF を保存し、closeTab で元のタブに戻る', async () => {
   /** @type {Flow} */
   const flow = {
