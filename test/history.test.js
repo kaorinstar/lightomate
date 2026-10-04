@@ -171,7 +171,7 @@ test('CSV は見出しと各行を CRLF で区切り、先頭に BOM を付け�
   const csv = historyToCsv([entry('a')]);
   assert.ok(
     csv.startsWith(
-      '﻿開始,終了,フロー,サイト,結果,止まった手順,止まった手順の内容,ページ,やり直し,理由,飛ばした行,保存したファイル\r\n',
+      '﻿開始,終了,フロー,サイト,結果,止まった手順,止まった手順の内容,ページ,やり直し,理由,飛ばした行,補足,保存したファイル\r\n',
     ),
   );
   assert.ok(csv.endsWith('\r\n'));
@@ -189,7 +189,7 @@ test('CSV の値に区切りの文字、引用符、改行を含む場合は引�
     },
   ]);
   assert.ok(csv.includes('"領収書, ""8 月"""'));
-  assert.ok(csv.includes(',失敗,2 / 3,,,,"1 行目\n2 行目",,'));
+  assert.ok(csv.includes(',失敗,2 / 3,,,,"1 行目\n2 行目",,,'));
 });
 
 test("CSV の値が数式として実行されないよう、= などで始まる値の先頭に ' を付ける", () => {
@@ -421,4 +421,23 @@ test('飛ばした行（#174）は、完了した実行でも履歴に残し、�
   assert.ok(
     historyToCsv([/** @type {any} */ (done)]).includes('要素が見つからない 2 件の行を飛ばしました'),
   );
+});
+
+test('実行の補足は、成功した実行でも記録し、入力した値を伏せ、報告用のテキストに含める（#191）', () => {
+  const note =
+    '枠のページの名前が記録時と異なるため、…（記録時：https://pay.example.net/card-aaaa、実行時：…）。';
+  const result = historyEntryFromRun(
+    { ...run, status: 'done', stepIndex: 2, notes: [note, '値は 山田 です。'] },
+    '2026-09-25T00:01:00.000Z',
+    ['山田'],
+  );
+  assert.ok(result);
+  assert.deepEqual(result.notes, [note, `値は ${REDACTED} です。`]);
+  assert.match(
+    historyEntryText(result),
+    new RegExp(`\\n補足：${note.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+  assert.ok(historyToCsv([result]).includes(note));
+  // 補足がない実行では、項目を持ちません。
+  assert.equal(historyEntryFromRun({ ...run, status: 'done' }, '', [])?.notes, undefined);
 });

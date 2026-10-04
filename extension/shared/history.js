@@ -35,6 +35,7 @@ import { describeStep, skippedText } from './describe.js';
  * @property {number} [schemaVersion] 実行したフローの形式の版（#93）
  * @property {'schedule'} [trigger] 定期実行（#22）で始めた場合に 'schedule' です
  * @property {SkippedRow[]} [skipped] 行の中の要素が見つからず飛ばした行（#174）。完了した実行でも記録します
+ * @property {string[]} [notes] 実行の結果に添える補足（#191）。完了した実行でも記録します。入力した値は伏せてあります
  *
  * step 以降の項目は #93 で加えました。それより前に記録した履歴にはありません。
  */
@@ -115,7 +116,7 @@ export function withoutHistoryEntries(history, runIds) {
  *   runId: string, flowId: string, flowName: string, origin: string, startedAt: string,
  *   status: string, stepIndex: number, total: number, error?: string, items?: number[],
  *   loops?: ('item' | 'round')[], page?: number,
- *   schemaVersion?: number, trigger?: 'schedule', skipped?: SkippedRow[],
+ *   schemaVersion?: number, trigger?: 'schedule', skipped?: SkippedRow[], notes?: string[],
  * }} run 実行の状態（background/runner.js の RunState）
  * @param {string} endedAt 終了した日時（ISO 8601）
  * @param {Iterable<string>} values 伏せる値
@@ -143,6 +144,11 @@ export function historyEntryFromRun(run, endedAt, values, extra = {}) {
       ? { skipped: run.skipped.map((row) => ({ ...row, items: [...row.items] })) }
       : {}),
   };
+  // 補足（#191）は、完了した実行でも記録します。
+  if (run.notes && run.notes.length > 0) {
+    const redactingNotes = [...values];
+    entry.notes = run.notes.map((note) => redactValues(note, redactingNotes));
+  }
   if (status === 'done') {
     return entry;
   }
@@ -242,6 +248,7 @@ const CSV_COLUMNS = /** @type {const} */ ([
   ['やり直し', (/** @type {HistoryEntry} */ entry) => retryText(entry)],
   ['理由', (/** @type {HistoryEntry} */ entry) => entry.reason ?? ''],
   ['飛ばした行', (/** @type {HistoryEntry} */ entry) => skippedText(entry.skipped)],
+  ['補足', (/** @type {HistoryEntry} */ entry) => (entry.notes ?? []).join('\n')],
   ['保存したファイル', (/** @type {HistoryEntry} */ entry) => entry.files.join('\n')],
 ]);
 
@@ -318,6 +325,9 @@ export function historyEntryText(entry) {
   }
   if (entry.skipped && entry.skipped.length > 0) {
     lines.push(`飛ばした行：${skippedText(entry.skipped)}`);
+  }
+  if (entry.notes && entry.notes.length > 0) {
+    lines.push(`補足：${entry.notes.join('')}`);
   }
   if (entry.files.length > 0) {
     lines.push(`保存したファイル：${entry.files.join('、')}`);
