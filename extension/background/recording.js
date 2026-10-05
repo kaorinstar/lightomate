@@ -18,6 +18,7 @@ import {
 import { guardRecordedStep } from '../shared/purchase-guard.js';
 import { applyStopRuleToRecordedStep } from '../shared/stop-rules.js';
 import { getStopRule } from '../common/stop-rules-store.js';
+import { getConfirmDetection } from '../common/confirm-detection-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
 import { makeLoop, sanitizePagerHint, sanitizeRowHint } from '../shared/record-loop.js';
 import { toLinkDownload } from '../shared/file-link.js';
@@ -477,7 +478,9 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
     if (ruled.note !== undefined) {
       notice =
         'サイトごとの指定に一致したため、クリックの代わりに一時停止を記録しました。実行はこの手前で止まります。';
-    } else {
+    } else if (await getConfirmDetection()) {
+      // 確定ボタンの自動検出を無効にしている間（#47）は、文言による判定を行わず、クリックのまま記録します。
+      // 上のサイトごとの指定は、利用者が明示した指定のため、設定にかかわらず確かめます。
       const guarded = guardRecordedStep(
         /** @type {Step} */ (received),
         Array.isArray(texts) ? texts.filter((text) => typeof text === 'string') : [],

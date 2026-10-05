@@ -448,6 +448,190 @@ test('iframe：枠のページの名前のハッシュが記録時と異なっ�
   await done.close();
 });
 
+/**
+ * 確定ボタンの自動検出（#47）の設定を変えます。無効にした記録は chrome.storage.local の confirmDetection です。
+ * @param {boolean} enabled
+ */
+async function setConfirmDetection(enabled) {
+  await browser.extensionPage.evaluate(
+    (enabled) =>
+      enabled
+        ? chrome.storage.local.remove('confirmDetection')
+        : chrome.storage.local.set({ confirmDetection: false }),
+    enabled,
+  );
+}
+
+/** 確定ボタンのページで、［注文を確定する］を押すフローです（#47）。 */
+function confirmOrderFlow() {
+  return /** @type {Flow} */ ({
+    schemaVersion: 18,
+    name: '注文を確定する',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', url: `${server.origin}/confirm-order.html`, cause: 'user' },
+      {
+        type: 'click',
+        target: { ...target('#place-order', 'button', '注文を確定する'), text: '注文を確定する' },
+      },
+      { type: 'navigate', url: `${server.origin}/done.html?ordered=1`, cause: 'page' },
+    ],
+  });
+}
+
+test('確定ボタンの自動検出：無効の間は、確定ボタンのクリックを記録し、実行でも押して、補足を残す（#47）', async () => {
+  const { extensionPage } = browser;
+  await setConfirmDetection(false);
+  try {
+    const page = await browser.context.newPage();
+    await page.goto(`${server.origin}/confirm-order.html`);
+    const tabId = await extensionPage.evaluate(async (url) => {
+      const [tab] = await chrome.tabs.query({ url });
+      return tab.id;
+    }, `${server.origin}/confirm-order.html`);
+    const started = await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    );
+    assert.deepEqual(started, { ok: true });
+    await Promise.all([page.waitForURL(/\/done\.html/), page.click('#place-order')]);
+    await waitUntil(
+      () =>
+        extensionPage.evaluate(async () => {
+          const { recording } = await chrome.storage.session.get('recording');
+          return /** @type {{ steps: Step[] }} */ (recording).steps;
+        }),
+      (steps) => steps.length >= 3,
+    );
+    const stopped = await extensionPage.evaluate(() =>
+      chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+    );
+    await page.close();
+    // 一時停止に置き換えず、クリックのまま記録します。
+    assert.deepEqual(
+      /** @type {Step[]} */ (stopped.flow.steps).map((step) => step.type),
+      ['navigate', 'click', 'navigate'],
+    );
+
+    const entry = await runFlow(extensionPage, stopped.flow);
+    assert.equal(entry.status, 'done', entry.reason ?? '');
+    assert.deepEqual(entry.notes, ['確定ボタンの自動検出を無効にして実行しました。']);
+    const [done] = pagesAt('/done.html');
+    assert.ok(done, '確定ボタンを押した後のページが開いていません。');
+    await done.close();
+  } finally {
+    await setConfirmDetection(true);
+  }
+
+  // 有効に戻すと、同じフローでも確定ボタンの手前で止まります。
+  const entry = await runFlow(extensionPage, confirmOrderFlow());
+  assert.equal(entry.status, 'halted', entry.reason ?? '');
+  assert.match(entry.reason ?? '', /確定ボタン「注文を確定する」の手前/);
+  assert.equal(entry.notes, undefined);
+  for (const opened of pagesAt('/confirm-order.html')) {
+    await opened.close();
+  }
+});
+
+test('確定ボタンの自動検出：無効でも、定期実行では確定ボタンの手前で止まる（#47）', async () => {
+  const { extensionPage } = browser;
+  await setConfirmDetection(false);
+  try {
+    await extensionPage.evaluate(async (flow) => {
+      await chrome.storage.local.remove(['history', 'schedules']);
+      await chrome.storage.local.set({
+        flows: { confirm: { id: 'confirm', createdAt: '', updatedAt: '', flow } },
+      });
+    }, confirmOrderFlow());
+    // 1 分前の時刻を毎日の予約として設定すると、すぐに実行の対象になります。
+    const previous = new Date(Date.now() - 60_000);
+    const time = [previous.getHours(), previous.getMinutes()]
+      .map((value) => String(value).padStart(2, '0'))
+      .join(':');
+    await extensionPage.evaluate(
+      (schedule) => chrome.storage.local.set({ schedules: { confirm: schedule } }),
+      {
+        frequency: 'daily',
+        time,
+        catchUp: true,
+        createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+      },
+    );
+    const [entry] = await waitUntil(
+      () =>
+        extensionPage.evaluate(async () => {
+          const { history } = await chrome.storage.local.get('history');
+          return /** @type {import('../extension/shared/history.js').HistoryEntry[]} */ (
+            history ?? []
+          );
+        }),
+      (entries) => entries.length >= 1,
+      30_000,
+    );
+    assert.equal(entry.trigger, 'schedule');
+    assert.equal(entry.status, 'halted', entry.reason ?? '');
+    assert.match(entry.reason ?? '', /確定ボタン「注文を確定する」の手前/);
+    assert.equal(entry.notes, undefined);
+  } finally {
+    await extensionPage.evaluate(() => chrome.storage.local.remove('schedules'));
+    await setConfirmDetection(true);
+    for (const opened of pagesAt('/confirm-order.html')) {
+      await opened.close();
+    }
+  }
+});
+
+test('確定ボタンの自動検出：設定画面で無効にするとリスクを含む確認が出て、無効の間はサイドパネルに表示する（#47）', async () => {
+  const { extensionPage: page } = browser;
+  await page.reload();
+  await page.click('#tab-settings');
+  const toggle = page.locator('#confirm-detection');
+  assert.equal(await toggle.isChecked(), true);
+  await page.getByText('無効にした場合のリスク').waitFor();
+
+  // ［キャンセル］では有効のままです。
+  await toggle.click();
+  const confirm = page.locator('#confirm-detection-confirm');
+  await confirm.getByText('誤って確定した場合の損害は、利用者の責任になります。').waitFor();
+  await confirm.getByRole('button', { name: 'キャンセル' }).click();
+  assert.equal(await toggle.isChecked(), true);
+  assert.equal(
+    await page.evaluate(
+      async () => (await chrome.storage.local.get('confirmDetection')).confirmDetection,
+    ),
+    undefined,
+  );
+
+  // ［リスクを理解して無効にする］で無効になります。
+  await toggle.click();
+  await confirm.getByRole('button', { name: 'リスクを理解して無効にする' }).click();
+  await waitUntil(
+    () => toggle.isChecked(),
+    (checked) => checked === false,
+  );
+  assert.equal(
+    await page.evaluate(
+      async () => (await chrome.storage.local.get('confirmDetection')).confirmDetection,
+    ),
+    false,
+  );
+
+  const panel = await browser.context.newPage();
+  await panel.goto(page.url().replace('options/options.html', 'sidepanel/sidepanel.html'));
+  const banner = panel.locator('#confirm-detection-off');
+  await banner.getByText('確定ボタンの自動検出が無効です').waitFor();
+
+  // 有効に戻す操作では確認を出さず、サイドパネルの表示も消えます。
+  await toggle.click();
+  assert.equal(await toggle.isChecked(), true);
+  assert.equal(await confirm.isHidden(), true);
+  await waitUntil(
+    () => banner.isHidden(),
+    (hidden) => hidden,
+  );
+  await panel.close();
+});
+
 test('新しいタブで開いた先で PDF を保存し、closeTab で元のタブに戻る', async () => {
   /** @type {Flow} */
   const flow = {

@@ -30,6 +30,13 @@
     </header>
 
     <main class="lm-stack" id="main">
+      <!-- 確定ボタンの自動検出（#29）を無効にしている間は、常に表示します（#47）。無効にしたまま忘れないためです。 -->
+      <div id="confirm-detection-off" class="alert alert-warning lm-guide m-0" role="status" hidden>
+        <p class="lm-guide-title">確定ボタンの自動検出が無効です</p>
+        <p>
+          フローが確定ボタンを押し、購入や申し込みが確定する可能性があります。フローの管理の［設定］タブで有効に戻せます。
+        </p>
+      </div>
       <section id="run-section" class="lm-stack" aria-labelledby="run-heading" hidden>
         <h2 id="run-heading" class="visually-hidden">実行の状態</h2>
         <!--

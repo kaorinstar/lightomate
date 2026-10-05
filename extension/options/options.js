@@ -28,6 +28,11 @@ import {
   saveStopRule,
 } from '../common/stop-rules-store.js';
 import { listHistory, onHistoryChanged } from '../common/history-store.js';
+import {
+  CONFIRM_DETECTION_KEY,
+  getConfirmDetection,
+  setConfirmDetection,
+} from '../common/confirm-detection-store.js';
 import { formatDateTime, paramColumns, skippedText } from '../shared/describe.js';
 import { flattenSteps } from '../shared/control-flow.js';
 import { createBlockEditor } from './block-editor.js';
@@ -255,6 +260,9 @@ const elements = {
   historyNotice: byId('history-notice'),
   allSites: /** @type {HTMLInputElement} */ (byId('all-sites')),
   allSitesNotice: byId('all-sites-notice'),
+  confirmDetection: /** @type {HTMLInputElement} */ (byId('confirm-detection')),
+  confirmDetectionConfirm: byId('confirm-detection-confirm'),
+  confirmDetectionNotice: byId('confirm-detection-notice'),
   backupFile: /** @type {HTMLInputElement} */ (byId('backup-file')),
   backupButtons: byId('backup-buttons'),
   backupExport: byId('backup-export'),
@@ -277,6 +285,7 @@ const notices = [
   elements.speedNotice,
   elements.scheduleNotice,
   elements.allSitesNotice,
+  elements.confirmDetectionNotice,
   elements.backupNotice,
   elements.blocksNotice,
   elements.blocksPickNotice,
@@ -3126,6 +3135,52 @@ chrome.permissions.onRemoved.addListener(() => {
   renderAllSites().catch(console.error);
 });
 renderAllSites().catch(console.error);
+
+// ---- 確定ボタンの自動検出（#47） ----
+// 無効にする操作では、切り替えを保留して、リスクを含む確認を出します。［リスクを理解して無効にする］を押した場合
+// だけ無効を保存し、［キャンセル］では有効のままにします。有効に戻す操作では、確認を出しません。
+
+/** 「確定ボタンの手前で自動で止める」の表示を、保存した設定に合わせます。 */
+async function renderConfirmDetection() {
+  elements.confirmDetection.checked = await getConfirmDetection();
+}
+
+elements.confirmDetection.addEventListener('change', async () => {
+  clearNotices();
+  if (elements.confirmDetection.checked) {
+    await setConfirmDetection(true);
+    showToast(elements.toast, '確定ボタンの自動検出を有効にしました。');
+    return;
+  }
+  // 確認の間は、有効の表示のまま切り替えを止めます。
+  elements.confirmDetection.checked = true;
+  elements.confirmDetection.disabled = true;
+  const confirmed = await confirmInline(elements.confirmDetectionConfirm, {
+    message:
+      '確定ボタンの自動検出を無効にします。無効にすると、フローが確定ボタンを押し、購入や申し込みが確定する可能性があります。確定した注文の取り消しは、サイトによってはできません。誤って確定した場合の損害は、利用者の責任になります。',
+    confirmLabel: 'リスクを理解して無効にする',
+    danger: true,
+  });
+  elements.confirmDetection.disabled = false;
+  if (!confirmed) {
+    return;
+  }
+  await setConfirmDetection(false);
+  await renderConfirmDetection();
+  showNotice(
+    elements.confirmDetectionNotice,
+    '確定ボタンの自動検出を無効にしました。次に始める記録と実行から、確定ボタンの手前で自動では止まりません。定期実行では、これまでどおり止まります。',
+    'warning',
+  );
+});
+
+// サイドパネルなど、ほかの画面で設定が変わった場合も、表示を合わせます。
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && CONFIRM_DETECTION_KEY in changes) {
+    renderConfirmDetection().catch(console.error);
+  }
+});
+renderConfirmDetection().catch(console.error);
 
 // ---- バックアップ（#17） ----
 // すべてのフロー、まとめフロー、必ず止まる場所を 1 つのファイルに書き出し、ファイルから追加します。

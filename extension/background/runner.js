@@ -30,7 +30,13 @@ import {
 } from '../shared/flow-list.js';
 import { historyEntryFromRun } from '../shared/history.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
-import { confirmPauseNote, findConfirm } from '../shared/purchase-guard.js';
+import {
+  CONFIRM_DETECTION_OFF_NOTE,
+  confirmDetectionFor,
+  confirmPauseNote,
+  findConfirm,
+} from '../shared/purchase-guard.js';
+import { getConfirmDetection } from '../common/confirm-detection-store.js';
 import { findStopPath, stopRuleNote } from '../shared/stop-rules.js';
 import {
   DEFAULT_SAVE_PATH,
@@ -107,6 +113,8 @@ import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../sh
  * @property {number} [schemaVersion] 実行しているフローの形式の版。実行履歴に記録します（#93）
  * @property {'schedule'} [trigger] 定期実行（#22）で始めた場合に 'schedule' です。通知と実行履歴に使います
  * @property {SkippedRow[]} [skipped] 行の中の要素が見つからず飛ばした行（#174）。実行履歴にも記録します
+ * @property {false} [confirmDetection] 確定ボタンの自動検出（#29）を行わない実行の場合に false です（#47）。
+ *   実行の開始時の設定を、その実行の終わりまで使います。どの手順まで検出が効いていたかが分からなくならないためです
  * @property {string[]} [notes] 実行の結果に添える補足（#191）。iframe のページの名前の一部を除いて見つけたことなど、
  *   成功した実行でも利用者が知っておくべきことです。実行履歴にも記録します
  * @property {string} startedAt
@@ -276,6 +284,8 @@ const pageStepTexts = new Map();
  * @property {boolean} [suspended] タブが開いたまま接続が切れている状態か（#171）。PDF の表示画面など、拡張機能が
  *   接続できないページへ移動すると、タブを閉じなくても target_closed で切れます。次にページを操作する前に、
  *   接続し直します
+ * @property {boolean} detectConfirm 確定を表す語を含むダイアログに［OK］を返さないか。確定ボタンの自動検出を
+ *   無効にした実行（#47）では false です
  * @property {((note: string) => Promise<void>) | undefined} pause ダイアログのために一時停止する処理。
  *   手順を実行している間だけ設定します
  */
@@ -321,6 +331,7 @@ export function registerDialogEvents() {
       { type: String(type), message: typeof message === 'string' ? message : '' },
       watch.responses,
       watch.answered,
+      watch.detectConfirm,
     );
     if (decision.action !== 'respond') {
       watch.pending = decision;
@@ -353,8 +364,9 @@ export function registerDialogEvents() {
  * ダイアログが開いた後に接続しても応答できないため、実行の初めに接続します。
  * @param {string} runId
  * @param {number} tabId
+ * @param {boolean} detectConfirm 確定を表す語を含むダイアログに［OK］を返さないか（#47）
  */
-async function watchDialogs(runId, tabId) {
+async function watchDialogs(runId, tabId, detectConfirm) {
   const target = { tabId };
   try {
     await chrome.debugger.attach(target, '1.3');
@@ -366,6 +378,7 @@ async function watchDialogs(runId, tabId) {
   }
   dialogWatches.set(runId, {
     tabId,
+    detectConfirm,
     active: true,
     open: false,
     responses: undefined,
@@ -735,6 +748,9 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
   if (conflict) {
     return { ok: false, error: conflictMessage(flow.origin, conflict.flowName) };
   }
+  // 確定ボタンの自動検出（#47）は、実行の開始時の設定を、その実行の終わりまで使います。定期実行では、設定に
+  // かかわらず行います。
+  const detectConfirm = confirmDetectionFor(await getConfirmDetection(), options.trigger);
   const runId = crypto.randomUUID();
   activeRuns.set(runId, flow.origin);
   redactions.set(runId, values);
@@ -743,7 +759,7 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
   try {
     const tabId = await openTab(flow, resolved.steps, options.active ?? true);
     // サイトが表示するダイアログに応答できるよう、実行の初めに接続します（#88）。
-    await watchDialogs(runId, tabId);
+    await watchDialogs(runId, tabId, detectConfirm);
     await setRunState({
       runId,
       flowId,
@@ -756,6 +772,10 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
       status: 'running',
       schemaVersion: flow.schemaVersion,
       ...(options.trigger ? { trigger: options.trigger } : {}),
+      // 自動検出を無効にした実行は、そのことを実行履歴の補足に残します（#47）。
+      ...(detectConfirm
+        ? {}
+        : { confirmDetection: /** @type {const} */ (false), notes: [CONFIRM_DETECTION_OFF_NOTE] }),
       startedAt: new Date().toISOString(),
     });
     runSteps(flow, resolved.steps, tabId, runId, pathValues).finally(() => {
@@ -1118,9 +1138,10 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
    * @param {number} next
    */
   const switchTab = async (next) => {
+    const detectConfirm = (await getRunState(runId))?.confirmDetection !== false;
     await unwatchDialogs(runId);
     tabId = next;
-    await watchDialogs(runId, tabId);
+    await watchDialogs(runId, tabId, detectConfirm);
     setDialogPause();
     await updateRunState(runId, { tabId });
   };
@@ -2403,11 +2424,16 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
     const keys = Array.isArray(inspected.keys)
       ? inspected.keys.filter((/** @type {unknown} */ key) => typeof key === 'string')
       : [];
-    const confirmText = findConfirm(
-      [...texts, step.target.label, ...(step.target.text ? [step.target.text] : [])],
-      [...keys, ...step.target.selectors],
-      step.target.label,
-    );
+    // 確定ボタンの自動検出を無効にした実行（#47）では、文言による判定を行いません。上のサイトごとの指定は、
+    // 利用者が明示した指定のため、設定にかかわらず確かめます。
+    const confirmText =
+      (await getRunState(runId))?.confirmDetection === false
+        ? undefined
+        : findConfirm(
+            [...texts, step.target.label, ...(step.target.text ? [step.target.text] : [])],
+            [...keys, ...step.target.selectors],
+            step.target.label,
+          );
     if (confirmText !== undefined) {
       throw new Halted(confirmPauseNote(confirmText));
     }
