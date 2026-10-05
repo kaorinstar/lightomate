@@ -825,6 +825,7 @@
         <!--
           確定ボタンの自動検出（#29）を無効にする設定です（#47）。無効にした場合のリスクを常に表示し、無効にする前に
           確認を出します。フローに置いた一時停止の手順と、必ず止まる場所の指定は、この設定にかかわらず止まります。
+          定期実行は 2 段目の設定に従います。2 段目は 1 段目を無効にしている間だけ選べ、無効にする前に別の確認を出します。
         -->
         <div class="card mt-3">
           <div class="card-header lm-card-header">
@@ -835,11 +836,18 @@
               <input type="checkbox" class="lm-check" id="confirm-detection" />
               確定ボタンの手前で自動で止める
             </label>
+            <label class="lm-setting lm-setting-sub mt-2">
+              <input type="checkbox" class="lm-check" id="confirm-detection-schedule" />
+              定期実行でも止めない
+            </label>
             <div class="alert alert-warning lm-guide mt-2">
               <p class="lm-guide-title">無効にした場合のリスク</p>
               <ul>
                 <li>
                   フローが確定ボタンを押し、購入や申し込みが確定する可能性があります。確定した注文の取り消しは、サイトによってはできません。
+                </li>
+                <li>
+                  ［定期実行でも止めない］を選ぶと、人がその場にいない間に確定します。気付くのは実行の後になります。
                 </li>
                 <li>誤って確定した場合の損害は、利用者の責任になります。</li>
               </ul>
@@ -857,7 +865,7 @@
                 </li>
                 <li>
                   <strong>定期実行</strong
-                  >：定期実行では、この設定にかかわらず確定の手前で止まります。人がその場にいないためです。
+                  >：［定期実行でも止めない］を選ばない限り、確定の手前で止まります。この欄は上の設定が無効の間だけ選べ、上の設定を有効に戻すと外れます。
                 </li>
                 <li>
                   <strong>切り替えが効く時期</strong

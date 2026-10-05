@@ -9,8 +9,11 @@ import {
 } from '../extension/shared/purchase-guard.js';
 import {
   CONFIRM_DETECTION_KEY,
+  CONFIRM_DETECTION_SCHEDULE_KEY,
   getConfirmDetection,
+  getConfirmDetectionSettings,
   setConfirmDetection,
+  setConfirmDetectionSchedule,
 } from '../extension/common/confirm-detection-store.js';
 import { exportBackup } from '../extension/common/backup-store.js';
 
@@ -44,11 +47,16 @@ function fakeStorage(initial = {}) {
   return data;
 }
 
-test('設定が無効でも、定期実行では確定ボタンを検出する（#47）', () => {
-  assert.equal(confirmDetectionFor(true, undefined), true);
-  assert.equal(confirmDetectionFor(true, 'schedule'), true);
-  assert.equal(confirmDetectionFor(false, undefined), false);
-  assert.equal(confirmDetectionFor(false, 'schedule'), true);
+test('定期実行は 2 段目の設定に従い、それ以外の実行は 1 段目の設定に従う（#47）', () => {
+  const on = { enabled: true, schedule: true };
+  const manualOff = { enabled: false, schedule: true };
+  const bothOff = { enabled: false, schedule: false };
+  assert.equal(confirmDetectionFor(on, undefined), true);
+  assert.equal(confirmDetectionFor(on, 'schedule'), true);
+  assert.equal(confirmDetectionFor(manualOff, undefined), false);
+  assert.equal(confirmDetectionFor(manualOff, 'schedule'), true);
+  assert.equal(confirmDetectionFor(bothOff, undefined), false);
+  assert.equal(confirmDetectionFor(bothOff, 'schedule'), false);
   assert.equal(CONFIRM_DETECTION_OFF_NOTE, '確定ボタンの自動検出を無効にして実行しました。');
 });
 
@@ -68,17 +76,38 @@ test('検出を無効にした実行では、確定を表す語を含む確認�
 
 test('設定は初期値が有効で、無効にした場合だけ保存する（#47）', async () => {
   const data = fakeStorage();
-  assert.equal(await getConfirmDetection(), true);
+  assert.deepEqual(await getConfirmDetectionSettings(), { enabled: true, schedule: true });
   await setConfirmDetection(false);
   assert.equal(data[CONFIRM_DETECTION_KEY], false);
   assert.equal(await getConfirmDetection(), false);
+  assert.deepEqual(await getConfirmDetectionSettings(), { enabled: false, schedule: true });
   await setConfirmDetection(true);
   assert.equal(CONFIRM_DETECTION_KEY in data, false);
   assert.equal(await getConfirmDetection(), true);
 });
 
+test('定期実行の設定は 1 段目が無効の間だけ無効にでき、1 段目を有効に戻すと外れる（#47）', async () => {
+  const data = fakeStorage();
+  // 1 段目が有効の間は、無効にしません。
+  await setConfirmDetectionSchedule(false);
+  assert.equal(CONFIRM_DETECTION_SCHEDULE_KEY in data, false);
+
+  await setConfirmDetection(false);
+  await setConfirmDetectionSchedule(false);
+  assert.deepEqual(await getConfirmDetectionSettings(), { enabled: false, schedule: false });
+  await setConfirmDetectionSchedule(true);
+  assert.deepEqual(await getConfirmDetectionSettings(), { enabled: false, schedule: true });
+
+  await setConfirmDetectionSchedule(false);
+  await setConfirmDetection(true);
+  assert.equal(CONFIRM_DETECTION_SCHEDULE_KEY in data, false);
+  // 再び 1 段目を無効にしても、定期実行では止まるままです。
+  await setConfirmDetection(false);
+  assert.deepEqual(await getConfirmDetectionSettings(), { enabled: false, schedule: true });
+});
+
 test('一括バックアップには、確定ボタンの自動検出の設定を含めない（#47）', async () => {
-  fakeStorage({ [CONFIRM_DETECTION_KEY]: false });
+  fakeStorage({ [CONFIRM_DETECTION_KEY]: false, [CONFIRM_DETECTION_SCHEDULE_KEY]: false });
   const backup = await exportBackup();
   assert.equal(JSON.stringify(backup).includes(CONFIRM_DETECTION_KEY), false);
 });

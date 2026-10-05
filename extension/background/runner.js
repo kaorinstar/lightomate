@@ -36,7 +36,7 @@ import {
   confirmPauseNote,
   findConfirm,
 } from '../shared/purchase-guard.js';
-import { getConfirmDetection } from '../common/confirm-detection-store.js';
+import { getConfirmDetectionSettings } from '../common/confirm-detection-store.js';
 import { findStopPath, stopRuleNote } from '../shared/stop-rules.js';
 import {
   DEFAULT_SAVE_PATH,
@@ -748,9 +748,9 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
   if (conflict) {
     return { ok: false, error: conflictMessage(flow.origin, conflict.flowName) };
   }
-  // 確定ボタンの自動検出（#47）は、実行の開始時の設定を、その実行の終わりまで使います。定期実行では、設定に
-  // かかわらず行います。
-  const detectConfirm = confirmDetectionFor(await getConfirmDetection(), options.trigger);
+  // 確定ボタンの自動検出（#47）は、実行の開始時の設定を、その実行の終わりまで使います。定期実行は 2 段目の
+  // 設定に従います。
+  const detectConfirm = confirmDetectionFor(await getConfirmDetectionSettings(), options.trigger);
   const runId = crypto.randomUUID();
   activeRuns.set(runId, flow.origin);
   redactions.set(runId, values);

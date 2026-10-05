@@ -5,7 +5,11 @@
 // 誤り・警告・確認は押したボタンの直下（行の中の操作は、その行の中）に出します。
 
 import { SCHEDULES_KEY, listSchedules } from '../common/schedule-store.js';
-import { CONFIRM_DETECTION_KEY, getConfirmDetection } from '../common/confirm-detection-store.js';
+import {
+  CONFIRM_DETECTION_KEY,
+  CONFIRM_DETECTION_SCHEDULE_KEY,
+  getConfirmDetectionSettings,
+} from '../common/confirm-detection-store.js';
 import { formatRunAt, nextRunAt } from '../shared/schedule.js';
 import {
   deleteFlow,
@@ -612,13 +616,24 @@ onFlowsChanged(() => {
 onBatchesChanged(() => {
   renderFlows().catch(console.error);
 });
-/** 確定ボタンの自動検出（#47）が無効の間だけ、上部の案内を表示します。 */
+/**
+ * 確定ボタンの自動検出（#47）が無効の間だけ、上部の案内を表示します。定期実行でも無効にしている場合は、
+ * その旨を加えます。
+ */
 async function renderConfirmDetection() {
+  const settings = await getConfirmDetectionSettings();
   const off = /** @type {HTMLElement} */ (document.getElementById('confirm-detection-off'));
-  off.hidden = await getConfirmDetection();
+  const scheduleOff = /** @type {HTMLElement} */ (
+    document.getElementById('confirm-detection-schedule-off')
+  );
+  off.hidden = settings.enabled;
+  scheduleOff.hidden = settings.schedule;
 }
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && CONFIRM_DETECTION_KEY in changes) {
+  if (
+    area === 'local' &&
+    (CONFIRM_DETECTION_KEY in changes || CONFIRM_DETECTION_SCHEDULE_KEY in changes)
+  ) {
     renderConfirmDetection().catch(console.error);
   }
 });
