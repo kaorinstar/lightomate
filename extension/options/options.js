@@ -54,6 +54,7 @@ import {
   orderFlow,
   replaceJsonFields,
   replaceJsonName,
+  withParams,
   withSteps,
 } from '../shared/flow.js';
 import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
@@ -722,13 +723,7 @@ elements.paramsForm.addEventListener('submit', async (event) => {
   for (const { from, to } of renames) {
     steps = renameParamReferences(steps, from, to);
   }
-  /** @type {import('../shared/flow.js').Flow} */
-  const flow = { ...stored.flow, steps };
-  if (params.length > 0) {
-    flow.params = params;
-  } else {
-    delete flow.params;
-  }
+  const flow = withParams({ ...stored.flow, steps }, params);
   const result = await saveFlow(flow, selectedId);
   if (!result.ok) {
     showNotice(elements.paramsNotice, describeParamSaveErrors(result.errors), 'error');

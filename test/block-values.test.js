@@ -74,6 +74,23 @@ const steps = /** @type {import('../extension/shared/flow.js').Step[]} */ ([
   { type: 'extract', target, name: 'later' },
 ]);
 
+test('日付のパラメータでは、年・月・日の部分を出す（#219）', () => {
+  const { state, blocks } = workspace(steps);
+  const [inLoop] = blocks.filter((block) => block.type === 'lm_savePdf');
+  const values = insertableValues(state, String(inLoop.id), 'template', [
+    { name: 'from', label: '開始日', type: 'date' },
+  ]);
+  assert.deepEqual(texts(values, 'param'), [
+    '{{from}}',
+    '{{from.year}}',
+    '{{from.month}}',
+    '{{from.mm}}',
+    '{{from.day}}',
+    '{{from.dd}}',
+  ]);
+  assert.equal(values.at(-1)?.label, '開始日の日（2 桁）');
+});
+
 test('保存先には、パラメータ（年月の部分を含む）、前の読み取りの名前、決まった値を出す', () => {
   const { state, blocks } = workspace(steps);
   const [inLoop, afterLoop, afterIf] = blocks.filter((block) => block.type === 'lm_savePdf');

@@ -369,6 +369,21 @@ const PARAM_TYPE_LABELS = {
   number: '数値',
   select: '選択肢',
   month: '年月',
+  date: '日付',
+};
+
+/**
+ * 実行した日から決まる既定値の名前です。
+ * @type {Record<string, string | undefined>}
+ */
+const RELATIVE_DEFAULT_LABELS = {
+  '@current-month': '今月',
+  '@previous-month': '前月',
+  '@month-before-last': '前々月',
+  '@today': '今日',
+  '@first-of-current-month': '今月 1 日',
+  '@first-of-previous-month': '前月 1 日',
+  '@end-of-previous-month': '前月末日',
 };
 
 /**
@@ -383,13 +398,7 @@ export function paramColumns(param) {
   const defaultValue =
     param.default === undefined || param.default === ''
       ? 'なし'
-      : param.default === '@previous-month'
-        ? '前月'
-        : param.default === '@month-before-last'
-          ? '前々月'
-          : param.default === '@current-month'
-            ? '今月'
-            : param.default;
+      : (RELATIVE_DEFAULT_LABELS[param.default] ?? param.default);
   return {
     label: param.label,
     reference: `{{${param.name}}}`,

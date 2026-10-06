@@ -36,6 +36,17 @@ test('年月の既定値の @previous-month と @current-month を、前月と�
   );
 });
 
+test('日付のパラメータは、種類を「日付」、実行した日から決まる既定値を名前で表示する（#219）', () => {
+  assert.deepEqual(
+    paramColumns({ name: 'to', label: '終了日', type: 'date', default: '@end-of-previous-month' }),
+    { label: '終了日', reference: '{{to}}', type: '日付', defaultValue: '前月末日' },
+  );
+  assert.equal(
+    paramColumns({ name: 'to', label: '終了日', type: 'date', default: '2026-08-06' }).defaultValue,
+    '2026-08-06',
+  );
+});
+
 test('選択肢は種類に添え、既定値がない場合は「なし」と表示する', () => {
   assert.deepEqual(
     paramColumns({ name: 's', label: '店舗', type: 'select', options: ['本店', '支店'] }),

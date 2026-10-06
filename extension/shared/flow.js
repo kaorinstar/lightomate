@@ -24,7 +24,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -52,10 +52,11 @@ export const SCHEMA_VERSION = 18;
  * （#185）。
  * 版 17 は、版 16 に、Shadow DOM の中の要素の指定（target の shadow）を加えたものです（#20）。
  * 版 18 は、版 17 に、iframe の中の要素の指定（target の frame）を加えたものです（#20）。
+ * 版 19 は、版 18 に、日付の種類のパラメータ（params の type が date）を加えたものです（#219）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
 export const SUPPORTED_SCHEMA_VERSIONS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
 ];
 
 /**
@@ -109,6 +110,9 @@ const SHADOW_MIN_SCHEMA_VERSION = 17;
 
 /** target の frame を使える最も古い版です（#20）。 */
 const FRAME_MIN_SCHEMA_VERSION = 18;
+
+/** 日付の種類のパラメータを使える最も古い版です（#219）。 */
+export const DATE_PARAM_MIN_SCHEMA_VERSION = 19;
 
 /**
  * target の shadow に並べられる部品の数（Shadow DOM の段数）の上限です（#20）。
@@ -407,6 +411,29 @@ export function withInterval(flow, interval) {
 }
 
 /**
+ * パラメータの定義を入れ替えたフローを返します。元のフローは変更しません。
+ * 定義が空の場合は params を削除します。日付のパラメータを含む場合、版 19 より古いフローは版 19 にします。
+ * 日付の種類は版 19 で加えたためです（#219）。
+ * @param {Flow} flow
+ * @param {import('./params.js').Param[]} params
+ * @returns {Flow}
+ */
+export function withParams(flow, params) {
+  const rest = { ...flow };
+  delete rest.params;
+  if (params.length === 0) {
+    return rest;
+  }
+  return {
+    ...rest,
+    schemaVersion: params.some((param) => param.type === 'date')
+      ? Math.max(flow.schemaVersion, DATE_PARAM_MIN_SCHEMA_VERSION)
+      : flow.schemaVersion,
+    params,
+  };
+}
+
+/**
  * 手順を入れ替えたフローを返します（#162）。元のフローは変更しません。
  * ［手順］タブのブロックで保存するときに使います。ブロックでは、フローの版より新しい版で加えた手順
  * （break など）も置けるため、フローを現在の版にします。古い版のフローは、変換せずにそのまま現在の版として
@@ -564,6 +591,16 @@ export function validateFlow(value) {
 
   const paramErrors = validateParams(value.params);
   errors.push(...paramErrors);
+  if (
+    Array.isArray(value.params) &&
+    value.params.some((param) => isRecord(param) && param.type === 'date') &&
+    typeof value.schemaVersion === 'number' &&
+    value.schemaVersion < DATE_PARAM_MIN_SCHEMA_VERSION
+  ) {
+    errors.push(
+      `日付のパラメータは、schemaVersion が ${DATE_PARAM_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+    );
+  }
 
   if (value.interval !== undefined) {
     errors.push(...validateInterval(value.interval));

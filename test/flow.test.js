@@ -15,6 +15,7 @@ import {
   validateFlow,
   validateStep,
   withInterval,
+  withParams,
   withMinimumInterval,
   withSteps,
 } from '../extension/shared/flow.js';
@@ -55,9 +56,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜17 のフローは、そのまま版 18 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 18);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]) {
+test('版 1〜18 のフローは、そのまま版 19 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 19);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -1449,4 +1450,27 @@ test('iframe の URL の比べ方：更新で変わる文字（16 進数で 8 �
   // パスの区切りの直後・直前の部分も対象です。
   assert.equal(frameLooseKey('https://a.example/0123abcd/x_89abcdef'), 'https://a.example/*/x_*');
   assert.equal(frameLooseKey('about:blank'), undefined);
+});
+
+test('日付のパラメータは版 19 以上のフローでだけ使え、withParams で加えると版 19 にする（#219）', () => {
+  /** @type {import('../extension/shared/params.js').Param[]} */
+  const dates = [
+    { name: 'from', label: '開始日', type: 'date', default: '@first-of-previous-month' },
+  ];
+  const old = /** @type {import('../extension/shared/flow.js').Flow} */ ({
+    ...validFlow,
+    schemaVersion: 18,
+  });
+  assert.deepEqual(validateFlow({ ...old, params: dates }), [
+    '日付のパラメータは、schemaVersion が 19 以上のフローでだけ使えます。',
+  ]);
+  const changed = withParams(old, dates);
+  assert.equal(changed.schemaVersion, 19);
+  assert.deepEqual(validateFlow(changed), []);
+  assert.equal(old.schemaVersion, 18, '元のフローは変えない');
+  // 日付以外のパラメータでは版を変えず、空の定義では params を削除します。
+  /** @type {import('../extension/shared/params.js').Param[]} */
+  const texts = [{ name: 'q', label: '検索語', type: 'text' }];
+  assert.equal(withParams(old, texts).schemaVersion, 18);
+  assert.equal('params' in withParams({ ...old, params: texts }, []), false);
 });

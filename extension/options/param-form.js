@@ -8,7 +8,13 @@ import { showFieldError } from '../shared/ui.js';
 /** @typedef {import('../shared/param-edit.js').ParamRow} ParamRow */
 
 /** 種類の選択肢の名前です。 */
-const TYPE_LABELS = { text: '文字', number: '数値', select: '選択肢', month: '年月' };
+const TYPE_LABELS = {
+  text: '文字',
+  number: '数値',
+  select: '選択肢',
+  month: '年月',
+  date: '日付',
+};
 
 /** 年月の既定値の選択肢です。 */
 const MONTH_DEFAULTS = [
@@ -16,6 +22,15 @@ const MONTH_DEFAULTS = [
   ['@current-month', '今月'],
   ['@previous-month', '前月'],
   ['@month-before-last', '前々月'],
+];
+
+/** 日付の既定値の選択肢です（#219）。 */
+const DATE_DEFAULTS = [
+  ['', 'なし'],
+  ['@today', '今日'],
+  ['@first-of-current-month', '今月 1 日'],
+  ['@first-of-previous-month', '前月 1 日'],
+  ['@end-of-previous-month', '前月末日'],
 ];
 
 let serial = 0;
@@ -110,7 +125,9 @@ export function paramFieldset(row, index) {
         '既定値',
         type.value === 'month'
           ? select('default', MONTH_DEFAULTS, value)
-          : textInput('default', value),
+          : type.value === 'date'
+            ? select('default', DATE_DEFAULTS, value)
+            : textInput('default', value),
       ),
     );
     extras.replaceChildren(...fields);

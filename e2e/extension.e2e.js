@@ -1197,6 +1197,13 @@ test('値の定義の編集：名前を変えて保存すると、手順の中�
   await page.keyboard.press('ArrowDown');
   await added.locator('[data-role="options"]').fill('S、M、L');
   await added.locator('[data-role="default"]').fill('M');
+  // 日付の値を加えます。既定値は選択肢から選びます（#219）。
+  await page.locator('#params-add').click();
+  const date = page.locator('#params-rows fieldset').nth(2);
+  await date.locator('[data-role="name"]').fill('to');
+  await date.locator('[data-role="label"]').fill('終了日');
+  await date.locator('[data-role="type"]').selectOption('date');
+  await date.locator('[data-role="default"]').selectOption('@end-of-previous-month');
   await page.locator('#params-save').click();
 
   const saved = await waitUntil(
@@ -1210,7 +1217,10 @@ test('値の定義の編集：名前を変えて保存すると、手順の中�
   assert.deepEqual(saved.params, [
     { name: 'word', label: '検索語', type: 'text' },
     { name: 'size', label: 'サイズ', type: 'select', options: ['S', 'M', 'L'], default: 'M' },
+    { name: 'to', label: '終了日', type: 'date', default: '@end-of-previous-month' },
   ]);
+  // 日付の値は版 19 で加えたため、保存すると版 19 になります（#219）。
+  assert.equal(saved.schemaVersion, 19);
   assert.equal(/** @type {any} */ (saved.steps[0]).url, `${server.origin}/form.html?q={{word}}`);
   assert.equal(await page.locator('#params-form').isHidden(), true);
 });
