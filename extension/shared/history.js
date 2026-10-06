@@ -1,6 +1,7 @@
 // 実行履歴（#19）の項目の作成、件数の制限、CSV への変換です。chrome.* は使いません。
 //
-// 実行するときに入力した値（パラメータと、パスワードなど値を記録していない欄の値）は記録しません。
+// 実行するときに入力した値（パラメータと、パスワードなど値を記録していない欄の値）は、止まった時点の変数の値
+// （history-report.js、#198）を除き、記録しません。変数の値も、入力欄に入れたものは伏せます。
 // 止まった理由の説明には、値を当てはめた URL などが含まれることがあるため、記録する前に伏せます。
 
 import { itemText } from './control-flow.js';
@@ -36,6 +37,10 @@ import { describeStep, skippedText } from './describe.js';
  * @property {'schedule'} [trigger] 定期実行（#22）で始めた場合に 'schedule' です
  * @property {SkippedRow[]} [skipped] 行の中の要素が見つからず飛ばした行（#174）。完了した実行でも記録します
  * @property {string[]} [notes] 実行の結果に添える補足（#191）。完了した実行でも記録します。入力した値は伏せてあります
+ * @property {import('./history-report.js').HistoryVariable[]} [variables] 止まった時点の変数の値（#198）。
+ *   入力欄に入れた変数は伏せ、文字数だけを記録します。成功した実行では記録しません
+ * @property {string} [flowHash] 実行したフローの指紋（history-report.js の flowFingerprint、#198）。
+ *   成功した実行では記録しません
  *
  * step 以降の項目は #93 で加えました。それより前に記録した履歴にはありません。
  */
@@ -48,6 +53,9 @@ import { describeStep, skippedText } from './describe.js';
  * @property {string} [pageUrl] 止まったときのタブの URL
  * @property {number} [retries] 止まった手順で、要素が見つからずにやり直した回数
  * @property {string} [extensionVersion] 拡張機能の版
+ * @property {import('./history-report.js').HistoryVariable[]} [variables] 止まった時点の変数の値（#198）。
+ *   伏せた後の値です。成功した場合は使いません
+ * @property {string} [flowHash] 実行したフローの指紋（#198）。成功した場合は使いません
  */
 
 /**
@@ -186,6 +194,12 @@ export function historyEntryFromRun(run, endedAt, values, extra = {}) {
   }
   if (run.schemaVersion !== undefined) {
     entry.schemaVersion = run.schemaVersion;
+  }
+  if (extra.variables && extra.variables.length > 0) {
+    entry.variables = extra.variables.map((variable) => ({ ...variable }));
+  }
+  if (extra.flowHash) {
+    entry.flowHash = extra.flowHash;
   }
   return entry;
 }
