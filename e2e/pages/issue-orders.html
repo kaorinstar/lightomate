@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>注文履歴（詳細で領収書を発行）</title>
+  </head>
+  <body>
+    <!-- 詳細のページの［発行する］で領収書がダウンロードされる購入履歴（楽天市場など）の確認に使います（#223）。
+         一覧の注文日と注文番号をファイル名に使えることを確かめます。 -->
+    <div id="orders">
+      <div class="order">
+        <span class="order-date">2026/09/25(金)</span>
+        <span class="order-number">R-001</span>
+        <a class="detail" href="issue-detail.html?n=R-001">注文詳細</a>
+      </div>
+      <div class="order">
+        <span class="order-date">2026/09/20(日)</span>
+        <span class="order-number">R-002</span>
+        <a class="detail" href="issue-detail.html?n=R-002">注文詳細</a>
+      </div>
+    </div>
+  </body>
+</html>
