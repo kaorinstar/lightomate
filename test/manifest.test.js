@@ -91,6 +91,7 @@ test('manifest.json が参照するファイルが存在する', () => {
     'content/overlay.js',
     'content/recorder.js',
     'content/finder.js',
+    'content/diagnose.js',
     'content/runner.js',
   );
   for (const path of paths) {

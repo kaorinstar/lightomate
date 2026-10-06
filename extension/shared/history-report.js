@@ -21,6 +21,42 @@ import { findReferences, renderTemplate } from './params.js';
  * @property {number} [length] 伏せた値の文字数
  */
 
+/**
+ * 止まった時点のページの構造です（#203）。要素が見つからずに止まった場合だけ記録します。
+ * 表示の文字は含みません。入力欄に入れた値と一致する部分は「＊＊＊」に置き換えてあります。
+ * @typedef {object} PageStructure
+ * @property {{ selector: string, count: number }[]} [counts] 止まった手順のセレクターごとの、ページ上の要素の数。
+ *   -1 はセレクターとして読めなかったものです
+ * @property {string} [tag] 骨組みに並べた要素のタグ（止まった手順の要素と同じタグ）
+ * @property {number} [total] そのタグの要素の、ページ上の数。elements は先頭の STRUCTURE_MAX_ELEMENTS 件です
+ * @property {StructureItem[]} [elements] 要素の骨組み
+ * @property {number} [frameTotal] 最上位のページの iframe の数
+ * @property {StructureItem[]} [frames] iframe の一覧。要素を含む枠が見つからない場合と、複数ある場合に記録します
+ */
+
+/**
+ * 骨組みの 1 件です。値は STRUCTURE_MAX_LENGTH 文字までです。
+ * @typedef {Record<string, string | boolean>} StructureItem
+ */
+
+/** 骨組みに並べる要素の数の上限です（#203）。保存容量を抑えるためです。 */
+export const STRUCTURE_MAX_ELEMENTS = 30;
+
+/** iframe の一覧の件数の上限です（#203）。 */
+export const STRUCTURE_MAX_FRAMES = 20;
+
+/** 骨組みの値 1 つの長さの上限です（#203）。 */
+export const STRUCTURE_MAX_LENGTH = 100;
+
+/** 骨組みの class に残す名前の数の上限です（#203）。部品の仕組みによっては数十個並ぶためです。 */
+export const STRUCTURE_MAX_CLASSES = 5;
+
+/** 骨組みに残す属性です。この順に並べます。表示の文字に近い属性（value、aria-label など）は含めません。 */
+const ELEMENT_ATTRIBUTES = ['id', 'name', 'class', 'type', 'role', 'href', 'src'];
+
+/** iframe の一覧に残す属性です。title は iframe の見分けに使うため、iframe に限り含めます。 */
+const FRAME_ATTRIBUTES = ['src', 'name', 'id', 'title'];
+
 /** 履歴に記録する変数の値の長さの上限です。超えた分は切ります。保存容量を抑えるためです。 */
 export const VARIABLE_MAX_LENGTH = 200;
 
@@ -222,6 +258,147 @@ function redactStrings(value, texts) {
 }
 
 /**
+ * ページから届いた構造を、実行履歴に記録できる形にします（#203）。
+ * ページから届いた値のため、形を確かめ、決まった属性だけを残し、件数と長さを上限で切ります。
+ * 入力欄に入れた文字（enteredTexts）と一致する部分は「＊＊＊」に置き換えます。
+ * @param {unknown} structure content/diagnose.js の pageStructure の結果
+ * @param {unknown} frames content/diagnose.js の frameList の結果
+ * @param {Iterable<string>} entered 伏せる文字
+ * @returns {PageStructure | undefined} 記録するものがない場合は undefined
+ */
+export function redactPageStructure(structure, frames, entered) {
+  const texts = [...entered];
+  /** @param {unknown} value */
+  const text = (value) =>
+    typeof value === 'string' ? truncateTo(redactValues(value, texts), STRUCTURE_MAX_LENGTH) : '';
+  /**
+   * @param {unknown} value
+   * @param {readonly string[]} names
+   * @returns {StructureItem}
+   */
+  const item = (value, names) => {
+    const record = isRecord(value) ? value : {};
+    /** @type {StructureItem} */
+    const result = {};
+    if (names === ELEMENT_ATTRIBUTES) {
+      result.tag = text(record.tag);
+    }
+    for (const name of names) {
+      let value = text(record[name]);
+      if (name === 'class') {
+        value = value.split(/\s+/).filter(Boolean).slice(0, STRUCTURE_MAX_CLASSES).join(' ');
+      }
+      if (value) {
+        result[name] = value;
+      }
+    }
+    if (record.hidden === true) {
+      result.hidden = true;
+    }
+    return result;
+  };
+  /** @param {unknown} value */
+  const count = (value) => (Number.isInteger(value) ? /** @type {number} */ (value) : 0);
+
+  /** @type {PageStructure} */
+  const result = {};
+  if (isRecord(structure)) {
+    if (Array.isArray(structure.counts)) {
+      result.counts = structure.counts
+        .filter(isRecord)
+        .map((entry) => ({ selector: text(entry.selector), count: count(entry.count) }));
+    }
+    const tag = text(structure.tag);
+    if (tag && Array.isArray(structure.elements)) {
+      result.tag = tag;
+      result.total = count(structure.total);
+      result.elements = structure.elements
+        .slice(0, STRUCTURE_MAX_ELEMENTS)
+        .map((element) => item(element, ELEMENT_ATTRIBUTES));
+    }
+  }
+  if (isRecord(frames) && Array.isArray(frames.frames)) {
+    result.frameTotal = count(frames.total);
+    result.frames = frames.frames
+      .slice(0, STRUCTURE_MAX_FRAMES)
+      .map((frame) => item(frame, FRAME_ATTRIBUTES));
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * 文字列を指定の文字数で切ります。切った場合は末尾に「…」を付けます。
+ * @param {string} text
+ * @param {number} max
+ * @returns {string}
+ */
+function truncateTo(text, max) {
+  const chars = [...text];
+  return chars.length > max ? `${chars.slice(0, max).join('')}…` : text;
+}
+
+/**
+ * 骨組みの 1 件を、HTML のタグに似た 1 行にします（例：<button id="submit" class="radius">）。
+ * 値の中の " は \" にします。
+ * @param {string} tag
+ * @param {StructureItem} item
+ * @param {readonly string[]} names
+ * @returns {string}
+ */
+function itemLine(tag, item, names) {
+  const attributes = names
+    .filter((name) => typeof item[name] === 'string')
+    .map((name) => ` ${name}="${String(item[name]).replaceAll('"', '\\"')}"`)
+    .join('');
+  return `<${tag}${attributes}>${item.hidden ? '（非表示）' : ''}`;
+}
+
+/**
+ * ページの構造の行です（#203）。
+ * @param {PageStructure} structure
+ * @returns {string[]}
+ */
+export function structureLines(structure) {
+  const lines = [];
+  if (structure.counts && structure.counts.length > 0) {
+    lines.push('  セレクターごとの要素の数：');
+    for (const { selector, count } of structure.counts) {
+      lines.push(`    ${selector}：${count < 0 ? 'セレクターとして読めません' : `${count} 件`}`);
+    }
+  }
+  if (structure.tag && structure.elements) {
+    const shown =
+      structure.elements.length < (structure.total ?? 0)
+        ? `、先頭の ${structure.elements.length} 件を表示`
+        : '';
+    lines.push(`  ${structure.tag} の要素（全 ${structure.total ?? 0} 件${shown}）：`);
+    structure.elements.forEach((element, index) => {
+      const tag = typeof element.tag === 'string' && element.tag ? element.tag : structure.tag;
+      lines.push(`    ${index + 1}. ${itemLine(tag ?? '', element, ELEMENT_ATTRIBUTES)}`);
+    });
+  }
+  if (structure.frames) {
+    const shown =
+      structure.frames.length < (structure.frameTotal ?? 0)
+        ? `、先頭の ${structure.frames.length} 件を表示`
+        : '';
+    lines.push(`  ページの iframe（全 ${structure.frameTotal ?? 0} 件${shown}）：`);
+    structure.frames.forEach((frame, index) => {
+      lines.push(`    ${index + 1}. ${itemLine('iframe', frame, FRAME_ATTRIBUTES)}`);
+    });
+  }
+  return lines;
+}
+
+/**
  * 変数の一覧の行です。伏せた変数は「＊＊＊（10 文字）」と表示します。
  * @param {HistoryVariable[]} variables
  * @returns {string[]}
@@ -234,8 +411,8 @@ export function variableLines(variables) {
 
 /**
  * 履歴の［コピー］に、historyEntryText の後へ続けるテキストです（#198）。
- * 変数の値と、伏せたフロー定義を含めます。改行は LF です。
- * @param {{ variables?: HistoryVariable[], flowHash?: string }} entry 履歴の 1 件
+ * 変数の値、ページの構造（#203）と、伏せたフロー定義を含めます。改行は LF です。
+ * @param {{ variables?: HistoryVariable[], flowHash?: string, structure?: PageStructure }} entry 履歴の 1 件
  * @param {Flow | undefined} flow コピーした時点の保存済みのフロー。削除されている場合は undefined
  * @param {string | undefined} fingerprint コピーした時点のフローの指紋（flowFingerprint）
  * @returns {string}
@@ -244,6 +421,16 @@ export function historyReportText(entry, flow, fingerprint) {
   const lines = [];
   if (entry.variables && entry.variables.length > 0) {
     lines.push('', '変数（入力欄に入れた値は伏せています）：', ...variableLines(entry.variables));
+  }
+  if (entry.structure) {
+    const structure = structureLines(entry.structure);
+    if (structure.length > 0) {
+      lines.push(
+        '',
+        'ページの構造（表示の文字は含めず、入力欄に入れた値は伏せています）：',
+        ...structure,
+      );
+    }
   }
   lines.push('');
   if (!flow) {
