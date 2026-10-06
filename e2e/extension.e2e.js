@@ -2881,3 +2881,73 @@ test('ファイル名：同じ実行の中で同じ名前を 2 回保存した�
     await page.close();
   }
 });
+
+test('値の変化の通知：初回は覚えるだけで、変わったときに知らせ、置き換えの途中の値では知らせない（#251）', async () => {
+  const { extensionPage } = browser;
+  await extensionPage.evaluate(async () => {
+    await chrome.storage.local.remove('watchValues');
+    for (const id of Object.keys(await chrome.notifications.getAll())) {
+      await chrome.notifications.clear(id);
+    }
+  });
+  /** @param {string} query */
+  const flowFor = (query) =>
+    /** @type {Flow} */ ({
+      schemaVersion: 19,
+      name: '在庫の確認',
+      origin: server.origin,
+      interval: { min: 1000, max: 1000 },
+      steps: [
+        { type: 'navigate', url: `${server.origin}/stock.html?${query}`, cause: 'user' },
+        {
+          type: 'extract',
+          target: target('#stock', 'span', '在庫'),
+          name: 'stock',
+          notifyOnChange: true,
+        },
+      ],
+    });
+  const stored = () =>
+    extensionPage.evaluate(async () => {
+      const { watchValues } = await chrome.storage.local.get('watchValues');
+      return /** @type {Record<string, Record<string, string>> | undefined} */ (watchValues)?.e2e
+        ?.stock;
+    });
+  const notices = () =>
+    extensionPage.evaluate(async () => Object.keys(await chrome.notifications.getAll()));
+
+  // 初回は知らせず、値を覚えるだけです。
+  let entry = await runFlow(extensionPage, flowFor('v=在庫なし'));
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.equal(await stored(), '在庫なし');
+  assert.deepEqual(await notices(), []);
+
+  // 同じ値では知らせません。
+  entry = await runFlow(extensionPage, flowFor('v=在庫なし'));
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.deepEqual(await notices(), []);
+
+  // 値が変わると知らせ、新しい値を覚えます。
+  entry = await runFlow(extensionPage, flowFor('v=在庫あり'));
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.equal(await stored(), '在庫あり');
+  const created = await notices();
+  assert.equal(created.length, 1);
+  assert.match(created[0], /^lightomate-watch-/);
+
+  // 1 回目と読み直しで値が異なる場合は、置き換えの途中と考え、知らせず、覚えもしません。
+  entry = await runFlow(extensionPage, flowFor('v=在庫なし&later=残りわずか'));
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.equal(await stored(), '在庫あり');
+  assert.deepEqual(await notices(), created);
+
+  // 通知を押したときに開くページとして、値を読み取ったページを覚えています。通知そのものは自動テストでは押せません。
+  const pages = await extensionPage.evaluate(async () => {
+    const { watchNotificationPages } = await chrome.storage.session.get('watchNotificationPages');
+    return /** @type {Record<string, string>} */ (watchNotificationPages);
+  });
+  assert.equal(decodeURIComponent(new URL(pages[created[0]]).search), '?v=在庫あり');
+  for (const page of pagesAt('/stock.html')) {
+    await page.close();
+  }
+});

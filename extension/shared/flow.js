@@ -24,7 +24,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -52,10 +52,12 @@ export const SCHEMA_VERSION = 18;
  * （#185）。
  * 版 17 は、版 16 に、Shadow DOM の中の要素の指定（target の shadow）を加えたものです（#20）。
  * 版 18 は、版 17 に、iframe の中の要素の指定（target の frame）を加えたものです（#20）。
+ * 版 19 は、版 18 に、読み取った値が前回の実行から変わったときに知らせる指定（extract の notifyOnChange）を
+ * 加えたものです（#251）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
 export const SUPPORTED_SCHEMA_VERSIONS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
 ];
 
 /**
@@ -85,6 +87,9 @@ const DOWNLOAD_LINK_MIN_SCHEMA_VERSION = 14;
 
 /** click の download の all を使える最も古い版です（#185）。 */
 const DOWNLOAD_ALL_MIN_SCHEMA_VERSION = 16;
+
+/** extract の notifyOnChange を使える最も古い版です（#251）。 */
+const NOTIFY_ON_CHANGE_MIN_SCHEMA_VERSION = 19;
 
 /** forEach の onMissing を使える最も古い版です（#174）。 */
 const ON_MISSING_MIN_SCHEMA_VERSION = 15;
@@ -265,6 +270,8 @@ export const MAX_TEXT_LENGTH = 2000;
  * @property {string} name 読み取った値に付ける名前
  * @property {string} [origin] 手順を記録したサイト。省略した場合はフローの origin です（#41）
  * @property {true} [translated] 記録したときに、ページが Chrome の翻訳で表示されていたこと（#99）
+ * @property {true} [notifyOnChange] 読み取った値が前回の実行から変わったときに、Chrome の通知で知らせます
+ *   （#251）。版 19 で加えました。繰り返し（forEach、while）の内側には書けません
  */
 
 /**
@@ -696,6 +703,19 @@ function validateStepList(list, path, depth, inLoop, context, inRepeat = false) 
         );
       }
     }
+    if (type === 'extract' && step.notifyOnChange !== undefined) {
+      if (version !== undefined && version < NOTIFY_ON_CHANGE_MIN_SCHEMA_VERSION) {
+        errors.push(
+          `${at}: notifyOnChange は、schemaVersion が ${NOTIFY_ON_CHANGE_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+        );
+      }
+      if (inRepeat) {
+        // 前回の値は名前ごとに 1 つだけ覚えるため、行ごとに値が変わる繰り返しの内側では比べられません。
+        errors.push(
+          `${at}: notifyOnChange は、繰り返し（forEach、while）の外側の extract にだけ書けます。`,
+        );
+      }
+    }
     if (
       type === 'forEach' &&
       step.onMissing !== undefined &&
@@ -1055,6 +1075,9 @@ export function validateStep(step) {
         errors.push('name が、英字または _ で始まり英数字と _ だけを使った名前ではありません。');
       } else if (RESERVED_NAMES.includes(step.name)) {
         errors.push(`name に「${step.name}」は使えません。組み込みの値の名前です。`);
+      }
+      if (step.notifyOnChange !== undefined && step.notifyOnChange !== true) {
+        errors.push('notifyOnChange は true だけを書けます。');
       }
       return errors;
     }

@@ -6,6 +6,7 @@
 import { orderFlow, validateFlow, withInterval, withMinimumInterval } from '../shared/flow.js';
 import { uniqueName } from '../shared/flow-list.js';
 import { namesForImport } from '../shared/flow-file.js';
+import { deleteWatchValues } from './watch-store.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 
@@ -155,6 +156,8 @@ export async function deleteFlow(id) {
   const all = await readAll();
   delete all[id];
   await chrome.storage.local.set({ [FLOWS_KEY]: all });
+  // 値の変化を知らせる読み取り（#251）で覚えた値も削除します。
+  await deleteWatchValues([id]);
 }
 
 /**
@@ -168,6 +171,7 @@ export async function deleteFlows(ids) {
     delete all[id];
   }
   await chrome.storage.local.set({ [FLOWS_KEY]: all });
+  await deleteWatchValues(ids);
 }
 
 /**

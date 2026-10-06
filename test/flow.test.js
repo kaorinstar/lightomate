@@ -55,9 +55,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜17 のフローは、そのまま版 18 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 18);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]) {
+test('版 1〜18 のフローは、そのまま版 19 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 19);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -1353,6 +1353,40 @@ test('iframe の中の要素の指定（target.frame）は、版 18 以上のフ
   assert.deepEqual(validateFlow({ ...flow, schemaVersion: 18 }), []);
   assert.deepEqual(validateFlow({ ...flow, schemaVersion: 17 }), [
     `steps[${validFlow.steps.length}]: target.frame は、schemaVersion が 18 以上のフローでだけ使えます。`,
+  ]);
+});
+
+test('値の変化を知らせる指定（extract の notifyOnChange）は、版 19 以上の、繰り返しの外側でだけ検証を通る（#251）', () => {
+  const extract = {
+    type: 'extract',
+    target: { selectors: ['#stock'], tag: 'span', label: '在庫' },
+    name: 'stock',
+    notifyOnChange: true,
+  };
+  assert.deepEqual(validateStep(extract), []);
+  assert.deepEqual(validateStep({ ...extract, notifyOnChange: false }), [
+    'notifyOnChange は true だけを書けます。',
+  ]);
+  const at = `steps[${validFlow.steps.length}]`;
+  const flow = { ...validFlow, steps: [...validFlow.steps, extract] };
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 19 }), []);
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 18 }), [
+    `${at}: notifyOnChange は、schemaVersion が 19 以上のフローでだけ使えます。`,
+  ]);
+  const looped = {
+    ...validFlow,
+    steps: [
+      ...validFlow.steps,
+      {
+        type: 'while',
+        condition: { exists: true, target: extract.target },
+        limit: 3,
+        steps: [extract],
+      },
+    ],
+  };
+  assert.deepEqual(validateFlow(looped), [
+    `${at}.steps[0]: notifyOnChange は、繰り返し（forEach、while）の外側の extract にだけ書けます。`,
   ]);
 });
 

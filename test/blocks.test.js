@@ -363,3 +363,14 @@ test('繰り返しのブロックの「要素がない行は飛ばす」は、fo
   assert.equal('onMissing' in changed[0], false);
   assert.equal(/** @type {any} */ (changed[2]).onMissing, 'skip');
 });
+
+test('読み取りの「前回から変わったら通知で知らせる」は、ブロックとの間で変換しても残り、外すと消える（#251）', () => {
+  /** @type {Step[]} */
+  const steps = [{ type: 'extract', target: target('在庫'), name: 'stock', notifyOnChange: true }];
+  const state = stepsToWorkspace(steps);
+  assert.deepEqual(workspaceToSteps(state).steps, steps);
+  Object.assign(nth(state, 0).fields ?? {}, { NOTIFY: false });
+  assert.deepEqual(workspaceToSteps(state).steps, [
+    { type: 'extract', target: target('在庫'), name: 'stock' },
+  ]);
+});
