@@ -2688,6 +2688,18 @@ test('2 件目を押して 1 件分を決める：件数や枠を選ばずに、
   if (!site.url().endsWith('first-differs-orders.html')) {
     await site.goBack();
     await site.waitForURL(listUrl);
+    // 一覧へ戻る移動の手順は、ページの移動の後に少し遅れて加わります。加わるまで待ってから数えます。
+    await waitUntil(
+      () =>
+        extensionPage.evaluate(async () => {
+          const { recording } = await chrome.storage.session.get('recording');
+          return /** @type {{ steps: Step[] }} */ (recording).steps;
+        }),
+      (steps) => {
+        const last = steps.at(-1);
+        return last?.type === 'navigate' && last.url === listUrl;
+      },
+    );
   }
   const before = await extensionPage.evaluate(async () => {
     const { recording } = await chrome.storage.session.get('recording');
