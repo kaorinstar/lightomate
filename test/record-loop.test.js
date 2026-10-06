@@ -19,6 +19,10 @@ import {
   sanitizeRowHint,
   stepScopes,
   toggleRange,
+  unusableReasons,
+  AFTER_SAVE_STEP_REASON,
+  DATE_OUTSIDE_ROW_REASON,
+  NO_SAVE_STEP_REASON,
 } from '../extension/shared/record-loop.js';
 import { SCHEMA_VERSION, validateFlow } from '../extension/shared/flow.js';
 
@@ -712,4 +716,71 @@ test('年月の month がある場合はそれを使い、別の種類の month 
   assert.deepEqual(monthParam([{ name: 'month', label: '月', type: 'month' }]), { name: 'month' });
   assert.equal(monthParam([{ name: 'month', label: '月', type: 'text' }]).name, 'month2');
   assert.equal(monthParam([]).add?.name, 'month');
+});
+
+// 一覧の行で注文日と［注文詳細］を押し、詳細のページで注文日を押してからダウンロードのボタンを押した記録です（#224）。
+/** @type {Step[]} */
+const detailSteps = [
+  { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+  { type: 'click', target: { ...spanTarget('#date-1', '2026/09/25(金)'), text: '2026/09/25(金)' } },
+  { type: 'click', target: { selectors: ['a.detail'], tag: 'a', label: '注文詳細' } },
+  { type: 'navigate', url: 'https://shop.example.com/orders/1', cause: 'page' },
+  {
+    type: 'click',
+    target: { ...spanTarget('#date', '2026/09/25(金) 19:21'), text: '2026/09/25(金) 19:21' },
+  },
+  {
+    type: 'click',
+    target: { selectors: ['#issue'], tag: 'button', label: '発行する' },
+    download: { path: 'Lightomate/{{flow.name}}/x', onConflict: 'rename' },
+  },
+  { type: 'click', target: { ...spanTarget('#note', '発行済み'), text: '発行済み' } },
+];
+/** @type {RowHint[]} */
+const detailHints = [
+  null,
+  [
+    {
+      items: orderRow,
+      count: 3,
+      inner: { selectors: ['span.date'], tag: 'span', label: '注文日', scope: 'item' },
+    },
+  ],
+  [
+    {
+      items: orderRow,
+      count: 3,
+      inner: { selectors: ['a.detail'], tag: 'a', label: '注文詳細', scope: 'item' },
+    },
+  ],
+  null,
+  null,
+  null,
+  null,
+];
+
+test('行の外の日付の文字には、対象の月の条件に使えない理由を示し、保存より後の文字には、ファイル名に使えない理由を示す', () => {
+  assert.deepEqual(unusableReasons(detailSteps, detailHints, 1, 6, candidateKey(orderRow)), [
+    [],
+    [],
+    [],
+    // 詳細のページの日付は、保存の手順より前のため、ファイル名には使えます。
+    [DATE_OUTSIDE_ROW_REASON],
+    [],
+    [AFTER_SAVE_STEP_REASON],
+  ]);
+  assert.deepEqual(nameableSteps(detailSteps, 1, 6), [1, 4]);
+});
+
+test('範囲に保存の手順がない場合は、文字のクリックに、ファイル名に使えない理由を示す', () => {
+  assert.deepEqual(unusableReasons(detailSteps, detailHints, 1, 4, candidateKey(orderRow)), [
+    [NO_SAVE_STEP_REASON],
+    [],
+    [],
+    [DATE_OUTSIDE_ROW_REASON, NO_SAVE_STEP_REASON],
+  ]);
+});
+
+test('行を選んでいない場合は、行の外かを判定できないため、対象の月の条件の理由を示さない', () => {
+  assert.deepEqual(unusableReasons(detailSteps, detailHints, 4, 4, null), [[NO_SAVE_STEP_REASON]]);
 });

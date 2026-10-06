@@ -678,3 +678,63 @@ function nameSaveSteps(inner, names) {
     }
   });
 }
+
+/** 行の外の日付の文字を、対象の月の条件に使えない理由です（#224）。 */
+export const DATE_OUTSIDE_ROW_REASON =
+  '一覧の行の外のため、対象の月の条件には使えません。条件に使う日付は、一覧の 1 件目の行の中で押してください';
+
+/** 範囲に保存の手順がないため、文字をファイル名に使えない理由です（#224）。 */
+export const NO_SAVE_STEP_REASON =
+  '範囲に保存の手順（PDF の保存やダウンロード）がないため、ファイル名には使えません';
+
+/** 保存の手順より後の文字を、ファイル名に使えない理由です（#224）。 */
+export const AFTER_SAVE_STEP_REASON =
+  '保存の手順より後に押したため、ファイル名には使えません。ファイル名に使う文字は、保存の手順より前に押してください';
+
+/**
+ * 範囲の文字のクリックのうち、対象の月の条件かファイル名に使えないものについて、その理由を返します（#224）。
+ * 利用者が、一覧と詳細のページのどちらで何を押せばよいかを、［繰り返しにする］の欄で判断できるようにするためです。
+ * 理由を示すのは、次の場合だけです。手順が多いと欄が長くなるためです。
+ * - 日付として読める文字で、選んだ行の外にあるもの（対象の月の条件に使えない）
+ * - 範囲に保存の手順がない場合と、保存の手順より後に押した場合の文字（ファイル名に使えない）
+ * @param {Step[]} steps
+ * @param {RowHint[]} hints
+ * @param {number} from 範囲の先頭
+ * @param {number} to 範囲の末尾（この手順を含みます）
+ * @param {string | null} key 選んだ行の候補（candidateKey の値）。選んでいない場合は null です
+ * @returns {string[][]} from から to までの手順の分の理由。理由がない手順は空の配列です
+ */
+export function unusableReasons(steps, hints, from, to, key) {
+  const nameable = nameableSteps(steps, from, to);
+  const hasSave = steps.some((step, index) => index >= from && index <= to && isSaveStep(step));
+  return steps.slice(from, to + 1).map((step, offset) => {
+    const index = from + offset;
+    if (
+      step.type !== 'click' ||
+      step.download !== undefined ||
+      step.newTab !== undefined ||
+      ACTION_TAGS.includes(step.target.tag)
+    ) {
+      return [];
+    }
+    /** @type {string[]} */
+    const reasons = [];
+    const inRow =
+      key !== null &&
+      (usableHint(step, hints[index]) ?? []).some(
+        (candidate) => candidateKey(candidate.items) === key,
+      );
+    if (
+      key !== null &&
+      !inRow &&
+      step.target.text !== undefined &&
+      parseDate(step.target.text).ok
+    ) {
+      reasons.push(DATE_OUTSIDE_ROW_REASON);
+    }
+    if (!nameable.includes(index)) {
+      reasons.push(hasSave ? AFTER_SAVE_STEP_REASON : NO_SAVE_STEP_REASON);
+    }
+    return reasons;
+  });
+}
