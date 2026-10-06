@@ -101,9 +101,11 @@ function describeDialog(dialog) {
  * @param {OpenedDialog} dialog
  * @param {DialogResponse[] | undefined} responses 直前にページを操作した手順の dialog
  * @param {number} answered その手順の後に、すでに応答したダイアログの数
+ * @param {boolean} [detectConfirm] 確定を表す語を含むダイアログに［OK］を返さないか。確定ボタンの自動検出を
+ *   無効にした実行（#47）では false です
  * @returns {DialogDecision}
  */
-export function decideDialog(dialog, responses, answered) {
+export function decideDialog(dialog, responses, answered, detectConfirm = true) {
   const shown = describeDialog(dialog);
   if (dialog.type === 'prompt') {
     return {
@@ -124,7 +126,11 @@ export function decideDialog(dialog, responses, answered) {
     };
   }
   // alert は［OK］しかなく、閉じても操作は進みません。確定を表す語は、進む応答だけで確かめます。
-  if (response === 'accept' && (dialog.type === 'confirm' || dialog.type === 'beforeunload')) {
+  if (
+    detectConfirm &&
+    response === 'accept' &&
+    (dialog.type === 'confirm' || dialog.type === 'beforeunload')
+  ) {
     const word = findConfirmText([dialog.message]);
     if (word !== undefined) {
       return {

@@ -1,7 +1,8 @@
 // 購入や申し込みの確定ボタンかどうかを、ボタンの文言から判定します（#29）。
 //
-// 確定は必ず人が行います。記録時は確定ボタンのクリックを一時停止（pause）の手順に置き換え、
+// 既定では、確定は人が行います。記録時は確定ボタンのクリックを一時停止（pause）の手順に置き換え、
 // 実行時はクリックの直前に判定して、確定ボタンであればクリックせずに実行を終了します。
+// 利用者が設定で自動検出を無効にした場合は、どちらも行いません（#47）。定期実行は別の設定に従います。
 //
 // 表示の文字は、Chrome の翻訳で置き換わります（#97）。翻訳で確定を表す語が一覧にない言い回しに変わると、
 // 文言だけでは検出できず、確定まで進むおそれがあります。そのため、翻訳で変わらない手がかり（要素の id、
@@ -128,6 +129,27 @@ export function findConfirmText(texts) {
 export function confirmPauseNote(text) {
   return `確定ボタン「${text.trim().slice(0, 50)}」の手前で止まります。内容を確認し、確定は手で行ってください。`;
 }
+
+/**
+ * 確定ボタンの自動検出の 2 段の設定です（#47）。
+ * @typedef {object} ConfirmDetectionSettings
+ * @property {boolean} enabled 1 段目：手動の実行とまとめフロー、記録で検出するか
+ * @property {boolean} schedule 2 段目：定期実行（#22）で検出するか。1 段目が有効の場合は常に true です
+ */
+
+/**
+ * 実行で確定ボタンの自動検出を行うかを決めます（#47）。定期実行では 2 段目の設定に従います。
+ * 人がその場にいない定期実行のリスクには、利用者が別に同意した場合だけ検出をやめるためです。
+ * @param {ConfirmDetectionSettings} settings
+ * @param {'schedule' | undefined} trigger 実行を始めた方法。定期実行では 'schedule' です
+ * @returns {boolean}
+ */
+export function confirmDetectionFor(settings, trigger) {
+  return trigger === 'schedule' ? settings.schedule : settings.enabled;
+}
+
+/** 自動検出を無効にして実行した場合に、実行の補足（実行履歴の「補足」）に残す文です（#47）。 */
+export const CONFIRM_DETECTION_OFF_NOTE = '確定ボタンの自動検出を無効にして実行しました。';
 
 /** @typedef {import('./flow.js').Step} Step */
 

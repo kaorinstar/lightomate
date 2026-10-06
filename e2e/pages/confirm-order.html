@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>ご注文内容の確認</title>
+  </head>
+  <body>
+    <h1>ご注文内容の確認</h1>
+    <!-- 確定ボタンの自動検出（#29、#47）の確認に使います。押すと、注文したことを示す完了のページへ移動します。 -->
+    <form action="done.html" method="get">
+      <input type="hidden" name="ordered" value="1" />
+      <button id="place-order" type="submit">注文を確定する</button>
+    </form>
+  </body>
+</html>

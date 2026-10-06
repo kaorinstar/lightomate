@@ -616,3 +616,13 @@ body {
   padding: 0;
   list-style: none;
 }
+
+/* 確定ボタンの自動検出（#47）の 2 段目です。1 段目に従う設定であることを、字下げで示します。 */
+.lm-setting-sub {
+  margin-left: 1.75rem;
+}
+
+.lm-setting:has(input:disabled) {
+  color: var(--tblr-secondary);
+  cursor: not-allowed;
+}
