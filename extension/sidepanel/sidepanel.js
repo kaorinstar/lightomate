@@ -45,6 +45,7 @@ import { flattenSteps, stepAt } from '../shared/control-flow.js';
 import { MAX_EXTRA_ORIGINS, flowOrigins, orderFlow } from '../shared/flow.js';
 import { DECLINED_SITES_KEY, siteNotice, siteNoticeText } from '../shared/site-notice.js';
 import { createLoopForm } from './loop-form.js';
+import { pagerLoops } from '../shared/record-loop.js';
 import {
   RUN_KEY_PREFIX,
   conflictMessage,
@@ -473,6 +474,31 @@ async function removeStep(index, count, errorNotice) {
   }
 }
 
+/**
+ * 繰り返しを作った後に記録した「次へ」のクリックを、その繰り返しのページ送りにします（#237）。
+ * @param {number} index 「次へ」のクリックの番号（0 から数えます）
+ * @param {number} count 表示している手順の件数
+ * @param {number} loop ページ送りを付ける繰り返しの番号
+ * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
+ */
+async function attachStepPager(index, count, loop, errorNotice) {
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'recording/attachPager',
+    index,
+    count,
+  });
+  if (!response?.ok) {
+    showNotice(errorNotice, response?.error ?? 'ページ送りにできません。', 'error');
+    await render();
+    return;
+  }
+  showToast(
+    elements.toast,
+    `手順 ${index + 1} のクリックで次のページへ送り、手順 ${loop + 1} の繰り返しを最後のページまで行うようにしました。`,
+  );
+}
+
 elements.flowName.addEventListener('input', () => {
   if (elements.flowName.value.trim()) {
     showFieldError(elements.flowName, elements.flowNameFeedback, '');
@@ -802,7 +828,10 @@ async function render() {
     renderRecordingSite(recording, /** @type {RecordingPage | undefined} */ (stored.recordingPage));
     elements.stepCount.textContent = String(recording.steps.length);
     elements.steps.replaceChildren(
-      ...stepItems(recording.steps, running, elements.recordingNotice),
+      ...stepItems(recording.steps, running, elements.recordingNotice, {
+        hints: recording.rowHints,
+        pagers: recording.pagerHints,
+      }),
     );
     elements.recordingDiscard.disabled = running || recording.steps.length === 0;
     recordingLoopForm.update(
@@ -826,7 +855,10 @@ async function render() {
   elements.result.value = lastFlow ? JSON.stringify(orderFlow(lastFlow), null, 2) : '';
   elements.resultStepCount.textContent = String(lastFlow?.steps.length ?? 0);
   elements.resultSteps.replaceChildren(
-    ...stepItems(lastFlow?.steps ?? [], running, elements.saveNotice),
+    ...stepItems(lastFlow?.steps ?? [], running, elements.saveNotice, {
+      hints: /** @type {RowHint[] | undefined} */ (stored.lastFlowRowHints),
+      pagers: /** @type {PagerHint[] | undefined} */ (stored.lastFlowPagerHints),
+    }),
   );
   elements.discard.disabled = running || !lastFlow?.steps.length;
   resultLoopForm.update(
@@ -917,12 +949,20 @@ function showListReasons(guide, reasons) {
 
 /**
  * 手順の一覧の項目を作ります。各行の右端に、その手順を削除する「×」を置きます。
+ * 繰り返しを作った後に記録した「次へ」のクリックには、その繰り返しのページ送りにするボタンを置きます（#237）。
  * @param {import('../shared/flow.js').Step[]} steps
  * @param {boolean} locked 削除できない状態（フローの実行中）か
  * @param {HTMLElement} errorNotice 削除できなかったときに知らせを出す場所
+ * @param {{ hints?: (RowHint | null)[], pagers?: (PagerHint | null)[] }} [recorded] 手順に添えた、一覧の行の候補と
+ *   ページ送りに使う場合の指定
  * @returns {HTMLLIElement[]}
  */
-function stepItems(steps, locked, errorNotice) {
+function stepItems(steps, locked, errorNotice, recorded = {}) {
+  const loops = pagerLoops(
+    steps,
+    steps.map((_, index) => recorded.hints?.[index] ?? null),
+    steps.map((_, index) => recorded.pagers?.[index] ?? null),
+  );
   return steps.map((step, index) => {
     const item = document.createElement('li');
     const text = document.createElement('span');
@@ -937,6 +977,20 @@ function stepItems(steps, locked, errorNotice) {
     remove.disabled = locked;
     // 「×」は float で右端に寄せるため、説明より先に置きます。
     item.append(remove, text);
+    const loop = loops[index];
+    if (loop !== null) {
+      const attach = button(
+        `手順 ${loop + 1} の繰り返しのページ送りにする`,
+        'btn btn-sm d-block mt-1',
+        () => {
+          attachStepPager(index, steps.length, loop, errorNotice).catch((error) =>
+            showNotice(errorNotice, String(error), 'error'),
+          );
+        },
+      );
+      attach.disabled = locked;
+      item.append(attach);
+    }
     // 繰り返しにした手順（#167）は、内側の手順を字下げして続けます。削除は繰り返しの単位で行います。
     if (step.type === 'forEach') {
       const inner = document.createElement('ol');

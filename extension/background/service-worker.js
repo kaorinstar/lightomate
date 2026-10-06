@@ -8,6 +8,7 @@
 import {
   addStep,
   allowRecordingOrigin,
+  attachRecordedPager,
   cancelPickSecond,
   makeRecordedLoop,
   onCommitted,
@@ -141,6 +142,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       }
       startPickSecond().then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/attachPager':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      attachRecordedPager(message.index, message.count).then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
       );
       return true;

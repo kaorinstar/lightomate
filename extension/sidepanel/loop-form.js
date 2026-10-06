@@ -88,7 +88,9 @@ export function createLoopForm({ open, container, list, toast, pick = false }) {
   const hint = document.createElement('p');
   hint.className = 'lm-sub mb-2';
   hint.textContent =
-    '1 件目で行った操作に印を付けます。印を付けた手順を、一覧の 1 件ごとに行います。';
+    '1 件目で行った操作に印を付けます。印を付けた手順を、一覧の 1 件ごとに行います。' +
+    '複数のページを処理する場合は、この欄を開く前に一覧へ戻って「次へ」を押しておくと、ページ送りに選べます。' +
+    '繰り返しにした後に押した「次へ」も、手順の一覧からページ送りにできます。';
   const pickList = document.createElement('ul');
   pickList.className = 'lm-loop-pick mb-2';
 
