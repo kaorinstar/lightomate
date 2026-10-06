@@ -713,3 +713,51 @@ test('年月の month がある場合はそれを使い、別の種類の month 
   assert.equal(monthParam([{ name: 'month', label: '月', type: 'text' }]).name, 'month2');
   assert.equal(monthParam([]).add?.name, 'month');
 });
+
+// 楽天市場と同じく、一覧から詳細のページへ移り、詳細のページでボタンを押した後、一覧へ戻って「次へ」を押した記録です（#240）。
+/** @type {Step[]} */
+const detailPagerSteps = [
+  { type: 'navigate', url: 'https://shop.example.com/history/order-list?l-id=x', cause: 'user' },
+  { type: 'click', target: { selectors: ['a.detail'], tag: 'a', label: '注文詳細' } },
+  { type: 'navigate', url: 'https://shop.example.com/history/?order=1', cause: 'page' },
+  { type: 'click', target: { selectors: ['button.issue'], tag: 'button', label: '発行する' } },
+  { type: 'navigate', url: 'https://shop.example.com/history/order-list?l-id=x', cause: 'user' },
+  { type: 'click', target: { selectors: ['button.next'], tag: 'button', label: '次へ' } },
+];
+/** @type {RowHint[]} */
+const detailPagerHints = [
+  null,
+  [
+    {
+      items: orderRow,
+      count: 3,
+      inner: { selectors: ['a.detail'], tag: 'a', label: '注文詳細', scope: 'item' },
+    },
+  ],
+  null,
+  null,
+  null,
+  null,
+];
+
+test('ページ送りの候補は、一覧のページで押したクリックだけで、詳細のページのボタンは含めない（#240）', () => {
+  const pagers = [null, null, null, ['button.issue'], null, ['button.next']];
+  assert.deepEqual(
+    pagerSteps(detailPagerSteps, detailPagerHints, pagers, 1, candidateKey(orderRow)),
+    [5],
+  );
+});
+
+test('クエリだけが違う一覧のページで押した「次へ」は、ページ送りの候補にする（#240）', () => {
+  /** @type {Step[]} */
+  const steps = [
+    ...detailPagerSteps.slice(0, 2),
+    { type: 'navigate', url: 'https://shop.example.com/history/order-list?p=2', cause: 'page' },
+    { type: 'click', target: { selectors: ['button.next'], tag: 'button', label: '次へ' } },
+  ];
+  const pagers = [null, null, null, ['button.next']];
+  assert.deepEqual(
+    pagerSteps(steps, detailPagerHints.slice(0, 4), pagers, 1, candidateKey(orderRow)),
+    [3],
+  );
+});

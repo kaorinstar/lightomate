@@ -472,11 +472,38 @@ function isPageNavigation(step) {
 const PAGER_TAGS = ['a', 'button'];
 
 /**
+ * 手順を記録した時点のページを、オリジンとパスで返します（#240）。直前のページの移動（navigate）の URL です。
+ * クエリは含めません。一覧の 2 ページ目以降は、クエリ（`?p=2` など）だけが変わるためです。
+ * 前にページの移動がない場合と、URL を読めない場合は null です。
+ * @param {Step[]} steps
+ * @param {number} index
+ * @returns {string | null}
+ */
+function pageAt(steps, index) {
+  for (let position = index - 1; position >= 0; position -= 1) {
+    const step = steps[position];
+    if (step.type === 'navigate') {
+      try {
+        const url = new URL(step.url);
+        return url.origin + url.pathname;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * 次のページへ送るクリックとして選べる手順の番号を返します（#182）。範囲の 2 番目以降の手順のうち、次をすべて
  * 満たすものです。記録中に、1 件目の操作と「次へ」の間でほかの場所を押していても選べるよう、位置の条件は
  * 設けません。間の手順は、選んだ後に除きます（pagerSpan）。
  * - リンクかボタンのクリックで、ページ番号の数で位置が変わらない指定（PagerHint）を作れたもの
  * - 選んだ行の外の要素を押したもの
+ * - 一覧のページ（範囲の先頭を記録したページ）で押したもの（#240）。詳細のページの［発行する］などを
+ *   除くためです。どちらかのページが分からない場合は、この条件で除きません
+ * - ページを読み込まずに一覧だけを差し替えるサイトでは、ページの移動が記録されないため、一覧のページのままと
+ *   判定します
  * @param {Step[]} steps
  * @param {RowHint[]} hints
  * @param {PagerHint[]} pagers steps と同じ順の、ページ送りに使う場合の指定
@@ -487,12 +514,15 @@ const PAGER_TAGS = ['a', 'button'];
 export function pagerSteps(steps, hints, pagers, from, key) {
   /** @type {number[]} */
   const indexes = [];
+  const listPage = pageAt(steps, from);
   for (let index = from + 1; index < steps.length; index += 1) {
     const step = steps[index];
     const inRow = (usableHint(step, hints[index]) ?? []).some(
       (candidate) => candidateKey(candidate.items) === key,
     );
+    const page = pageAt(steps, index);
     if (
+      (listPage === null || page === null || page === listPage) &&
       step.type === 'click' &&
       step.download === undefined &&
       step.newTab === undefined &&
