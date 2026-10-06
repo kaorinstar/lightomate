@@ -19,6 +19,7 @@ test('許可がないサイトでは、説明とボタンの知らせを出し�
     host: 'www.amazon.co.jp',
     mode: 'full',
     limitReached: false,
+    frame: false,
   });
 });
 
@@ -65,4 +66,46 @@ test('上限に達している場合の文言は、許可を求めず、上限�
   const { body } = siteNoticeText(notice, 1);
   assert.match(body, /ほかに 1 件までのため/);
   assert.doesNotMatch(body, /許可/);
+});
+
+// ---- 画面に見える、許可がない枠（#230） ----
+
+const framePage = {
+  origin: 'https://www.example.com',
+  allowed: true,
+  blockedFrames: ['https://pay.example.net'],
+};
+
+test('表示中のページで記録していて、許可がない見える枠がある場合は、枠のサイトの知らせを出す', () => {
+  assert.deepEqual(siteNotice({ ...base, page: framePage }), {
+    origin: 'https://pay.example.net',
+    host: 'pay.example.net',
+    mode: 'full',
+    limitReached: false,
+    frame: true,
+  });
+  assert.equal(siteNotice({ ...base, page: { ...framePage, blockedFrames: [] } }), null);
+});
+
+test('ページそのものに許可がない場合は、枠よりページそのものの知らせを出す', () => {
+  const notice = siteNotice({
+    ...base,
+    page: { ...framePage, allowed: false, origin: base.page.origin },
+  });
+  assert.equal(notice?.frame, false);
+  assert.equal(notice?.origin, base.page.origin);
+});
+
+test('枠の知らせの文言は、枠であることと、枠の外は記録していることを示す', () => {
+  const notice = /** @type {NonNullable<ReturnType<typeof siteNotice>>} */ (
+    siteNotice({ ...base, page: framePage })
+  );
+  const text = siteNoticeText(notice, 10);
+  assert.equal(text.title, 'このページの枠（pay.example.net）では記録が止まっています');
+  assert.match(text.body, /枠の外の操作は記録しています。/);
+  assert.equal(text.collapsed, 'このページの枠（pay.example.net）は記録していません');
+  assert.equal(
+    siteNotice({ ...base, page: framePage, declined: ['https://pay.example.net'] })?.mode,
+    'collapsed',
+  );
 });

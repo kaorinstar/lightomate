@@ -117,9 +117,6 @@ const elements = {
   recordingSection: byId('recording-section'),
   recordingOrigin: byId('recording-origin'),
   recordingSite: byId('recording-site'),
-  recordingSiteText: byId('recording-site-text'),
-  recordingAllow: /** @type {HTMLButtonElement} */ (byId('recording-allow')),
-  recordingAllowNotice: byId('recording-allow-notice'),
   siteNotice: byId('site-notice'),
   siteNoticeFull: byId('site-notice-full'),
   siteNoticeTitle: byId('site-notice-title'),
@@ -192,7 +189,6 @@ const notices = [
   elements.formNotice,
   elements.recordingNotice,
   elements.recordingDiscardNotice,
-  elements.recordingAllowNotice,
   elements.siteNoticeNotice,
   elements.resultNotice,
   elements.saveNotice,
@@ -320,7 +316,8 @@ elements.start.addEventListener('click', async () => {
   }
 });
 
-// 記録中に、許可がないサイトへ移動したときの、サイドパネルの最上部の知らせのボタンです（#209）。
+// 記録中に、許可がないサイトへ移動したときと、許可がない画面に見える枠があるときの、サイドパネルの最上部の知らせの
+// ボタンです（#209、#230）。
 // ［このサイトを許可して記録を続ける］で許可を得てから、そのページでも記録を続けます。
 // Chrome は利用者の操作を起点にしか許可を求められないため、ボタンで求めます。
 elements.siteNoticeAllow.addEventListener('click', async () => {
@@ -367,30 +364,6 @@ elements.siteNoticeExpand.addEventListener('click', async () => {
   await chrome.storage.session.set({
     [DECLINED_SITES_KEY]: declined.filter((site) => site !== origin),
   });
-});
-
-// 記録中に、許可がない iframe があるときのボタンです（#20）。許可がないサイトへ移動したときの知らせは、
-// サイドパネルの最上部に出します（#209）。許可を得てから、そのページでも記録を続けます。
-// Chrome は利用者の操作を起点にしか許可を求められないため、ボタンで求めます。
-elements.recordingAllow.addEventListener('click', async () => {
-  clearNotices();
-  const origin = elements.recordingAllow.dataset.origin ?? '';
-  if (!origin) {
-    return;
-  }
-  const denied = await requestPermission(origin);
-  if (denied) {
-    showNotice(elements.recordingAllowNotice, denied, 'error');
-    return;
-  }
-  const response = await chrome.runtime.sendMessage({ kind: 'recording/allowOrigin', origin });
-  if (!response?.ok) {
-    showNotice(
-      elements.recordingAllowNotice,
-      response?.error ?? 'このサイトでは記録できません。',
-      'error',
-    );
-  }
 });
 
 elements.stop.addEventListener('click', async () => {
@@ -745,35 +718,21 @@ async function refreshCurrentPage() {
 }
 
 /**
- * 記録中のタブが、記録を始めたサイト以外のページを表示しているときの知らせです（#41）。
- * 許可があるサイトでは、確認を出さずに記録していることを知らせます。許可がないサイトの知らせは、
- * サイドパネルの最上部に出します（#209、renderSiteNotice）。
+ * 記録中のタブが、記録を始めたサイト以外の、許可があるサイトのページを表示しているときに、確認を出さずに
+ * 記録していることを知らせます（#41）。許可がないサイトと、許可がない画面に見える枠の知らせは、サイドパネルの
+ * 最上部に出します（#209、#230、renderSiteNotice）。
  * @param {Recording} recording
  * @param {RecordingPage | undefined} page
  */
 function renderRecordingSite(recording, page) {
   const other = page && page.origin !== recording.origin && page.allowed ? page : undefined;
-  // 表示中のページに埋め込まれた iframe のうち、許可がないサイトのものです（#20）。最上位のページで記録している
-  // 場合だけ知らせます。1 件ずつ許可を求めます。
-  const blockedFrame = page?.allowed ? page.blockedFrames?.[0] : undefined;
-  elements.recordingSite.hidden = !other && blockedFrame === undefined;
-  elements.recordingAllow.hidden = blockedFrame === undefined;
-  elements.recordingAllow.dataset.origin = blockedFrame ?? '';
-  /** @type {string[]} */
-  const lines = [];
-  if (other) {
-    lines.push(`${other.origin} でも記録しています。`);
-  }
-  if (blockedFrame !== undefined) {
-    lines.push(
-      `このページの枠（iframe）の中に表示されている ${blockedFrame} は許可していないため、枠の中の操作を記録していません。枠の中の操作も記録する場合は、決済などで利用しているサービスのサイトか確かめてから、下のボタンを押してください。`,
-    );
-  }
-  elements.recordingSiteText.textContent = lines.join('');
+  elements.recordingSite.hidden = !other;
+  elements.recordingSite.textContent = other ? `${other.origin} でも記録しています。` : '';
 }
 
 /**
- * 記録中に、許可がないサイトへ移動したときの知らせを、サイドパネルの最上部に表示します（#209）。
+ * 記録中に、許可がないサイトへ移動したときと、表示中のページに許可がない画面に見える枠（iframe）があるときの
+ * 知らせを、サイドパネルの最上部に表示します（#209、#230）。どちらも同じ見せ方にし、文言だけ変えます。
  * 知らせが要らない場合は隠します。［このサイトは記録しない］を選んだサイトでは、1 行に畳みます。
  * @param {Recording | undefined} recording
  * @param {RecordingPage | undefined} page
