@@ -41,6 +41,8 @@ import { describeStep, skippedText } from './describe.js';
  *   入力欄に入れた変数は伏せ、文字数だけを記録します。成功した実行では記録しません
  * @property {string} [flowHash] 実行したフローの指紋（history-report.js の flowFingerprint、#198）。
  *   成功した実行では記録しません
+ * @property {import('./history-report.js').PageStructure} [structure] 要素が見つからずに止まったときのページの構造（#203）。
+ *   表示の文字を含まず、入力欄に入れた値は伏せてあります
  *
  * step 以降の項目は #93 で加えました。それより前に記録した履歴にはありません。
  */
@@ -56,6 +58,8 @@ import { describeStep, skippedText } from './describe.js';
  * @property {import('./history-report.js').HistoryVariable[]} [variables] 止まった時点の変数の値（#198）。
  *   伏せた後の値です。成功した場合は使いません
  * @property {string} [flowHash] 実行したフローの指紋（#198）。成功した場合は使いません
+ * @property {import('./history-report.js').PageStructure} [structure] ページの構造（#203）。伏せた後の値です。
+ *   成功した場合は使いません
  */
 
 /**
@@ -200,6 +204,9 @@ export function historyEntryFromRun(run, endedAt, values, extra = {}) {
   }
   if (extra.flowHash) {
     entry.flowHash = extra.flowHash;
+  }
+  if (extra.structure) {
+    entry.structure = structuredClone(extra.structure);
   }
   return entry;
 }

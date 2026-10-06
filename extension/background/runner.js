@@ -29,7 +29,12 @@ import {
   runStatesFrom,
 } from '../shared/flow-list.js';
 import { historyEntryFromRun } from '../shared/history.js';
-import { flowFingerprint, historyVariables } from '../shared/history-report.js';
+import {
+  enteredTexts,
+  flowFingerprint,
+  historyVariables,
+  redactPageStructure,
+} from '../shared/history-report.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
 import {
   CONFIRM_DETECTION_OFF_NOTE,
@@ -146,6 +151,7 @@ const CONTENT_FILES = [
   'content/overlay.js',
   'content/finder.js',
   'content/element-text.js',
+  'content/diagnose.js',
   'content/runner.js',
 ];
 
@@ -203,12 +209,38 @@ class ElementNotFound extends Error {
   /**
    * @param {string} detail ページから届いた、見つからなかった理由
    * @param {string | undefined} note 翻訳の有無についての説明（#99）。やり直しの回数の後に置きます
+   * @param {PageClues} [clues] 原因を調べるためのページの構造（#203）
    */
-  constructor(detail, note) {
+  constructor(detail, note, clues) {
     super(note === undefined ? detail : `${detail}${note}`);
     this.detail = detail;
     this.note = note;
+    this.clues = clues;
   }
+}
+
+/**
+ * 要素や枠が見つからずに止まったときの、原因を調べるためのページの構造です（#203）。ページから届いたままの
+ * 値で、伏せる前のものです。実行履歴に記録する前に redactPageStructure で伏せます。
+ * @typedef {{ structure?: unknown, frames?: unknown }} PageClues
+ */
+
+/**
+ * 誤りに付けた、ページの構造を返します（#203）。やり直しの上限に達した誤りは、元の誤りを cause に持ちます。
+ * @param {unknown} error
+ * @returns {PageClues | undefined}
+ */
+function cluesOf(error) {
+  if (error instanceof ElementNotFound) {
+    return error.clues;
+  }
+  if (error instanceof Error) {
+    if (error.cause instanceof ElementNotFound) {
+      return error.cause.clues;
+    }
+    return /** @type {{ clues?: PageClues }} */ (error).clues;
+  }
+  return undefined;
 }
 
 /**
@@ -647,8 +679,9 @@ async function updateRunState(runId, update) {
  * @param {string} runId
  * @param {Partial<RunState>} update
  * @param {Step} [step] 止まった手順。Service Worker が停止して中断した場合は、わからないため渡しません
+ * @param {PageClues} [clues] 要素や枠が見つからずに止まったときのページの構造（#203）
  */
-async function finishRun(runId, update, step) {
+async function finishRun(runId, update, step, clues) {
   await updateRunState(runId, update);
   const state = await getRunState(runId);
   const values = redactions.get(runId) ?? [];
@@ -681,6 +714,14 @@ async function finishRun(runId, update, step) {
         ? {
             variables: historyVariables(details.flow, details.values, details.secrets),
             flowHash: details.flowHash,
+            // ページの構造の中の、入力欄に入れた文字（ログインの ID など）を伏せます（#203）。
+            structure:
+              clues &&
+              redactPageStructure(
+                clues.structure,
+                clues.frames,
+                enteredTexts(details.flow.steps, details.values, details.secrets),
+              ),
           }
         : {}),
     });
@@ -1622,6 +1663,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           (skippedRedirect === undefined ? '' : skippedRedirectNote(skippedRedirect)),
       },
       stoppedStep(),
+      cluesOf(error),
     );
   } finally {
     // 開いているダイアログは閉じずに残り、利用者が応答できます（#88）。
@@ -2506,9 +2548,10 @@ async function findTargetFrame(runId, tabId, target) {
         ? exact
         : children.filter((frame) => frameLooseKey(frame.url) === looseKey);
     if (matches.length > 1) {
-      throw new Error(
+      const error = new Error(
         `要素を含む枠（${key}）に一致する iframe が ${matches.length} 個あり、どれで操作するか決められないため、停止しました。`,
       );
+      throw Object.assign(error, { clues: { frames: await listFrames(tabId) } });
     }
     if (matches.length === 1) {
       const [{ frameId, url }] = matches;
@@ -2532,10 +2575,31 @@ async function findTargetFrame(runId, tabId, target) {
       throw new ElementNotFound(
         `要素を含む枠（${key}）が見つかりません（${Math.round(ELEMENT_TIMEOUT_MS / 1000)} 秒待ちました）。`,
         undefined,
+        { frames: await listFrames(tabId) },
       );
     }
     await throwIfStopRequested(runId);
     await sleep(FRAME_POLL_INTERVAL_MS);
+  }
+}
+
+/**
+ * 最上位のページの iframe の一覧を、ページから受け取ります（#203）。要素を含む枠が見つからない場合などに、
+ * 原因を調べるために使います。受け取れない場合は undefined です。止まる理由そのものは変えません。
+ * @param {number} tabId
+ * @returns {Promise<unknown>}
+ */
+async function listFrames(tabId) {
+  // 最上位のページのスクリプトは、枠を探す前に読み込んであります（runInPage と readPage）。
+  try {
+    const response = await chrome.tabs.sendMessage(
+      tabId,
+      { kind: 'runner/frames' },
+      { frameId: 0 },
+    );
+    return response?.ok ? response : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -2761,7 +2825,11 @@ async function requestPage(runId, tabId, message, recorded, frameId = 0) {
     const text = response?.error ?? 'ページから応答がありませんでした。';
     const note = translationNote(recorded, response?.translated);
     throw isRetryableFailure(response)
-      ? new ElementNotFound(text, note)
+      ? new ElementNotFound(
+          text,
+          note,
+          response?.structure === undefined ? undefined : { structure: response.structure },
+        )
       : new Error(note === undefined ? text : `${text}${note}`);
   }
   return response;

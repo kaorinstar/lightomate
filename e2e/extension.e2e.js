@@ -312,6 +312,37 @@ test('翻訳の案内：翻訳で変わらない指定（id）の要素が見つ
   }
 });
 
+test('ページの構造：要素が見つからずに止まった場合は、要素の数と骨組みを履歴に残し、表示の文字は残さない（#203）', async () => {
+  const { extensionPage } = browser;
+  const user = 'tanaka@example.com';
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 18,
+    name: 'ページの構造',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', url: `${server.origin}/form.html`, cause: 'user' },
+      { type: 'input', target: target('#name', 'input', '名前'), value: user },
+      // 記録した後にサイトの変更で id が変わった場面です。ページのボタンの id は submit です。
+      { type: 'click', target: target('#submit-old', 'button', '送信') },
+    ],
+  };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'failed');
+  assert.deepEqual(entry.structure, {
+    counts: [{ selector: '#submit-old', count: 0 }],
+    tag: 'button',
+    total: 1,
+    elements: [{ tag: 'button', id: 'submit', type: 'submit' }],
+  });
+  const stored = JSON.stringify(entry.structure);
+  assert.equal(stored.includes('送信'), false);
+  assert.equal(stored.includes(user), false);
+  for (const opened of pagesAt('/form.html')) {
+    await opened.close();
+  }
+});
+
 /**
  * iframe の中の入力欄とボタンを持つお支払いの画面（#20）で、名義の入力と［確認へ］のクリックを記録し、記録した
  * フローを返します。
@@ -482,6 +513,14 @@ test('iframe：一致する iframe が 2 つある場合は、どちらにも入
   const entry = await runFlow(browser.extensionPage, flow);
   assert.equal(entry.status, 'failed');
   assert.match(entry.reason ?? '', /一致する iframe が 2 個あり/);
+  // 原因を調べるため、ページの iframe の一覧を残します。URL の ? 以降は除きます（#203）。
+  assert.deepEqual(entry.structure, {
+    frameTotal: 2,
+    frames: [
+      { src: `${server.origin}/frame-card.html`, title: 'カード情報' },
+      { src: `${server.origin}/frame-card.html`, title: 'カード情報' },
+    ],
+  });
   const [opened] = pagesAt('/frame-host.html');
   assert.ok(opened);
   const values = await Promise.all(

@@ -1,10 +1,10 @@
 // フローを実行中のタブのページで、Service Worker から届いた手順を 1 つずつ実行します。
 //
-// 読み込む順序は overlay.js、finder.js、element-text.js、runner.js です（background/runner.js）。
+// 読み込む順序は overlay.js、finder.js、element-text.js、diagnose.js、runner.js です（background/runner.js）。
 // Service Worker が手順ごとに読み込みます。同じページに 2 回読み込まれても、受け取りは 1 つだけです。
 // どの手順を実行するかは Service Worker が決めます。このスクリプトは、届いた手順を実行するだけです。
 
-/* global elementKeys, elementTexts, findAllTargets, isPageTranslated, matchStopSelector, missingShadowHost, searchRoot, showStatusOverlay, waitForTarget */
+/* global elementKeys, elementTexts, findAllTargets, frameList, isPageTranslated, pageStructure, matchStopSelector, missingShadowHost, searchRoot, showStatusOverlay, waitForTarget */
 
 (() => {
   const installedKey = '__lightomateRunner';
@@ -112,6 +112,11 @@
       sendResponse({ ok: true, signals: authSignals() });
       return false;
     }
+    // 要素を含む枠が見つからない場合などに、原因を調べるための iframe の一覧です（#203）。
+    if (message?.kind === 'runner/frames') {
+      sendResponse(typeof frameList === 'function' ? { ok: true, ...frameList() } : { ok: false });
+      return false;
+    }
     if (message?.kind === 'runner/inspect') {
       inspect(message.step, message.scope, message.timeoutMs, message.stopSelectors).then(
         sendResponse,
@@ -177,7 +182,7 @@
    * @param {{ selectors: string[], tag: string, text?: string, scope?: string, shadow?: string[] }} target
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs
-   * @returns {Promise<{ ok: true, element: Element } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
+   * @returns {Promise<{ ok: true, element: Element } | { ok: false, error: string, notFound?: true, translated?: boolean, structure?: ReturnType<typeof pageStructure> }>}
    *   translated は、見つからなかったときにページが翻訳されていたかです。止まった理由の説明に使います（#99）
    */
   async function findElement(target, scope, timeoutMs) {
@@ -193,7 +198,18 @@
     }
     if (!element) {
       // notFound は、Service Worker がこの手順をやり直してよいことを示します（#18）。
-      return { ok: false, notFound: true, ...missing(target, base.root, '要素', timeoutMs) };
+      // structure は、原因を調べるためのページの構造です（#203）。Shadow DOM の中の要素と、iframe の中の
+      // ページでは集めません。
+      return {
+        ok: false,
+        notFound: true,
+        ...missing(target, base.root, '要素', timeoutMs),
+        // pageStructure は diagnose.js にあります。拡張機能のファイルを更新した後、［再読み込み］の前に
+        // 実行すると、古い Service Worker が diagnose.js を読み込まないため、ない場合は集めません。
+        ...(target.shadow || window !== window.top || typeof pageStructure !== 'function'
+          ? {}
+          : { structure: pageStructure(target, base.root) }),
+      };
     }
     return { ok: true, element };
   }
