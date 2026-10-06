@@ -17,6 +17,7 @@ import {
   pagerSteps,
   stepScopes,
   toggleRange,
+  unusableReasons,
 } from '../shared/record-loop.js';
 import { showNotice, showToast } from '../shared/ui.js';
 
@@ -184,6 +185,17 @@ export function createLoopForm({ open, container, list, toast }) {
         used.className = 'd-block lm-loop-changed';
         used.textContent = '→ 条件の判定に使い、クリックは行いません';
         content.append(used);
+      }
+    }
+    // 対象の月の条件やファイル名に使えない文字には、その理由を示します（#224）。どこで何を押せばよいかを、
+    // 利用者が判断できるようにするためです。
+    if (inRange && range) {
+      const reasons = unusableReasons(steps, hints, range.from, range.to, rowKey || null);
+      for (const reason of reasons[index - range.from] ?? []) {
+        const why = document.createElement('small');
+        why.className = 'd-block lm-sub';
+        why.textContent = reason;
+        content.append(why);
       }
     }
     // 1 件目の操作の後に押した「次へ」は、繰り返しのページ送りに使えます（#182）。
