@@ -1336,6 +1336,40 @@ test('保存したフロー：一覧で押したフローの画面に切り替�
   assert.equal(await editor.isHidden(), true);
 });
 
+test('検索欄と一致方法：画面の幅が 576px 未満でも、文字の大きさと高さが幅の広い画面と同じである（#215）', async () => {
+  const id = new URL(browser.extensionPage.url()).host;
+  const page = await browser.context.newPage();
+  try {
+    for (const name of ['options', 'sidepanel']) {
+      /** @type {string[]} */
+      const sizes = [];
+      for (const width of [700, 575]) {
+        await page.setViewportSize({ width, height: 600 });
+        await page.goto(`chrome-extension://${id}/${name}/${name}.html`);
+        // 検索欄は、フローの数などで隠れている場合があるため、表示してから測ります。
+        const size = await page.evaluate(() => {
+          const { document } = globalThis;
+          /** @type {HTMLElement} */ (document.getElementById('search-area')).hidden = false;
+          return ['search', 'search-mode']
+            .map((id) => {
+              const element = /** @type {HTMLElement} */ (document.getElementById(id));
+              const height = element.getBoundingClientRect().height;
+              return `${id}:${globalThis.getComputedStyle(element).fontSize}/${height}px`;
+            })
+            .join(' ');
+        });
+        sizes.push(size);
+      }
+      assert.equal(sizes[1], sizes[0], name);
+      // 検索欄と一致方法の高さもそろっています（#137）。
+      const [search, mode] = sizes[0].split(' ').map((part) => part.split('/')[1]);
+      assert.equal(mode, search, name);
+    }
+  } finally {
+    await page.close();
+  }
+});
+
 test('必ず止まる場所：一覧で押したサイトの入力欄に切り替わり、ボタンとブラウザーの［戻る］で一覧に戻る（#9）', async () => {
   const { extensionPage: page } = browser;
   await page.evaluate(() =>
