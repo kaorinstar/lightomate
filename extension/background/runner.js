@@ -29,6 +29,7 @@ import {
   runStatesFrom,
 } from '../shared/flow-list.js';
 import { historyEntryFromRun } from '../shared/history.js';
+import { flowFingerprint, historyVariables } from '../shared/history-report.js';
 import { renderTemplate, resolveParams } from '../shared/params.js';
 import { confirmPauseNote, findConfirm } from '../shared/purchase-guard.js';
 import { findStopPath, stopRuleNote } from '../shared/stop-rules.js';
@@ -222,6 +223,14 @@ const redactions = new Map();
  * @type {Map<string, string[]>}
  */
 const savedFiles = new Map();
+
+/**
+ * 実行ごとの、原因を調べるための情報です（#198）。成功以外で終わったときに、伏せた変数の値と
+ * フローの指紋を実行履歴に記録します。values は実行中に読み取った値を加えていくオブジェクトです。
+ * secrets は値を記録していない欄に入力した値で、変数の値の中に同じ文字があれば伏せるために使います。
+ * @type {Map<string, { flow: Flow, values: Record<string, string>, secrets: string[], flowHash: string }>}
+ */
+const runDetails = new Map();
 
 /**
  * 実行ごとの、保存を指示したファイルのパス（ダウンロード先からの相対パス）です（#179）。同じ実行の中で同じ名前の
@@ -632,7 +641,9 @@ async function finishRun(runId, update, step) {
   const values = redactions.get(runId) ?? [];
   const files = savedFiles.get(runId) ?? [];
   const retries = retryCounts.get(runId);
+  const details = runDetails.get(runId);
   redactions.delete(runId);
+  runDetails.delete(runId);
   savedFiles.delete(runId);
   plannedPaths.delete(runId);
   retryCounts.delete(runId);
@@ -653,6 +664,12 @@ async function finishRun(runId, update, step) {
       pageUrl,
       retries,
       extensionVersion: chrome.runtime.getManifest().version,
+      ...(details && state.status !== 'done'
+        ? {
+            variables: historyVariables(details.flow, details.values, details.secrets),
+            flowHash: details.flowHash,
+          }
+        : {}),
     });
   if (entry) {
     await addHistory(entry).catch((error) =>
@@ -720,6 +737,8 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
   // PDF の保存先（#16）に埋め込む値です。ページから読み取った値は、実行中に加えます。
   // パスワードなど値を記録していない欄の値は、保存先に使えないよう含めません。
   const pathValues = { ...builtinValues(flow.name, flow.origin, now), ...paramValues };
+  // 実行した時点のフローの指紋です（#198）。下の「比べてから登録するまで」より前に計算します。
+  const flowHash = await flowFingerprint(flow);
 
   // 保存した状態に加え、この Service Worker で始めたばかりの実行とも比べます。
   // 比べてから登録するまでの間に await を置かないでください。同じサイトの実行を同時に始めないためです。
@@ -739,6 +758,12 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
   activeRuns.set(runId, flow.origin);
   redactions.set(runId, values);
   savedFiles.set(runId, []);
+  runDetails.set(runId, {
+    flow,
+    values: pathValues,
+    secrets: Object.values(secretInput),
+    flowHash,
+  });
 
   try {
     const tabId = await openTab(flow, resolved.steps, options.active ?? true);
@@ -768,6 +793,7 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
     await unwatchDialogs(runId);
     activeRuns.delete(runId);
     redactions.delete(runId);
+    runDetails.delete(runId);
     savedFiles.delete(runId);
     retryCounts.delete(runId);
     pageStepTexts.delete(runId);

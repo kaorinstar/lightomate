@@ -224,6 +224,59 @@ test('Shadow DOM：部品が見つからない場合は、見つからない部�
   }
 });
 
+test('履歴のコピー：止まった時点の変数とフロー定義を含め、入力欄に入れた値は伏せる（#198）', async () => {
+  const { extensionPage } = browser;
+  const user = 'tanaka@example.com';
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 18,
+    name: '履歴のコピー',
+    origin: server.origin,
+    params: [
+      { name: 'user', label: 'ログイン ID', type: 'text' },
+      { name: 'plan', label: 'プラン', type: 'select', options: ['a', 'b'] },
+    ],
+    steps: [
+      { type: 'navigate', url: `${server.origin}/form.html?plan={{plan}}`, cause: 'user' },
+      { type: 'input', target: target('#name', 'input', '名前'), value: '{{user}}' },
+      { type: 'click', target: target('#missing', 'button', 'ない') },
+    ],
+  };
+  const entry = await runFlow(extensionPage, flow, { user, plan: 'b' });
+  assert.equal(entry.status, 'failed');
+  assert.deepEqual(entry.variables, [
+    { name: 'user', length: user.length },
+    { name: 'plan', value: 'b' },
+  ]);
+  assert.match(entry.flowHash ?? '', /^[0-9a-f]{16}$/);
+  for (const opened of pagesAt('/form.html')) {
+    await opened.close();
+  }
+
+  // 管理画面の［実行履歴］の［コピー］で、クリップボードに書き込む内容を受け取ります。
+  await extensionPage.reload();
+  await extensionPage.evaluate(() => {
+    const page = /** @type {any} */ (globalThis);
+    page.navigator.clipboard.writeText = async (/** @type {string} */ text) => {
+      page.copiedText = text;
+    };
+  });
+  await extensionPage.locator('#tab-history').click();
+  await extensionPage.getByRole('button', { name: /「履歴のコピー」の履歴をコピー/ }).click();
+  const copied = await waitUntil(
+    () => extensionPage.evaluate(() => /** @type {any} */ (globalThis).copiedText ?? ''),
+    (text) => text !== '',
+  );
+  assert.match(copied, /結果：失敗/);
+  assert.match(copied, /\n {2}user：＊＊＊（18 文字）\n {2}plan：b\n/);
+  assert.doesNotMatch(copied, /実行の後に変更されています/);
+  const json = JSON.parse(copied.slice(copied.indexOf('\n{\n') + 1));
+  assert.equal(json.steps[1].value, '＊＊＊');
+  assert.equal(json.steps[0].url, `${server.origin}/form.html?＊＊＊`);
+  assert.equal(copied.includes(user), false);
+  await extensionPage.reload();
+});
+
 test('翻訳の案内：翻訳で変わらない指定（id）の要素が見つからない場合は、翻訳をやめる案内を付けない（#206）', async () => {
   const { extensionPage } = browser;
   /**

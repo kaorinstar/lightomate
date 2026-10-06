@@ -80,6 +80,7 @@ import {
   historyToCsv,
   stepText,
 } from '../shared/history.js';
+import { flowFingerprint, historyReportText } from '../shared/history-report.js';
 import { formatSeconds, readIntervalInput } from '../shared/speed.js';
 import {
   SCHEDULES_KEY,
@@ -2538,7 +2539,12 @@ async function renderHistory() {
         copy.addEventListener('click', async () => {
           clearNotices();
           try {
-            await navigator.clipboard.writeText(historyEntryText(entry));
+            // 変数の値とフロー定義（伏せたもの）を続けます（#198）。フローは、コピーした時点の保存済みのものです。
+            const stored = await getFlow(entry.flowId);
+            const fingerprint = stored ? await flowFingerprint(stored.flow) : undefined;
+            await navigator.clipboard.writeText(
+              `${historyEntryText(entry)}${historyReportText(entry, stored?.flow, fingerprint)}`,
+            );
             showToast(elements.toast, `「${entry.flowName}」の履歴をコピーしました。`);
           } catch (error) {
             showNotice(
