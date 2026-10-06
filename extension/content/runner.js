@@ -114,7 +114,7 @@
     }
     // 要素を含む枠が見つからない場合などに、原因を調べるための iframe の一覧です（#203）。
     if (message?.kind === 'runner/frames') {
-      sendResponse({ ok: true, ...frameList() });
+      sendResponse(typeof frameList === 'function' ? { ok: true, ...frameList() } : { ok: false });
       return false;
     }
     if (message?.kind === 'runner/inspect') {
@@ -204,7 +204,9 @@
         ok: false,
         notFound: true,
         ...missing(target, base.root, '要素', timeoutMs),
-        ...(target.shadow || window !== window.top
+        // pageStructure は diagnose.js にあります。拡張機能のファイルを更新した後、［再読み込み］の前に
+        // 実行すると、古い Service Worker が diagnose.js を読み込まないため、ない場合は集めません。
+        ...(target.shadow || window !== window.top || typeof pageStructure !== 'function'
           ? {}
           : { structure: pageStructure(target, base.root) }),
       };
