@@ -2818,7 +2818,6 @@ test('ボタンで始まるダウンロード：記録すると保存の手順�
   }
 });
 
-
 test('ページ送り：記録で押した「次へ」をページ送りにすると、位置が変わる「次へ」でも最後のページまで保存する（#182）', async () => {
   const { extensionPage } = browser;
   const site = await browser.context.newPage();
