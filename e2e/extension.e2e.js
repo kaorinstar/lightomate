@@ -862,10 +862,16 @@ test('確定ボタンの自動検出：設定画面で［確定ボタンの手�
 
   const panel = await browser.context.newPage();
   await panel.goto(page.url().replace('options/options.html', 'sidepanel/sidepanel.html'));
+  // サイドパネルには、見出しの横に状態の印だけを出します（#222）。説明はマウスを重ねたときに表示します。
   const banner = panel.locator('#confirm-detection-off');
-  await banner.getByText('確定ボタンの手前で止めない設定です').waitFor();
-  const scheduleBanner = panel.locator('#confirm-detection-schedule-off');
-  assert.equal(await scheduleBanner.isHidden(), true);
+  const marks = banner.locator('.lm-status');
+  // 印の文字は、設定画面のチェックボックスの名前と同じです。読み上げ用の説明を除いた、印の最初の文字で確かめます。
+  const labels = () =>
+    marks.evaluateAll((elements) => elements.map((element) => element.firstChild?.textContent));
+  await waitUntil(labels, (texts) => texts.length === 1);
+  assert.deepEqual(await labels(), ['確定ボタンの手前で止めない']);
+  assert.match((await marks.first().getAttribute('title')) ?? '', /チェックを外すと戻せます/);
+  assert.equal(await panel.getByText('確定ボタンの手前で止めない設定です').count(), 0);
 
   // 1 段目にチェックを入れると、［定期実行でも止めない］を選べます。選ぶ前にも、別の確認を出します。
   const schedule = page.locator('#confirm-detection-schedule');
@@ -891,7 +897,8 @@ test('確定ボタンの自動検出：設定画面で［確定ボタンの手�
     ),
     false,
   );
-  await scheduleBanner.getByText('定期実行でも、確定ボタンの手前で止まりません。').waitFor();
+  await waitUntil(labels, (texts) => texts.length === 2);
+  assert.deepEqual(await labels(), ['確定ボタンの手前で止めない', '定期実行でも止めない']);
 
   // 1 段目のチェックを外す操作では確認を出さず、［定期実行でも止めない］も外れ、サイドパネルの表示も消えます。
   await toggle.click();
