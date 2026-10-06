@@ -42,7 +42,8 @@ import {
   runStatusTone,
 } from '../shared/describe.js';
 import { flattenSteps, stepAt } from '../shared/control-flow.js';
-import { flowOrigins, orderFlow } from '../shared/flow.js';
+import { MAX_EXTRA_ORIGINS, flowOrigins, orderFlow } from '../shared/flow.js';
+import { DECLINED_SITES_KEY, siteNotice, siteNoticeText } from '../shared/site-notice.js';
 import { createLoopForm } from './loop-form.js';
 import {
   RUN_KEY_PREFIX,
@@ -116,9 +117,16 @@ const elements = {
   recordingSection: byId('recording-section'),
   recordingOrigin: byId('recording-origin'),
   recordingSite: byId('recording-site'),
-  recordingSiteText: byId('recording-site-text'),
-  recordingAllow: /** @type {HTMLButtonElement} */ (byId('recording-allow')),
-  recordingAllowNotice: byId('recording-allow-notice'),
+  siteNotice: byId('site-notice'),
+  siteNoticeFull: byId('site-notice-full'),
+  siteNoticeTitle: byId('site-notice-title'),
+  siteNoticeBody: byId('site-notice-body'),
+  siteNoticeAllow: /** @type {HTMLButtonElement} */ (byId('site-notice-allow')),
+  siteNoticeSkip: /** @type {HTMLButtonElement} */ (byId('site-notice-skip')),
+  siteNoticeNotice: byId('site-notice-notice'),
+  siteNoticeCollapsed: byId('site-notice-collapsed'),
+  siteNoticeCollapsedText: byId('site-notice-collapsed-text'),
+  siteNoticeExpand: /** @type {HTMLButtonElement} */ (byId('site-notice-expand')),
   recordingNotice: byId('recording-notice'),
   stepCount: byId('step-count'),
   steps: byId('steps'),
@@ -181,7 +189,7 @@ const notices = [
   elements.formNotice,
   elements.recordingNotice,
   elements.recordingDiscardNotice,
-  elements.recordingAllowNotice,
+  elements.siteNoticeNotice,
   elements.resultNotice,
   elements.saveNotice,
   elements.jsonNotice,
@@ -308,27 +316,54 @@ elements.start.addEventListener('click', async () => {
   }
 });
 
-// 記録中に、許可がないサイトへ移動したときのボタンです（#41）。許可を得てから、そのページでも記録を続けます。
+// 記録中に、許可がないサイトへ移動したときと、許可がない画面に見える枠があるときの、サイドパネルの最上部の知らせの
+// ボタンです（#209、#230）。
+// ［このサイトを許可して記録を続ける］で許可を得てから、そのページでも記録を続けます。
 // Chrome は利用者の操作を起点にしか許可を求められないため、ボタンで求めます。
-elements.recordingAllow.addEventListener('click', async () => {
+elements.siteNoticeAllow.addEventListener('click', async () => {
   clearNotices();
-  const origin = elements.recordingAllow.dataset.origin ?? '';
+  const origin = elements.siteNotice.dataset.origin ?? '';
   if (!origin) {
     return;
   }
+  // 許可を求める処理は、ボタンを押した直後に呼び出す必要があります。この前に待ち時間を入れないでください。
   const denied = await requestPermission(origin);
   if (denied) {
-    showNotice(elements.recordingAllowNotice, denied, 'error');
+    showNotice(elements.siteNoticeNotice, denied, 'error');
     return;
   }
   const response = await chrome.runtime.sendMessage({ kind: 'recording/allowOrigin', origin });
   if (!response?.ok) {
     showNotice(
-      elements.recordingAllowNotice,
+      elements.siteNoticeNotice,
       response?.error ?? 'このサイトでは記録できません。',
       'error',
     );
   }
+});
+
+// ［このサイトは記録しない］では、同じ記録の間、そのサイトの知らせを 1 行に畳みます。サイドパネルを開き直しても
+// 畳んだままにするため、chrome.storage.session に保存します。記録を始める・止めるときに Service Worker が消します。
+elements.siteNoticeSkip.addEventListener('click', async () => {
+  clearNotices();
+  const origin = elements.siteNotice.dataset.origin ?? '';
+  if (!origin) {
+    return;
+  }
+  const stored = await chrome.storage.session.get(DECLINED_SITES_KEY);
+  const declined = /** @type {string[]} */ (stored[DECLINED_SITES_KEY] ?? []);
+  await chrome.storage.session.set({ [DECLINED_SITES_KEY]: [...new Set([...declined, origin])] });
+});
+
+// 畳んだ知らせの［許可する］です。説明とボタンを開き直します。
+elements.siteNoticeExpand.addEventListener('click', async () => {
+  clearNotices();
+  const origin = elements.siteNotice.dataset.origin ?? '';
+  const stored = await chrome.storage.session.get(DECLINED_SITES_KEY);
+  const declined = /** @type {string[]} */ (stored[DECLINED_SITES_KEY] ?? []);
+  await chrome.storage.session.set({
+    [DECLINED_SITES_KEY]: declined.filter((site) => site !== origin),
+  });
 });
 
 elements.stop.addEventListener('click', async () => {
@@ -683,36 +718,57 @@ async function refreshCurrentPage() {
 }
 
 /**
- * 記録中のタブが、記録を始めたサイト以外のページを表示しているときの知らせです（#41）。
- * 許可があるサイトでは、確認を出さずに記録していることを知らせます。許可がないサイトでは、
- * 記録していないことと［このサイトを許可して記録］を表示します。
+ * 記録中のタブが、記録を始めたサイト以外の、許可があるサイトのページを表示しているときに、確認を出さずに
+ * 記録していることを知らせます（#41）。許可がないサイトと、許可がない画面に見える枠の知らせは、サイドパネルの
+ * 最上部に出します（#209、#230、renderSiteNotice）。
  * @param {Recording} recording
  * @param {RecordingPage | undefined} page
  */
 function renderRecordingSite(recording, page) {
-  const other = page && page.origin !== recording.origin ? page : undefined;
-  // 表示中のページに埋め込まれた iframe のうち、許可がないサイトのものです（#20）。最上位のページで記録している
-  // 場合だけ知らせます。1 件ずつ許可を求めます。
-  const blockedFrame = page?.allowed ? page.blockedFrames?.[0] : undefined;
-  const blockedSite = other && !other.allowed ? other.origin : blockedFrame;
-  elements.recordingSite.hidden = !other && blockedFrame === undefined;
-  elements.recordingAllow.hidden = blockedSite === undefined;
-  elements.recordingAllow.dataset.origin = blockedSite ?? '';
-  /** @type {string[]} */
-  const lines = [];
-  if (other) {
-    lines.push(
-      other.allowed
-        ? `${other.origin} でも記録しています。`
-        : `${other.origin} は許可していないため、記録していません。このサイトでの操作も記録する場合は、アドレスバーのサイト名が利用しているサービスのものか確かめてから、下のボタンを押してください。`,
-    );
+  const other = page && page.origin !== recording.origin && page.allowed ? page : undefined;
+  elements.recordingSite.hidden = !other;
+  elements.recordingSite.textContent = other ? `${other.origin} でも記録しています。` : '';
+}
+
+/**
+ * 記録中に、許可がないサイトへ移動したときと、表示中のページに許可がない画面に見える枠（iframe）があるときの
+ * 知らせを、サイドパネルの最上部に表示します（#209、#230）。どちらも同じ見せ方にし、文言だけ変えます。
+ * 知らせが要らない場合は隠します。［このサイトは記録しない］を選んだサイトでは、1 行に畳みます。
+ * @param {Recording | undefined} recording
+ * @param {RecordingPage | undefined} page
+ * @param {string[]} declined 同じ記録の間に、記録しないと選んだサイト
+ */
+function renderSiteNotice(recording, page, declined) {
+  const notice = recording
+    ? siteNotice({
+        recordingOrigin: recording.origin,
+        page,
+        extraOrigins: recording.extraOrigins ?? [],
+        declined,
+        maxExtraOrigins: MAX_EXTRA_ORIGINS,
+      })
+    : null;
+  const wasHidden = elements.siteNotice.hidden;
+  const previous = elements.siteNotice.dataset.origin;
+  elements.siteNotice.hidden = !notice;
+  elements.siteNotice.dataset.origin = notice?.origin ?? '';
+  if (!notice) {
+    return;
   }
-  if (blockedFrame !== undefined && blockedSite === blockedFrame) {
-    lines.push(
-      `このページの枠（iframe）の中に表示されている ${blockedFrame} は許可していないため、枠の中の操作を記録していません。枠の中の操作も記録する場合は、決済などで利用しているサービスのサイトか確かめてから、下のボタンを押してください。`,
-    );
+  const text = siteNoticeText(notice, MAX_EXTRA_ORIGINS);
+  elements.siteNoticeFull.hidden = notice.mode !== 'full';
+  elements.siteNoticeCollapsed.hidden = notice.mode !== 'collapsed';
+  elements.siteNoticeTitle.textContent = text.title;
+  elements.siteNoticeBody.textContent = text.body;
+  elements.siteNoticeCollapsedText.textContent = text.collapsed;
+  elements.siteNoticeAllow.hidden = notice.limitReached;
+  if (previous !== notice.origin) {
+    showNotice(elements.siteNoticeNotice, '');
   }
-  elements.recordingSiteText.textContent = lines.join('');
+  // 新しく出したときは、知らせが見えるよう画面の先頭へ戻します。
+  if (wasHidden || previous !== notice.origin) {
+    window.scrollTo({ top: 0 });
+  }
 }
 
 /** 記録と実行の状態に合わせて、画面を表示し直します。 */
@@ -734,6 +790,11 @@ async function render() {
     Boolean(recording) ||
     Boolean(findConflictingRun(currentPage.origin, runs));
 
+  renderSiteNotice(
+    recording,
+    /** @type {RecordingPage | undefined} */ (stored.recordingPage),
+    /** @type {string[]} */ (stored[DECLINED_SITES_KEY] ?? []),
+  );
   elements.recordingSection.hidden = !recording;
   if (recording) {
     elements.recordingOrigin.textContent = `記録するページ：${[recording.origin, ...(recording.extraOrigins ?? [])].join('、')}`;

@@ -805,26 +805,37 @@
             <h2 class="card-title">サイトの許可</h2>
           </div>
           <div class="card-body">
-            <label class="lm-setting">
-              <input type="checkbox" class="lm-check" id="all-sites" />
-              すべてのサイトを許可
-            </label>
+            <div class="lm-schedule-status">
+              <span id="all-sites-state" class="lm-status"></span>
+              <span id="all-sites-summary"></span>
+            </div>
+            <div class="lm-buttons mt-2">
+              <button type="button" class="btn btn-primary" id="all-sites-grant" hidden>
+                すべてのサイトを許可
+              </button>
+              <button type="button" class="btn" id="all-sites-open">
+                Chrome のサイトへのアクセスの設定を開く
+              </button>
+            </div>
             <p id="all-sites-notice" hidden></p>
             <div class="lm-hint mt-2 mb-0">
-              <p>オンにすると、記録と実行で、サイトごとに許可を求める確認を出しません。</p>
+              <p>
+                Lightomate
+                は、すべてのサイトで記録と実行ができる状態で動きます。サイトごとに許可を求める確認は出ません。
+              </p>
               <ul>
-                <li>
-                  <strong>記録中</strong>：別のサイトへ移動した場合も、確認なしで記録を続けます。
-                </li>
-                <li>
-                  <strong>Chrome の確認の表示</strong
-                  >：オンにするときは「すべてのサイト上にある自分のデータの読み取りと変更」と表示されます。
-                </li>
                 <li>
                   <strong>実際に操作する範囲</strong
                   >：記録中のタブと実行中のタブだけです。実行時は、手順を記録したサイトのページでだけ入力とクリックを行います。
                 </li>
-                <li><strong>オフにした場合</strong>：個別に許可したサイトだけに戻ります。</li>
+                <li>
+                  <strong>範囲を狭める場合</strong>：Chrome
+                  の拡張機能の画面の［サイトへのアクセス］で「特定のサイト」などを選びます。狭めた場合は、許可していないサイトで、記録と実行の前に許可を求めます。
+                </li>
+                <li>
+                  <strong>元に戻す場合</strong>：［すべてのサイトを許可］を押し、Chrome
+                  の確認で「許可」を選びます。
+                </li>
               </ul>
             </div>
           </div>

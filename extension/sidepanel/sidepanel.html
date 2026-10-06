@@ -19,6 +19,31 @@
     進行中の作業はタブの上に置き、タブを切り替えても見えるようにします（#7）。
   -->
   <body>
+    <!--
+      記録中に、許可がないサイトへ移動したときの知らせです（#209）。見出しより上に重ね、スクロールしても上部に残します。
+      利用者はサイトの画面に集中しているため、サイドパネルの中の小さな変化には気づかないためです。
+      内容は sidepanel.js が shared/site-notice.js の結果から作ります。
+    -->
+    <div id="site-notice" class="alert alert-warning lm-site-notice" role="alert" hidden>
+      <div id="site-notice-full">
+        <p class="lm-guide-title" id="site-notice-title"></p>
+        <p id="site-notice-body" class="mb-2"></p>
+        <div class="lm-buttons">
+          <button type="button" class="btn btn-sm btn-primary" id="site-notice-allow">
+            このサイトを許可して記録を続ける
+          </button>
+          <button type="button" class="btn btn-sm" id="site-notice-skip">
+            このサイトは記録しない
+          </button>
+        </div>
+        <p id="site-notice-notice" hidden></p>
+      </div>
+      <div id="site-notice-collapsed" class="lm-row" hidden>
+        <span id="site-notice-collapsed-text"></span>
+        <button type="button" class="btn btn-sm ms-auto" id="site-notice-expand">許可する</button>
+      </div>
+    </div>
+
     <header class="lm-header">
       <div class="lm-header-text">
         <div class="lm-title-row">
@@ -76,13 +101,7 @@
           </div>
           <p id="recording-notice" hidden></p>
           <p class="lm-sub mb-2" id="recording-origin"></p>
-          <div id="recording-site" class="mb-2" hidden>
-            <p id="recording-site-text" class="mb-2"></p>
-            <button type="button" class="btn btn-sm btn-primary" id="recording-allow" hidden>
-              このサイトを許可して記録
-            </button>
-            <p id="recording-allow-notice" hidden></p>
-          </div>
+          <p id="recording-site" class="mb-2" hidden></p>
           <ol id="steps" class="lm-steps"></ol>
           <div class="lm-buttons mt-2" id="recording-buttons">
             <button type="button" class="btn btn-sm" id="recording-loop" hidden>

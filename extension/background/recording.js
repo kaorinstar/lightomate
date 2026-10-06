@@ -22,6 +22,8 @@ import { getConfirmDetection } from '../common/confirm-detection-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
 import { makeLoop, sanitizePagerHint, sanitizeRowHint } from '../shared/record-loop.js';
 import { toLinkDownload } from '../shared/file-link.js';
+import { DECLINED_SITES_KEY } from '../shared/site-notice.js';
+import { visibleFrameOrigins } from '../shared/frame-visibility.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -53,7 +55,7 @@ import { toLinkDownload } from '../shared/file-link.js';
  * @property {string} origin 表示中のページのオリジン
  * @property {boolean} allowed そのサイトを操作する許可があり、記録しているか
  * @property {string[]} [blockedFrames] 表示中のページに埋め込まれた iframe のうち、操作の許可がないため記録して
- *   いない iframe のサイト（#20）。サイドパネルが［このサイトを許可して記録］を表示するために使います
+ *   いない、画面に見える iframe のサイト（#20、#230）。サイドパネルが上部の知らせを出すために使います
  */
 
 const RECORDING_KEY = 'recording';
@@ -138,7 +140,12 @@ export function startRecording(tabId) {
       pagerHints: [null],
     };
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
-    await chrome.storage.session.remove([LAST_FLOW_KEY, LAST_FLOW_HINTS_KEY, LAST_FLOW_PAGERS_KEY]);
+    await chrome.storage.session.remove([
+      LAST_FLOW_KEY,
+      LAST_FLOW_HINTS_KEY,
+      LAST_FLOW_PAGERS_KEY,
+      DECLINED_SITES_KEY,
+    ]);
     await attach(recording);
     return { ok: true };
   });
@@ -156,7 +163,7 @@ export function stopRecording() {
       return { ok: false, error: '記録していません。' };
     }
     if (recording.steps.length === 0) {
-      await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
+      await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY, DECLINED_SITES_KEY]);
       await detach(recording.tabId);
       return { ok: true, flow: null, errors: [] };
     }
@@ -175,7 +182,7 @@ export function stopRecording() {
       [LAST_FLOW_HINTS_KEY]: alignHints(recording.steps, recording.rowHints),
       [LAST_FLOW_PAGERS_KEY]: alignHints(recording.steps, recording.pagerHints),
     });
-    await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
+    await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY, DECLINED_SITES_KEY]);
     await detach(recording.tabId);
     return { ok: true, flow: orderFlow(flow), errors: validateFlow(flow) };
   });
@@ -256,6 +263,7 @@ export function resetRecording() {
       LAST_FLOW_HINTS_KEY,
       LAST_FLOW_PAGERS_KEY,
       RECORDING_PAGE_KEY,
+      DECLINED_SITES_KEY,
     ]);
     if (recording) {
       await detach(recording.tabId);
@@ -623,11 +631,9 @@ export async function onTabRemoved(tabId) {
  * @param {Recording} recording
  */
 async function attach(recording) {
-  await chrome.action.setBadgeText({ tabId: recording.tabId, text: 'REC' });
-  await chrome.action.setBadgeBackgroundColor({ tabId: recording.tabId, color: '#d93025' });
-
   const frame = await chrome.webNavigation.getFrame({ tabId: recording.tabId, frameId: 0 });
   if (!frame || !isWebUrl(frame.url)) {
+    await setRecordingBadge(recording.tabId, true);
     await chrome.storage.session.remove(RECORDING_PAGE_KEY);
     return;
   }
@@ -635,6 +641,7 @@ async function attach(recording) {
   const allowed =
     origin === recording.origin ||
     (await chrome.permissions.contains({ origins: [`${origin}/*`] }));
+  await setRecordingBadge(recording.tabId, allowed);
   /** @type {RecordingPage} */
   const page = { origin, allowed };
   await chrome.storage.session.set({ [RECORDING_PAGE_KEY]: page });
@@ -643,6 +650,18 @@ async function attach(recording) {
   }
   await injectRecorder(recording.tabId, 0, origin);
   await attachFrames(recording, page);
+}
+
+/**
+ * 記録中であることを、ツールバーのアイコンに表示します。許可がないサイトのページでは、記録が止まっていることを
+ * 「許可」（黄）で示します（#209）。利用者はサイトの画面に集中しているため、画面の近くで変化に気づけるようにします。
+ * @param {number} tabId
+ * @param {boolean} allowed 表示中のページで記録しているか
+ */
+async function setRecordingBadge(tabId, allowed) {
+  await chrome.action.setBadgeText({ tabId, text: allowed ? 'REC' : '許可' });
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: allowed ? '#d93025' : '#f59f00' });
+  await chrome.action.setBadgeTextColor({ tabId, color: allowed ? '#ffffff' : '#1d273b' });
 }
 
 /**
@@ -677,7 +696,8 @@ async function injectRecorder(tabId, frameId, origin) {
 
 /**
  * 記録中のタブの、最上位のページに直接埋め込まれた iframe のうち、操作の許可があるサイトのものに、記録用の
- * スクリプトを読み込みます（#20）。許可がないサイトの iframe には読み込まず、そのサイトをサイドパネルに知らせます。
+ * スクリプトを読み込みます（#20）。許可がないサイトの iframe には読み込まず、そのうち画面に見える iframe のサイトを
+ * サイドパネルに知らせ、ツールバーのアイコンを「許可」にします（#230）。広告や計測のための見えない iframe は知らせません。
  * 2 段以上の埋め込み（iframe の中の iframe）は対象にしません。
  * @param {Recording} recording
  * @param {RecordingPage} page 最上位のページの表示の状態。許可がない iframe のサイトを加えて保存し直します
@@ -701,18 +721,72 @@ async function attachFrames(recording, page) {
       blocked.add(origin);
     }
   }
+  if (blocked.size > 0) {
+    const visible = await visibleFrames(recording.tabId);
+    // 大きさを測れなかった場合は、知らせを出す側に寄せます。決済の枠を知らせずに見落とすことを避けるためです。
+    if (visible) {
+      for (const origin of [...blocked]) {
+        if (!visible.has(origin)) {
+          blocked.delete(origin);
+        }
+      }
+    }
+  }
   const stored = await chrome.storage.session.get(RECORDING_PAGE_KEY);
   const current = /** @type {RecordingPage | undefined} */ (stored[RECORDING_PAGE_KEY]);
   // 最上位のページを移動した後に、移動の前のページの iframe の結果で上書きしないためです。
   if (current && current.origin !== page.origin) {
     return;
   }
+  await setRecordingBadge(recording.tabId, page.allowed && blocked.size === 0);
   /** @type {RecordingPage} */
   const next = { origin: page.origin, allowed: page.allowed };
   if (blocked.size > 0) {
     next.blockedFrames = [...blocked].sort();
   }
   await chrome.storage.session.set({ [RECORDING_PAGE_KEY]: next });
+}
+
+/**
+ * 最上位のページの記録用のスクリプトに枠の大きさを測らせ、画面に見える枠のサイトを返します（#230）。
+ * 測れなかった場合（スクリプトがまだない場合など）は null です。
+ * @param {number} tabId
+ * @returns {Promise<Set<string> | null>}
+ */
+async function visibleFrames(tabId) {
+  try {
+    const measures = await chrome.tabs.sendMessage(
+      tabId,
+      { kind: 'recorder/frameSizes' },
+      { frameId: 0 },
+    );
+    return Array.isArray(measures) ? visibleFrameOrigins(measures) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 最上位のページの枠の大きさが変わったときに、許可がない枠の知らせを判定し直します（#230）。
+ * 最初は隠れていて、操作の後に表示される決済の枠を取りこぼさないためです。
+ * 送信元が記録中のタブの最上位のページで、そのページで記録している場合だけ受け付けます。
+ * @param {chrome.runtime.MessageSender} sender
+ * @returns {Promise<void>}
+ */
+export async function onFramesChanged(sender) {
+  const recording = await getRecording();
+  if (!recording || sender.tab?.id !== recording.tabId || sender.frameId !== 0) {
+    return;
+  }
+  const stored = await chrome.storage.session.get(RECORDING_PAGE_KEY);
+  const page = /** @type {RecordingPage | undefined} */ (stored[RECORDING_PAGE_KEY]);
+  if (!page?.allowed || !sender.url || !isWebUrl(sender.url)) {
+    return;
+  }
+  if (new URL(sender.url).origin !== page.origin) {
+    return;
+  }
+  await attachFrames(recording, page);
 }
 
 /**
