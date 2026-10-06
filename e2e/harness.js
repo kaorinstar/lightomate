@@ -1,8 +1,9 @@
 // 自動の動作確認（e2e）で使う、ブラウザとテスト用のページの準備です（#21）。
 //
-// 拡張機能は、テストのたびに一時フォルダーへ複写し、写しの manifest.json にだけ、テスト用のページ
-// （http://127.0.0.1）を操作する許可を加えます。自動テストでは、サイトの許可を求める Chrome の確認画面を
-// 押せないためです。リポジトリの extension/ は変更しません。
+// 拡張機能は、テストのたびに一時フォルダーへ複写し、写しの manifest.json の許可を、テスト用のページ
+// （http://127.0.0.1）だけに狭めます。許可がないサイトの扱いを確かめるためです。自動テストでは、サイトの許可を
+// 求める Chrome の確認画面を押せないため、許可がないサイトでは確認の手前までを確かめます。
+// リポジトリの extension/ は変更しません。
 
 import fs from 'node:fs';
 import http from 'node:http';
@@ -116,7 +117,9 @@ export async function launchBrowser() {
   fs.cpSync(path.join(root, 'extension'), extensionDir, { recursive: true });
   const manifestPath = path.join(extensionDir, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  manifest.host_permissions = [...(manifest.host_permissions ?? []), 'http://127.0.0.1/*'];
+  // すべてのサイトの許可（#232）を、テスト用のページだけに狭めます。利用者が Chrome の画面で範囲を狭めた場合の
+  // 動き（許可がないサイトの扱い）を確かめるためです。localhost は許可がないサイトとして使います。
+  manifest.host_permissions = ['http://127.0.0.1/*'];
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
   fs.mkdirSync(path.join(userDataDir, 'Default'), { recursive: true });

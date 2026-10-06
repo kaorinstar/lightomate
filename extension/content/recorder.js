@@ -128,6 +128,76 @@
     }
   };
 
+  /**
+   * 最上位のページに埋め込まれた枠（iframe）の大きさと表示の状態を測ります（#230）。Service Worker が、許可がない枠の
+   * うち、画面に見える枠だけを知らせるために使います。判定は shared/frame-visibility.js で行います。
+   * 測った枠は、大きさの変化を見張ります。最初は隠れていて、操作の後に表示される決済の枠を取りこぼさないためです。
+   * @returns {object[]}
+   */
+  function measureFrames() {
+    return [...document.querySelectorAll('iframe')].map((frame) => {
+      watchFrame(frame);
+      const rect = frame.getBoundingClientRect();
+      const style = getComputedStyle(frame);
+      let origin = '';
+      try {
+        origin = new URL(frame.src, location.href).origin;
+      } catch {
+        // src が URL として読み取れない枠は、サイトがわからない枠として扱います。
+      }
+      return {
+        origin: origin === 'null' ? '' : origin,
+        width: rect.width,
+        height: rect.height,
+        display: style.display,
+        visibility: style.visibility,
+        opacity: Number(style.opacity),
+        right: rect.right + scrollX,
+        bottom: rect.bottom + scrollY,
+      };
+    });
+  }
+
+  /** 枠が見えるかの目安の大きさです。正確な判定は Service Worker が行い、ここでは変化の検出にだけ使います。 */
+  const frameSizeHint = 30;
+  /** @type {WeakMap<Element, boolean>} 見張っている枠と、前回の大きさが目安以上だったか */
+  const watchedFrames = new WeakMap();
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let framesChangedTimer;
+  // 最上位のページだけで見張ります。枠の中のページの枠（2 段以上の埋め込み）は対象外のためです。
+  const frameObserver =
+    window === window.top
+      ? new ResizeObserver((entries) => {
+          let changed = false;
+          for (const entry of entries) {
+            const large =
+              entry.contentRect.width >= frameSizeHint && entry.contentRect.height >= frameSizeHint;
+            if (watchedFrames.get(entry.target) !== large) {
+              watchedFrames.set(entry.target, large);
+              changed = true;
+            }
+          }
+          if (!changed) {
+            return;
+          }
+          // 表示の切り替えで続けて変わる場合に、まとめて 1 回だけ知らせます。
+          clearTimeout(framesChangedTimer);
+          framesChangedTimer = setTimeout(() => {
+            chrome.runtime.sendMessage({ kind: 'recording/framesChanged' }).catch(() => {});
+          }, 300);
+        })
+      : null;
+
+  /** @param {HTMLIFrameElement} frame */
+  function watchFrame(frame) {
+    if (!frameObserver || watchedFrames.has(frame)) {
+      return;
+    }
+    const rect = frame.getBoundingClientRect();
+    watchedFrames.set(frame, rect.width >= frameSizeHint && rect.height >= frameSizeHint);
+    frameObserver.observe(frame);
+  }
+
   // 取り込み（capture）の段階で受け取ります。ページが操作の伝わりを止めても記録できるようにするためです。
   document.addEventListener('click', onClick, true);
   document.addEventListener('change', onChange, true);
@@ -140,9 +210,14 @@
    * Service Worker からの知らせを受け取ります。
    * @param {any} message
    * @param {chrome.runtime.MessageSender} sender
+   * @param {(response: unknown) => void} sendResponse
    */
-  function onMessage(message, sender) {
+  function onMessage(message, sender, sendResponse) {
     if (sender.id !== chrome.runtime.id) {
+      return;
+    }
+    if (message?.kind === 'recorder/frameSizes') {
+      sendResponse(window === window.top ? measureFrames() : []);
       return;
     }
     if (message?.kind === 'recorder/notice' && typeof message.text === 'string') {
@@ -160,6 +235,8 @@
       root.removeEventListener('focusin', onFocusIn, true);
     }
     watchedRoots.clear();
+    frameObserver?.disconnect();
+    clearTimeout(framesChangedTimer);
     overlay.remove();
     // 受け取りをやめます。残したまま同じページで記録を始め直すと、受け取りが増えるためです（#82）。
     chrome.runtime.onMessage.removeListener(onMessage);

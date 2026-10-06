@@ -261,7 +261,10 @@ const elements = {
   historyClear: byId('history-clear'),
   historyConfirm: byId('history-confirm'),
   historyNotice: byId('history-notice'),
-  allSites: /** @type {HTMLInputElement} */ (byId('all-sites')),
+  allSitesState: byId('all-sites-state'),
+  allSitesSummary: byId('all-sites-summary'),
+  allSitesGrant: /** @type {HTMLButtonElement} */ (byId('all-sites-grant')),
+  allSitesOpen: /** @type {HTMLButtonElement} */ (byId('all-sites-open')),
   allSitesNotice: byId('all-sites-notice'),
   confirmDetection: /** @type {HTMLInputElement} */ (byId('confirm-detection')),
   confirmDetectionSchedule: /** @type {HTMLInputElement} */ (byId('confirm-detection-schedule')),
@@ -3104,37 +3107,44 @@ function byId(id) {
   return element;
 }
 
-// ---- 設定（#41） ----
-// 「すべてのサイトを許可」は、Chrome のサイトの許可そのものを表示し、切り替えます。拡張機能には保存しません。
-// Chrome の拡張機能の画面など、ほかの場所で許可を変えた場合も、表示を合わせます。
+// ---- 設定（#41、#232） ----
+// すべてのサイトの許可は manifest.json の必須の許可（host_permissions）のため、読み込んだ時点で持っています（#232）。
+// 必須の許可は拡張機能から外せないため、状態を表示し、狭めるときは Chrome の拡張機能の画面へ案内します。
+// 利用者が Chrome の画面で範囲を狭めた場合は、［すべてのサイトを許可］で元に戻せます。
+// Chrome の画面で許可を変えた場合も、表示を合わせます。
 
-/** 「すべてのサイトを許可」の表示を、Chrome の許可に合わせます。 */
+/** すべてのサイトの許可の状態を、Chrome の許可に合わせて表示します。 */
 async function renderAllSites() {
-  elements.allSites.checked = await hasAllSites();
+  const all = await hasAllSites();
+  elements.allSitesState.textContent = all ? 'すべてのサイト' : '一部のサイトに制限';
+  elements.allSitesState.classList.toggle('lm-status-success', all);
+  elements.allSitesState.classList.toggle('lm-status-warning', !all);
+  elements.allSitesSummary.textContent = all
+    ? 'すべてのサイトで記録と実行ができます。'
+    : 'Chrome の設定で範囲を狭めています。許可していないサイトでは、記録と実行の前に許可を求めます。';
+  elements.allSitesGrant.hidden = all;
 }
 
-elements.allSites.addEventListener('change', async () => {
+elements.allSitesGrant.addEventListener('click', async () => {
   clearNotices();
   // 許可を求める処理は、操作の直後に呼び出す必要があります。この前に待ち時間を入れないでください。
-  if (elements.allSites.checked) {
-    const granted = await chrome.permissions.request({ origins: ALL_SITES }).catch(() => false);
-    if (!granted) {
-      showNotice(
-        elements.allSitesNotice,
-        '許可が得られなかったため、オンにできませんでした。もう一度押し、表示される画面で「許可」を選んでください。',
-        'error',
-      );
-    } else {
-      showToast(elements.toast, 'すべてのサイトを許可しました。');
-    }
+  const granted = await chrome.permissions.request({ origins: ALL_SITES }).catch(() => false);
+  if (granted) {
+    showToast(elements.toast, 'すべてのサイトを許可しました。');
   } else {
-    await chrome.permissions.remove({ origins: ALL_SITES }).catch(console.error);
-    showToast(
-      elements.toast,
-      'すべてのサイトの許可を外しました。個別に許可したサイトは、そのまま残ります。',
+    showNotice(
+      elements.allSitesNotice,
+      '許可が得られなかったため、すべてのサイトの許可に戻せませんでした。もう一度押し、表示される画面で「許可」を選んでください。',
+      'error',
     );
   }
   await renderAllSites();
+});
+
+elements.allSitesOpen.addEventListener('click', async () => {
+  clearNotices();
+  // chrome:// のページは、リンクでは開けないため、タブを作って開きます。
+  await chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` });
 });
 
 chrome.permissions.onAdded.addListener(() => {

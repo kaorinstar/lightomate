@@ -386,3 +386,32 @@ details > summary.lm-sub {
 .lm-aside a {
   text-decoration: underline;
 }
+
+/*
+ * 記録中に、許可がないサイトへ移動したときの知らせです（#209）。見出しより上に重ね、スクロールしても上部に残します。
+ * 上から滑らせて表示し、変化に気づけるようにします。OS で動きを減らす設定の場合は、base.css の指定で動きを止めます。
+ */
+.lm-site-notice {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin-bottom: 0.75rem;
+  box-shadow: var(--tblr-box-shadow);
+  animation: lm-site-notice-in 0.25s ease-out;
+}
+
+.lm-site-notice p:last-child {
+  margin-bottom: 0;
+}
+
+@keyframes lm-site-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
