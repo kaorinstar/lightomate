@@ -826,16 +826,17 @@ let promptQueue = Promise.resolve();
  * @param {Recording} recording
  * @param {string | undefined} origin 表示中のページのサイト。Web ページ以外の場合は undefined
  * @param {boolean} allowed そのサイトを操作する許可があるか
+ * @param {boolean} [reopen] 一度窓を開いたサイトでも開き直すか。サイドパネルの［許可の窓を開く］で使います
  * @returns {Promise<void>}
  */
-function updateSitePrompt(recording, origin, allowed) {
+function updateSitePrompt(recording, origin, allowed, reopen = false) {
   const task = promptQueue.then(async () => {
     const stored = await chrome.storage.session.get(SITE_PROMPT_KEY);
     /** @type {SitePrompt} */
     const prompt = /** @type {SitePrompt | undefined} */ (stored[SITE_PROMPT_KEY]) ?? {
       prompted: [],
     };
-    if (prompt.windowId !== undefined && (allowed || prompt.origin !== origin)) {
+    if (prompt.windowId !== undefined && (allowed || reopen || prompt.origin !== origin)) {
       await closeWindow(prompt.windowId);
       delete prompt.windowId;
       delete prompt.origin;
@@ -848,7 +849,7 @@ function updateSitePrompt(recording, origin, allowed) {
         allowed,
         recordingOrigin: recording.origin,
         extraOrigins: recording.extraOrigins ?? [],
-        prompted: prompt.prompted,
+        prompted: reopen ? [] : prompt.prompted,
         maxExtraOrigins: MAX_EXTRA_ORIGINS,
       })
     ) {
@@ -860,7 +861,7 @@ function updateSitePrompt(recording, origin, allowed) {
       return;
     }
     const windowId = await openSitePrompt(recording.tabId, origin);
-    prompt.prompted = [...prompt.prompted, origin];
+    prompt.prompted = [...new Set([...prompt.prompted, origin])];
     if (windowId !== undefined) {
       prompt.windowId = windowId;
       prompt.origin = origin;
@@ -871,6 +872,47 @@ function updateSitePrompt(recording, origin, allowed) {
     console.warn('許可を求める窓を開閉できませんでした。', error);
   });
   return promptQueue;
+}
+
+/**
+ * 許可を求める窓（#209）を開き直します。サイドパネルの［許可の窓を開く］で呼び出します。
+ * ［記録しない］や［×］で閉じた後に、そのサイトを許可するためです。
+ * 記録中のタブが、許可がないサイトのページを表示している場合だけ開きます。
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export async function reopenSitePrompt() {
+  const recording = await getRecording();
+  if (!recording) {
+    return { ok: false, error: '記録していません。' };
+  }
+  const frame = await chrome.webNavigation
+    .getFrame({ tabId: recording.tabId, frameId: 0 })
+    .catch(() => null);
+  const origin = frame && isWebUrl(frame.url) ? new URL(frame.url).origin : undefined;
+  if (
+    origin === undefined ||
+    origin === recording.origin ||
+    (await chrome.permissions.contains({ origins: [`${origin}/*`] }))
+  ) {
+    return { ok: false, error: '記録中のタブは、許可していないサイトのページを表示していません。' };
+  }
+  const extraOrigins = recording.extraOrigins ?? [];
+  if (!extraOrigins.includes(origin) && extraOrigins.length >= MAX_EXTRA_ORIGINS) {
+    return {
+      ok: false,
+      error: `記録できるサイトは、記録を始めたサイトのほかに ${MAX_EXTRA_ORIGINS} 件までです。`,
+    };
+  }
+  await updateSitePrompt(recording, origin, false, true);
+  const stored = await chrome.storage.session.get(SITE_PROMPT_KEY);
+  const prompt = /** @type {SitePrompt | undefined} */ (stored[SITE_PROMPT_KEY]);
+  if (prompt?.windowId === undefined) {
+    return {
+      ok: false,
+      error: '許可の窓を開けませんでした。もう一度押してください。',
+    };
+  }
+  return { ok: true };
 }
 
 /**

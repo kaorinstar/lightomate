@@ -308,10 +308,23 @@ elements.start.addEventListener('click', async () => {
   }
 });
 
-// 記録中に、許可がないサイトへ移動したときのボタンです（#41）。許可を得てから、そのページでも記録を続けます。
+// 記録中に、許可がないサイトへ移動したときと、許可がない iframe があるときのボタンです（#41、#20）。
+// 許可がないサイトへ移動したときは、許可の説明とボタンをブラウザの上部の窓（#209）にまとめ、ここでは閉じた窓を
+// 開き直します。iframe の場合は、許可を得てから、そのページでも記録を続けます。
 // Chrome は利用者の操作を起点にしか許可を求められないため、ボタンで求めます。
 elements.recordingAllow.addEventListener('click', async () => {
   clearNotices();
+  if (elements.recordingAllow.dataset.mode === 'window') {
+    const response = await chrome.runtime.sendMessage({ kind: 'recording/openSitePrompt' });
+    if (!response?.ok) {
+      showNotice(
+        elements.recordingAllowNotice,
+        response?.error ?? '許可の窓を開けませんでした。',
+        'error',
+      );
+    }
+    return;
+  }
   const origin = elements.recordingAllow.dataset.origin ?? '';
   if (!origin) {
     return;
@@ -685,7 +698,8 @@ async function refreshCurrentPage() {
 /**
  * 記録中のタブが、記録を始めたサイト以外のページを表示しているときの知らせです（#41）。
  * 許可があるサイトでは、確認を出さずに記録していることを知らせます。許可がないサイトでは、
- * 記録していないことと［このサイトを許可して記録］を表示します。
+ * 記録していないことを 1 行で示し、［許可の窓を開く］を表示します。許可の説明とボタンは、ブラウザの上部の窓（#209）に
+ * まとめているためです。許可がない iframe では、説明と［このサイトを許可して記録］を表示します。
  * @param {Recording} recording
  * @param {RecordingPage | undefined} page
  */
@@ -698,13 +712,16 @@ function renderRecordingSite(recording, page) {
   elements.recordingSite.hidden = !other && blockedFrame === undefined;
   elements.recordingAllow.hidden = blockedSite === undefined;
   elements.recordingAllow.dataset.origin = blockedSite ?? '';
+  const windowMode = other !== undefined && !other.allowed;
+  elements.recordingAllow.dataset.mode = windowMode ? 'window' : 'request';
+  elements.recordingAllow.textContent = windowMode ? '許可の窓を開く' : 'このサイトを許可して記録';
   /** @type {string[]} */
   const lines = [];
   if (other) {
     lines.push(
       other.allowed
         ? `${other.origin} でも記録しています。`
-        : `${other.origin} は許可していないため、記録していません。このサイトでの操作も記録する場合は、アドレスバーのサイト名が利用しているサービスのものか確かめてから、下のボタンを押してください。`,
+        : `${other.origin} は許可していないため、記録していません。`,
     );
   }
   if (blockedFrame !== undefined && blockedSite === blockedFrame) {

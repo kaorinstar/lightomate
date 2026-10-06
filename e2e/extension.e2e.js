@@ -493,7 +493,7 @@ function allowSitePages() {
   return browser.context.pages().filter((page) => page.url().includes('/allow-site.html'));
 }
 
-test('サイトの許可の窓：記録中に許可がないサイトへ移動すると上部に窓を開き、許可があるサイトへ戻る・［記録しない］・記録の停止で閉じる（#209）', async () => {
+test('サイトの許可の窓：記録中に許可がないサイトへ移動すると上部に窓を開き、許可があるサイトへ戻る・［記録しない］・記録の停止で閉じ、サイドパネルの［許可の窓を開く］で開き直す（#209）', async () => {
   const { extensionPage } = browser;
   // テスト用の拡張機能は 127.0.0.1 だけを許可しているため、localhost は許可のないサイトです。
   const port = new URL(server.origin).port;
@@ -547,7 +547,18 @@ test('サイトの許可の窓：記録中に許可がないサイトへ移動�
   await page.goto(`${blocked}/orders.html`);
   await page.waitForTimeout(1500);
   assert.equal(allowSitePages().length, 0);
-  await stop();
+  // サイドパネルの［許可の窓を開く］では、閉じた後でも開き直します。
+  const reopened = browser.context.waitForEvent('page', {
+    predicate: (popup) => popup.url().includes('/allow-site.html'),
+  });
+  assert.deepEqual(
+    await extensionPage.evaluate(() =>
+      chrome.runtime.sendMessage({ kind: 'recording/openSitePrompt' }),
+    ),
+    { ok: true },
+  );
+  const again = await reopened;
+  await Promise.all([again.waitForEvent('close'), stop()]);
 
   // 3. 記録を停止すると、開いている窓を閉じます。
   await start();

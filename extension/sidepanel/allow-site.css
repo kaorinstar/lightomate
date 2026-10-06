@@ -1,0 +1,22 @@
+/* サイトの許可の窓（#209）だけの指定です。共通の指定は shared/base.css と sidepanel.css にあります。 */
+
+/*
+ * 窓の中身を、上から滑らせて表示します。窓そのものは OS の窓のため、Chrome には滑らかに動かす機能がなく、
+ * その場に現れます。中身だけでも動かし、突然現れる印象を和らげます。
+ * OS で動きを減らす設定を選んだ場合は、base.css の指定で動きを止めます。
+ */
+.lm-allow-site {
+  animation: lm-allow-site-in 0.2s ease-out;
+}
+
+@keyframes lm-allow-site-in {
+  from {
+    opacity: 0;
+    transform: translateY(-1rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

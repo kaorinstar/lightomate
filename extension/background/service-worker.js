@@ -13,6 +13,7 @@ import {
   onDOMContentLoaded,
   onTabRemoved,
   removeRecordedStep,
+  reopenSitePrompt,
   resetRecording,
   startRecording,
   stopRecording,
@@ -101,6 +102,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       }
       allowRecordingOrigin(message.origin).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    // サイドパネルの［許可の窓を開く］です（#209）。
+    case 'recording/openSitePrompt':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      reopenSitePrompt().then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
       );
       return true;

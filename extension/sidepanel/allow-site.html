@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="../vendor/noto-sans-jp/wght.css" />
     <link rel="stylesheet" href="../shared/base.css" />
     <link rel="stylesheet" href="sidepanel.css" />
+    <link rel="stylesheet" href="allow-site.css" />
     <script type="module" src="allow-site.js"></script>
   </head>
   <!--
@@ -17,12 +18,12 @@
     見た目はサイドパネルの「記録中」の区画に合わせます。
   -->
   <body>
-    <main class="card">
+    <main class="card lm-allow-site">
       <div class="card-body">
         <h1 class="card-title mb-2">記録中：サイトの許可</h1>
         <p id="allow-site-text" class="mb-2"></p>
         <p class="lm-hint mb-2">
-          記録しない場合も、後からサイドパネルの［このサイトを許可して記録］で許可できます。
+          記録しない場合も、後からサイドパネルの［許可の窓を開く］で、この窓を開き直せます。
         </p>
         <div class="lm-buttons">
           <button type="button" class="btn btn-primary" id="allow-site">
