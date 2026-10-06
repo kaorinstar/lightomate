@@ -2733,6 +2733,8 @@ test('ページ送り：繰り返しにした後に押した「次へ」を、�
   const attach = panel.getByRole('button', {
     name: 'この「次へ」で、次のページの注文も続けて処理する',
   });
+  // サイドパネルが手順の一覧を表示し終えるまで待ちます。
+  await attach.waitFor();
   assert.equal(await attach.count(), 1);
   await attach.click();
   await waitUntil(
