@@ -21,7 +21,7 @@ import { getStopRule } from '../common/stop-rules-store.js';
 import { getConfirmDetection } from '../common/confirm-detection-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
 import { makeLoop, sanitizePagerHint, sanitizeRowHint } from '../shared/record-loop.js';
-import { toLinkDownload } from '../shared/file-link.js';
+import { toClickDownload, toLinkDownload } from '../shared/file-link.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -44,6 +44,8 @@ import { toLinkDownload } from '../shared/file-link.js';
  *   条件の年月、#183）。記録を停止すると、フローの params になります
  * @property {string} [lastHref] 最後に記録した手順がリンクのクリックの場合の、そのリンク先（#185）。直後にファイルへ
  *   移動したときに、同じ種類のリンクを探す指定を作るために使います。フロー定義には含めません
+ * @property {number} [lastClickAt] 最後に記録した手順がクリックの場合の、記録した時刻（Date.now() の値、#223）。直後に
+ *   始まったダウンロードを、そのクリックに結び付けるために使います。フロー定義には含めません
  */
 
 /**
@@ -205,9 +207,11 @@ export function removeRecordedStep(index, count) {
       const pagerHints = /** @type {PagerHint[]} */ (
         withoutStep(alignHints(recording.steps, recording.pagerHints), index, count)
       );
-      await chrome.storage.session.set({
-        [RECORDING_KEY]: { ...recording, steps, rowHints, pagerHints },
-      });
+      /** @type {Recording} */
+      const next = { ...recording, steps, rowHints, pagerHints };
+      // 手順を削除した後の最後の手順は、控えた時刻のクリックとは限らないため、ダウンロードを結び付けません（#223）。
+      delete next.lastClickAt;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
       return { ok: true };
     }
 
@@ -323,15 +327,17 @@ export function makeRecordedLoop(
     }
     const nextParams = result.param ? [...params, result.param] : params;
     if (recording) {
-      await chrome.storage.session.set({
-        [RECORDING_KEY]: {
-          ...recording,
-          steps: result.steps,
-          rowHints: result.hints,
-          pagerHints: result.pagers,
-          ...(nextParams.length > 0 ? { params: nextParams } : {}),
-        },
-      });
+      /** @type {Recording} */
+      const next = {
+        ...recording,
+        steps: result.steps,
+        rowHints: result.hints,
+        pagerHints: result.pagers,
+        ...(nextParams.length > 0 ? { params: nextParams } : {}),
+      };
+      // 繰り返しに変えた後は、最後の手順が控えた時刻のクリックとは限らないため、ダウンロードを結び付けません（#223）。
+      delete next.lastClickAt;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
     } else if (lastFlow) {
       await chrome.storage.session.set({
         [LAST_FLOW_KEY]: {
@@ -531,6 +537,12 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
       } else {
         delete recording.lastHref;
       }
+      // クリックの時刻は、直後に始まったダウンロードを結び付けるために控えます（#223）。
+      if (recorded.type === 'click') {
+        recording.lastClickAt = Date.now();
+      } else {
+        delete recording.lastClickAt;
+      }
       recording.steps.push(recorded);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
     }
@@ -566,6 +578,7 @@ export function onCommitted(details) {
       recording.lastHref,
     );
     delete recording.lastHref;
+    delete recording.lastClickAt;
     if (converted) {
       recording.steps[recording.steps.length - 1] = converted;
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
@@ -574,6 +587,32 @@ export function onCommitted(details) {
     recording.rowHints = [...alignHints(recording.steps, recording.rowHints), null];
     recording.pagerHints = [...alignHints(recording.steps, recording.pagerHints), null];
     recording.steps.push({ type: 'navigate', url: details.url, cause });
+    await chrome.storage.session.set({ [RECORDING_KEY]: recording });
+  });
+}
+
+/**
+ * 記録中にダウンロードが始まったときに、直前に記録したクリックで始まったものであれば、そのクリックを
+ * ダウンロードを保存する指定に変えます（#223）。実行するときは、クリックで始まったファイルを、指定の保存先に
+ * 保存します。記録中のダウンロードそのものは止めず、Chrome の通常のダウンロードのままにします。
+ * @param {chrome.downloads.DownloadItem} item
+ * @returns {Promise<void>}
+ */
+export function onDownloadCreated(item) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    const previous = recording?.steps.at(-1);
+    if (!recording || recording.lastClickAt === undefined || !previous) {
+      return;
+    }
+    const site = ('origin' in previous ? previous.origin : undefined) ?? recording.origin;
+    const converted = toClickDownload(previous, item, site, Date.now() - recording.lastClickAt);
+    if (!converted) {
+      return;
+    }
+    // 1 回のクリックで複数のファイルが始まった場合も、変えるのは 1 回だけです。
+    delete recording.lastClickAt;
+    recording.steps[recording.steps.length - 1] = converted;
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
   });
 }
