@@ -477,10 +477,9 @@ async function removeStep(index, count, errorNotice) {
  * 繰り返しを作った後に記録した「次へ」のクリックを、その繰り返しのページ送りにします（#237）。
  * @param {number} index 「次へ」のクリックの番号（0 から数えます）
  * @param {number} count 表示している手順の件数
- * @param {number} loop ページ送りを付ける繰り返しの番号
  * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
  */
-async function attachStepPager(index, count, loop, errorNotice) {
+async function attachStepPager(index, count, errorNotice) {
   clearNotices();
   const response = await chrome.runtime.sendMessage({
     kind: 'recording/attachPager',
@@ -492,10 +491,7 @@ async function attachStepPager(index, count, loop, errorNotice) {
     await render();
     return;
   }
-  showToast(
-    elements.toast,
-    `手順 ${index + 1} のクリックで次のページへ送り、手順 ${loop + 1} の繰り返しを最後のページまで行うようにしました。`,
-  );
+  showToast(elements.toast, '次のページの注文も、最後のページまで続けて処理するようにしました。');
 }
 
 elements.flowName.addEventListener('input', () => {
@@ -970,13 +966,13 @@ function stepItems(steps, locked, errorNotice, recorded = {}) {
     remove.disabled = locked;
     // 「×」は float で右端に寄せるため、説明より先に置きます。
     item.append(remove, text);
-    const loop = loops[index];
-    if (loop !== null) {
+    // ボタンの文言には手順の番号を使いません。利用者には、どの手順を指すかがわからないためです。
+    if (loops[index] !== null) {
       const attach = button(
-        `手順 ${loop + 1} の繰り返しのページ送りにする`,
+        'この「次へ」で、次のページの注文も続けて処理する',
         'btn btn-sm d-block mt-1',
         () => {
-          attachStepPager(index, steps.length, loop, errorNotice).catch((error) =>
+          attachStepPager(index, steps.length, errorNotice).catch((error) =>
             showNotice(errorNotice, String(error), 'error'),
           );
         },

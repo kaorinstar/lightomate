@@ -2730,7 +2730,9 @@ test('ページ送り：繰り返しにした後に押した「次へ」を、�
   const id = new URL(extensionPage.url()).host;
   const panel = await browser.context.newPage();
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
-  const attach = panel.getByRole('button', { name: '手順 2 の繰り返しのページ送りにする' });
+  const attach = panel.getByRole('button', {
+    name: 'この「次へ」で、次のページの注文も続けて処理する',
+  });
   assert.equal(await attach.count(), 1);
   await attach.click();
   await waitUntil(
