@@ -35,7 +35,7 @@ import {
   historyVariables,
   redactPageStructure,
 } from '../shared/history-report.js';
-import { renderTemplate, resolveParams } from '../shared/params.js';
+import { findReferences, renderTemplate, resolveParams } from '../shared/params.js';
 import {
   CONFIRM_DETECTION_OFF_NOTE,
   confirmDetectionFor,
@@ -1027,8 +1027,19 @@ export function resolveSteps(flow, paramInput, secretInput, now) {
           }
           return { ...step, value: renderTemplate(step.value ?? '', values) };
         }
-        case 'select':
-          return { ...step, values: step.values.map((value) => renderTemplate(value, values)) };
+        case 'select': {
+          // パラメータを当てはめた選択肢は、記録した時点の表示文字列（labels）では探しません（#216）。
+          // value で見つからないときに記録時の選択肢を選び、対象月などに関係なく同じ選択肢を選んでしまうためです。
+          // 代わりに、当てはめた値を表示文字列としても照合します（「06」の形式の選択肢など）。
+          const rendered = step.values.map((value) => renderTemplate(value, values));
+          return {
+            ...step,
+            values: rendered,
+            labels: step.values.map((value, i) =>
+              findReferences(value).length > 0 ? rendered[i] : (step.labels[i] ?? rendered[i]),
+            ),
+          };
+        }
         case 'if': {
           const condition = resolveCondition(step.condition, values);
           const then = resolveList(step.then);
