@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
   TRANSLATED_MIN_SCHEMA_VERSION,
+  dependsOnTranslation,
   recordedTranslation,
+  translationHint,
   translationNote,
 } from '../extension/shared/translation.js';
 
@@ -55,4 +57,85 @@ test('実行時の翻訳の有無がページから届かない場合は、説�
     assert.equal(translationNote(true, current), undefined);
     assert.equal(translationNote(undefined, current), undefined);
   }
+});
+
+test('id だけで指定した要素は、翻訳で見つかり方が変わらないため、翻訳の説明を加えない（#206）', () => {
+  const step = /** @type {import('../extension/shared/flow.js').Step} */ ({
+    type: 'click',
+    target: { selectors: ['#lightomate-missing'], tag: 'button', label: '存在しないボタン' },
+  });
+  assert.equal(dependsOnTranslation(step), false);
+  const hint = translationHint({ schemaVersion: 18 }, step);
+  assert.equal(hint, null);
+  assert.equal(translationNote(hint, true), undefined);
+  assert.equal(translationNote(hint, false), undefined);
+  // 版 7 以前のフロー（記録時の翻訳の有無が不明）でも同じです。
+  assert.equal(translationNote(translationHint({ schemaVersion: 7 }, step), true), undefined);
+});
+
+test('表示の文字（text）がある指定では、従来どおり翻訳の説明を加える（#206）', () => {
+  const step = /** @type {import('../extension/shared/flow.js').Step} */ ({
+    type: 'click',
+    target: { selectors: ['#buy'], tag: 'button', label: '購入', text: '購入する' },
+  });
+  assert.equal(dependsOnTranslation(step), true);
+  assert.match(
+    translationNote(translationHint({ schemaVersion: 18 }, step), true) ?? '',
+    /原文の表示に戻して/,
+  );
+  assert.match(
+    translationNote(translationHint({ schemaVersion: 7 }, step), true) ?? '',
+    /翻訳が原因で見つからない場合があります/,
+  );
+});
+
+test('翻訳で変わる属性を参照するセレクターでは、従来どおり翻訳の説明を加える（#206）', () => {
+  for (const selector of [
+    'button[aria-label="閉じる"]',
+    'input[placeholder="検索"]',
+    'img[alt="ロゴ"]',
+    'a[title~="詳細"]',
+    'input[value="送信"]',
+    "[ARIA-LABEL='x']",
+  ]) {
+    const step = /** @type {import('../extension/shared/flow.js').Step} */ ({
+      type: 'click',
+      target: { selectors: ['#other', selector], tag: 'button', label: 'x' },
+    });
+    assert.equal(dependsOnTranslation(step), true, selector);
+  }
+  // 部品（Shadow DOM）の指定も含めます。
+  assert.equal(
+    dependsOnTranslation({
+      type: 'click',
+      target: { selectors: ['#b'], tag: 'button', label: 'x', shadow: ['[aria-label="カード"]'] },
+    }),
+    true,
+  );
+  // name や data-* などの属性は翻訳で変わりません。
+  for (const selector of ['input[name="email"]', '[data-testid="buy"]', 'input[type="submit"]']) {
+    assert.equal(
+      dependsOnTranslation({
+        type: 'click',
+        target: { selectors: [selector], tag: 'input', label: 'x' },
+      }),
+      false,
+      selector,
+    );
+  }
+});
+
+test('選択肢の選択（select）では、表示文字列でも探すため、従来どおり翻訳の説明を加える（#206）', () => {
+  const step = /** @type {import('../extension/shared/flow.js').Step} */ ({
+    type: 'select',
+    target: { selectors: ['#plan'], tag: 'select', label: 'プラン' },
+    values: ['b'],
+    labels: ['B プラン'],
+  });
+  assert.equal(dependsOnTranslation(step), true);
+  assert.equal(translationHint({ schemaVersion: 18 }, step), false);
+});
+
+test('要素の指定がない手順では、翻訳の説明を加えない（#206）', () => {
+  assert.equal(dependsOnTranslation({ type: 'wait', ms: 100 }), false);
 });

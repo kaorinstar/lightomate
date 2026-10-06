@@ -49,7 +49,7 @@ import {
   shouldPauseForAuth,
 } from '../shared/run-guard.js';
 import { getStopRule } from '../common/stop-rules-store.js';
-import { recordedTranslation, translationNote } from '../shared/translation.js';
+import { translationHint, translationNote } from '../shared/translation.js';
 import {
   DEFAULT_FOREACH_MAX,
   advance,
@@ -2384,7 +2384,7 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
         timeoutMs: ELEMENT_TIMEOUT_MS,
         stopSelectors,
       },
-      recordedTranslation(flow, step),
+      translationHint(flow, step),
       frameId,
     );
     // 利用者が明示した指定のため、文言による判定より先に確かめます。
@@ -2418,7 +2418,7 @@ async function runInPage(runId, flow, tabId, step, expectedUrl, scope) {
     runId,
     tabId,
     { kind: 'runner/step', step, scope, timeoutMs: ELEMENT_TIMEOUT_MS },
-    recordedTranslation(flow, step),
+    translationHint(flow, step),
     frameId,
   );
   return { documentId, response };
@@ -2684,8 +2684,9 @@ async function waitForDownload(runId, downloadId, label = 'PDF') {
  * @param {string} runId
  * @param {number} tabId
  * @param {object} message
- * @param {boolean | undefined} [recorded] 手順を記録したときにページが翻訳されていたか。不明な場合は
- *   undefined です。要素や選択肢が見つからなかった場合に、翻訳の有無の説明を加えるために使います（#99）
+ * @param {boolean | null | undefined} [recorded] 手順を記録したときにページが翻訳されていたか。不明な場合は
+ *   undefined です。要素や選択肢が見つからなかった場合に、翻訳の有無の説明を加えるために使います（#99）。
+ *   要素の指定に翻訳で変わる手がかりがない場合は null で、説明を加えません（#206）
  * @param {number} [frameId] 依頼するフレーム。既定は最上位のページです。iframe の中の要素（#20）の場合は、その
  *   iframe です
  * @returns {Promise<Record<string, any>>}

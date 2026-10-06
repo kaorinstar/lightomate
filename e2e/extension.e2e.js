@@ -224,6 +224,41 @@ test('Shadow DOM：部品が見つからない場合は、見つからない部�
   }
 });
 
+test('翻訳の案内：翻訳で変わらない指定（id）の要素が見つからない場合は、翻訳をやめる案内を付けない（#206）', async () => {
+  const { extensionPage } = browser;
+  /**
+   * @param {import('../extension/shared/flow.js').Target} missing
+   * @returns {Flow}
+   */
+  const flow = (missing) => ({
+    schemaVersion: 18,
+    name: '翻訳の案内',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', url: `${server.origin}/shadow-form.html?translate=1`, cause: 'user' },
+      { type: 'click', target: missing },
+    ],
+  });
+  const byId = await runFlow(
+    extensionPage,
+    flow(target('#lightomate-missing', 'button', '存在しないボタン')),
+  );
+  assert.equal(byId.status, 'failed');
+  assert.match(byId.reason ?? '', /要素が見つかりません/);
+  assert.doesNotMatch(byId.reason ?? '', /翻訳/);
+
+  // 表示の文字を手がかりに持つ指定では、従来どおり案内を付けます。
+  const byText = await runFlow(
+    extensionPage,
+    flow({ ...target('#lightomate-missing', 'button', '送信'), text: '送信' }),
+  );
+  assert.equal(byText.status, 'failed');
+  assert.match(byText.reason ?? '', /翻訳をやめて原文の表示に戻して/);
+  for (const opened of pagesAt('/shadow-form.html')) {
+    await opened.close();
+  }
+});
+
 /**
  * iframe の中の入力欄とボタンを持つお支払いの画面（#20）で、名義の入力と［確認へ］のクリックを記録し、記録した
  * フローを返します。

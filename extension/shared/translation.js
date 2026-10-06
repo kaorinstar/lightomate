@@ -27,18 +27,62 @@ export function recordedTranslation(flow, step) {
 }
 
 /**
+ * Chrome の翻訳で値が置き換わる場合がある属性です（CLAUDE.md「ページの表示の文字は、Chrome の翻訳で置き換わる
+ * 前提で扱います」）。セレクターがこれらの属性を参照している場合は、翻訳で見つからなくなる場合があります。
+ */
+const TRANSLATED_ATTRIBUTE = /\[\s*(title|alt|placeholder|aria-label|value)\s*[~|^$*]?=/i;
+
+/**
+ * 手順の要素の指定に、翻訳で変わる手がかりがあるかを返します（#206）。
+ * 手がかりは、表示の文字（target.text）、翻訳で変わる属性を参照するセレクター、選択肢の表示文字列（labels）です。
+ * id や name などだけで指定した要素は、翻訳しても見つかり方が変わりません。そのため、見つからなかったときに
+ * 翻訳をやめるよう案内すると、本当の原因（指定が古いなど）から利用者を遠ざけます。
+ * 判定を誤って説明を省いても、実行は止まったままで、進んでしまうことはありません。
+ * @param {Step} step
+ * @returns {boolean}
+ */
+export function dependsOnTranslation(step) {
+  if (step.type === 'select') {
+    return true;
+  }
+  if (!('target' in step)) {
+    return false;
+  }
+  const { target } = step;
+  return (
+    Boolean(target.text) ||
+    [...target.selectors, ...(target.shadow ?? [])].some((selector) =>
+      TRANSLATED_ATTRIBUTE.test(selector),
+    )
+  );
+}
+
+/**
+ * 止まった理由に翻訳の説明を加えるかの判定に使う、記録時の翻訳の有無です（#206）。
+ * 要素の指定に翻訳で変わる手がかりがない場合は null を返します。translationNote は null では説明を加えません。
+ * @param {Pick<Flow, 'schemaVersion'>} flow
+ * @param {Step} step
+ * @returns {boolean | null | undefined}
+ */
+export function translationHint(flow, step) {
+  return dependsOnTranslation(step) ? recordedTranslation(flow, step) : null;
+}
+
+/**
  * 要素や選択肢が見つからなかったときに、止まった理由に加える翻訳の説明を返します。
  * 説明が不要な場合は undefined を返します。
  * - 記録時と実行時で翻訳の有無が異なる場合は、その旨を返します。
  * - 記録時の翻訳の有無が不明（版 7 以前のフロー）で、実行時に翻訳されている場合は、翻訳が原因の
  *   可能性を返します。記録時も翻訳されていた可能性があるため、異なるとは断定しません。
  * - 実行時の翻訳の有無が不明（ページから届かなかった）の場合は、何も返しません。
- * @param {boolean | undefined} recorded 記録時に翻訳されていたか。不明な場合は undefined
+ * - 要素の指定に翻訳で変わる手がかりがない（recorded が null、translationHint）場合は、何も返しません（#206）。
+ * @param {boolean | null | undefined} recorded 記録時に翻訳されていたか。不明な場合は undefined、
+ *   翻訳が見つかり方に関係しない場合は null
  * @param {unknown} current 実行時に翻訳されているか（ページから届いた値）
  * @returns {string | undefined}
  */
 export function translationNote(recorded, current) {
-  if (typeof current !== 'boolean') {
+  if (typeof current !== 'boolean' || recorded === null) {
     return undefined;
   }
   if (recorded === undefined) {
