@@ -305,3 +305,27 @@ test('class の違いが 3 つ以上ある兄弟と、共通する class が 1 �
     assert.deepEqual(plain(window.rowCandidates($('#t'))), [], html);
   }
 });
+
+test('1 件目と 2 件目で押した要素から、1 件分の行と、行の中の手順の指定を求める（#241）', () => {
+  const { window, document, $ } = page(firstDiffers);
+  const result = plain(
+    window.rowsFromExamples($('#list > div:nth-child(2) .date'), [
+      { index: 1, element: $('#list > div:nth-child(1) .date') },
+      { index: 2, element: $('#list > div:nth-child(1) .detail') },
+      { index: 4, element: $('#list .nav-next') },
+    ]),
+  );
+  assert.ok(result);
+  assert.equal(result.count, 3);
+  assert.equal(document.querySelectorAll(result.items.selectors[0]).length, 3);
+  // 行の外の「次へ」は、行の中の手順にしません。
+  assert.deepEqual(Object.keys(result.inners), ['1', '2']);
+  assert.equal(result.inners[1].scope, 'item');
+});
+
+test('2 件目で押した要素が 1 件目のどの要素とも種類が違う場合と、同じ要素の場合は、行を決めない（#241）', () => {
+  const { window, $ } = page(firstDiffers);
+  const firsts = [{ index: 1, element: $('#list > div:nth-child(1) .date') }];
+  assert.equal(window.rowsFromExamples($('#list > div:nth-child(2) .detail'), firsts), null);
+  assert.equal(window.rowsFromExamples($('#list > div:nth-child(1) .date'), firsts), null);
+});

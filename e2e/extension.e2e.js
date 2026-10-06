@@ -2036,6 +2036,22 @@ test('一時停止：「待つ」の途中で［一時停止］を押すと、�
 });
 
 /**
+ * サイドパネルの［繰り返しにする］を押し、ページで 2 件目の同じものを押して、繰り返す手順を選ぶ表示にします（#241）。
+ * @param {import('playwright').Page} panel サイドパネルのページ
+ * @param {import('playwright').Page} site 記録しているページ
+ * @param {string} second 2 件目で押す要素のセレクター
+ */
+async function pickSecond(panel, site, second) {
+  await panel.click('#recording-loop');
+  // 2 件目を押す準備ができると、［キャンセル］に入力の位置が移ります。
+  await panel.waitForFunction("document.activeElement?.textContent === 'キャンセル'", undefined, {
+    timeout: 10000,
+  });
+  await site.click(second);
+  await panel.locator('#recording-loop-form .lm-loop-pick').waitFor({ timeout: 10000 });
+}
+
+/**
  * 記録から繰り返しを作る確認（#167）です。1 件目の操作を記録し、サイドパネルで範囲を選んで繰り返しにし、実行します。
  * @param {boolean} translate 記録と実行の両方で、ページの文字を翻訳と同じく置き換えるか
  */
@@ -2089,7 +2105,8 @@ async function recordLoop(translate) {
   // サイドパネルの記録中の区画で、範囲を選んで繰り返しにします。
   const panel = await browser.context.newPage();
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
-  await panel.click('#recording-loop');
+  // 2 件目の注文日を押して、注文 1 件分を決めます（#241）。
+  await pickSecond(panel, site, `.order:nth-child(2) .order-date${inside}`);
   const form = panel.locator('#recording-loop-form');
   // 既定の範囲は、行の中を操作した最初の手順（2 番目）から、一覧のページへ戻った手順の前までです。
   // ページを開く手順（1 番目と 6 番目）には、印を付けられません。
@@ -2642,6 +2659,88 @@ test('1 件目だけ class が異なる一覧：記録から作る繰り返し�
   }
 });
 
+test('2 件目を押して 1 件分を決める：件数や枠を選ばずに、全件を注文番号の名前で保存する（#241）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/first-differs-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  await site.click('#list > div:nth-child(1) .value');
+  await site.click('#list > div:nth-child(1) a.invoice');
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps;
+      }),
+    (steps) => steps.length >= 3 && steps[2].type === 'click' && steps[2].download?.from === 'link',
+  );
+  if (!site.url().endsWith('first-differs-orders.html')) {
+    await site.goBack();
+    await site.waitForURL(listUrl);
+  }
+  const before = await extensionPage.evaluate(async () => {
+    const { recording } = await chrome.storage.session.get('recording');
+    return /** @type {{ steps: Step[] }} */ (recording).steps.length;
+  });
+
+  const id = new URL(extensionPage.url()).host;
+  const panel = await browser.context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
+  // 2 件目の明細書のリンクを押します。リンク先へは移動せず、手順にも残りません。
+  await pickSecond(panel, site, '#list > div:nth-child(2) a.invoice');
+  assert.equal(site.url(), listUrl);
+  const after = await extensionPage.evaluate(async () => {
+    const { recording } = await chrome.storage.session.get('recording');
+    return /** @type {{ steps: Step[] }} */ (recording).steps.length;
+  });
+  assert.equal(after, before);
+  const form = panel.locator('#recording-loop-form');
+  // 「1 件分の枠」の選択欄は出ません。
+  assert.equal(await form.locator('select').isVisible(), false);
+  await form.getByLabel('この文字をファイル名に使う').check();
+  await form.getByRole('button', { name: '3 件で繰り返す' }).click();
+  await waitUntil(
+    () => panel.locator('#steps > li').count(),
+    // 一覧へ［戻る］操作は、繰り返しの後に一覧を開く手順として残ります。
+    (count) => count === 3,
+  );
+  await panel.close();
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.deepEqual(stopped.errors, []);
+  await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...stopped.flow, name: '二件目', interval: { min: 500, max: 500 } };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/二件目/')),
+    (list) => list.length >= 3,
+  );
+  assert.deepEqual(files, [
+    'Lightomate/二件目/F-001.pdf',
+    'Lightomate/二件目/F-002.pdf',
+    'Lightomate/二件目/F-003.pdf',
+  ]);
+  for (const page of pagesAt('/first-differs-orders.html')) {
+    await page.close();
+  }
+});
+
 test('ページ送り：記録で押した「次へ」をページ送りにすると、位置が変わる「次へ」でも最後のページまで保存する（#182）', async () => {
   const { extensionPage } = browser;
   const site = await browser.context.newPage();
@@ -2697,7 +2796,7 @@ test('ページ送り：記録で押した「次へ」をページ送りにす�
   const id = new URL(extensionPage.url()).host;
   const panel = await browser.context.newPage();
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
-  await panel.click('#recording-loop');
+  await pickSecond(panel, site, '.order:nth-child(2) .order-number');
   const form = panel.locator('#recording-loop-form');
   await form.getByLabel('この文字をファイル名に使う').check();
   // 「次へ」は［戻る］（範囲に含められない手順）とほかのクリックの後にありますが、次のページへ送るクリックに
@@ -2791,7 +2890,7 @@ test('対象の月：記録で押した注文日を条件にすると、対象�
   const id = new URL(extensionPage.url()).host;
   const panel = await browser.context.newPage();
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
-  await panel.click('#recording-loop');
+  await pickSecond(panel, site, '.order:nth-child(2) .order-number');
   const form = panel.locator('#recording-loop-form');
   await form.getByLabel('この文字をファイル名に使う').nth(1).check();
   // 日付として読める注文日の手順にだけ、条件の印が出ます。

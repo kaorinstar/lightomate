@@ -8,7 +8,7 @@
 // 行の見分けには、タグと class だけを使います。表示の文字は、翻訳で置き換わるため使いません（CLAUDE.md）。
 
 /* global buildTarget, looksGenerated, pointsTo, structuralSelector, visibleText */
-/* exported buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, originalElement, pagerSelectors, resolveRows, rowCandidates */
+/* exported buildInnerTarget, buildPageTarget, buildRowsTarget, containingRow, originalElement, pagerSelectors, resolveRows, rowCandidates, rowsFromExamples */
 
 /**
  * 押した要素が、Chrome の翻訳がページに差し込んだ要素であれば、その外側の本来の要素を返します。
@@ -312,6 +312,69 @@ function rowCandidates(element) {
     current = current.parentElement;
   }
   return candidates;
+}
+
+/**
+ * 1 件目と 2 件目で押した同じ種類の要素から、1 件分の範囲（行）を求めます（#241）。1 件目の要素を含み、2 件目の
+ * 要素を含まない、いちばん大きい要素です。2 つの要素の共通の親の直下にある、1 件目の側の子になります。
+ * 一方がもう一方を含む場合と、同じ要素の場合は null です。
+ * @param {Element} first
+ * @param {Element} second
+ * @returns {Element | null}
+ */
+function exampleRow(first, second) {
+  if (first === second || first.contains(second) || second.contains(first)) {
+    return null;
+  }
+  /** @type {Element} */
+  let row = first;
+  while (row.parentElement && !row.parentElement.contains(second)) {
+    row = row.parentElement;
+  }
+  return row.parentElement && row.parentElement !== document.documentElement ? row : null;
+}
+
+/**
+ * 2 件目で押した要素と、1 件目で記録した手順の要素から、繰り返しの行の指定と、行の中の手順の指定を求めます
+ * （#241）。利用者に行の候補を選ばせる代わりに、2 件目の同じものを押してもらって 1 件分を決めるためです。
+ * 2 件目と同じ形（タグと class）の 1 件目の要素を先に、同じタグの要素を後に試します。行の指定が 2 件目の行にも
+ * 一致する最初の組を使います。どの組でも決められない場合は null です。
+ * 表示の文字は使いません。翻訳で置き換わるためです（CLAUDE.md）。
+ * @param {Element} second 2 件目で押した要素
+ * @param {{ index: number, element: Element }[]} examples 記録した手順の番号と、ページで見つかったその要素
+ * @returns {{ items: { selectors: string[], tag: string, label: string }, count: number,
+ *   inners: Record<number, { selectors: string[], tag: string, label: string, text?: string, scope: 'item' }> } | null}
+ */
+function rowsFromExamples(second, examples) {
+  const base = originalElement(second);
+  // 翻訳が差し込んだ要素（font）は、どちらの側も外側の本来の要素にそろえます。
+  const firsts = examples.map(({ index, element }) => ({
+    index,
+    element: originalElement(element),
+  }));
+  const shape = shapeSelector(base);
+  const ordered = [
+    ...firsts.filter(({ element }) => shapeSelector(element) === shape),
+    ...firsts.filter(
+      ({ element }) => element.tagName === base.tagName && shapeSelector(element) !== shape,
+    ),
+  ];
+  for (const { element } of ordered) {
+    const row = exampleRow(element, base);
+    const built = row ? rowsTargetOf(row, document) : null;
+    if (!row || !built || !built.rows.some((other) => other !== row && other.contains(base))) {
+      continue;
+    }
+    /** @type {Record<number, ReturnType<typeof buildInnerTarget>>} */
+    const inners = {};
+    for (const first of firsts) {
+      if (first.element !== row && row.contains(first.element)) {
+        inners[first.index] = buildInnerTarget(first.element, row);
+      }
+    }
+    return { items: built.items, count: built.rows.length, inners };
+  }
+  return null;
 }
 
 /**

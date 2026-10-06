@@ -176,6 +176,7 @@ const recordingLoopForm = createLoopForm({
   container: elements.recordingLoopForm,
   list: elements.steps,
   toast: elements.toast,
+  pick: true,
 });
 const resultLoopForm = createLoopForm({
   open: elements.resultLoop,
@@ -804,7 +805,13 @@ async function render() {
       ...stepItems(recording.steps, running, elements.recordingNotice),
     );
     elements.recordingDiscard.disabled = running || recording.steps.length === 0;
-    recordingLoopForm.update(recording.steps, recording.rowHints, running, recording.pagerHints);
+    recordingLoopForm.update(
+      recording.steps,
+      recording.rowHints,
+      running,
+      recording.pagerHints,
+      recording.picking === true,
+    );
     // 最後に記録した手順が見えるよう、一覧の末尾まで移動します。
     elements.steps.scrollTop = elements.steps.scrollHeight;
   }
