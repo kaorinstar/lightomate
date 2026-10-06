@@ -277,6 +277,91 @@ test('履歴のコピー：止まった時点の変数とフロー定義を含�
   await extensionPage.reload();
 });
 
+test('選択肢のパラメータ：当てはめた値で選び、一致しない場合は記録時の選択肢を選ばずに止まる（#216）', async () => {
+  const { extensionPage } = browser;
+  /**
+   * @param {string} id
+   * @param {string} value
+   * @param {string} label 記録時の表示文字列
+   * @returns {Step}
+   */
+  const select = (id, value, label) => ({
+    type: 'select',
+    target: target(`#${id}`, 'select', id),
+    values: [value],
+    labels: [label],
+  });
+  /**
+   * @param {Step[]} selects
+   * @returns {Flow}
+   */
+  const flow = (selects) => ({
+    schemaVersion: 18,
+    name: '期間の指定',
+    origin: server.origin,
+    params: [
+      { name: 'from', label: '開始月', type: 'month' },
+      { name: 'to', label: '終了月', type: 'month' },
+    ],
+    steps: [
+      { type: 'navigate', url: `${server.origin}/period.html`, cause: 'user' },
+      ...selects,
+      { type: 'click', target: target('#submit', 'button', '表示') },
+      { type: 'navigate', url: `${server.origin}/done.html`, cause: 'page' },
+    ],
+  });
+  const params = { from: '2026-08', to: '2026-09' };
+
+  // 当てはめた値が内部の値に一致する選択肢と、表示文字列に一致する選択肢を選びます。
+  // 記録時の表示文字列（「03」など）は使いません。
+  const entry = await runFlow(
+    extensionPage,
+    flow([
+      select('from-month', '{{from.mm}}', '03'),
+      select('to-month', '{{to.mm}}', '03'),
+      select('coded-month', '{{to.mm}}', '03'),
+      select('plain-month', '{{from.month}}', '3'),
+    ]),
+    params,
+  );
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const [done] = pagesAt('/done.html');
+  assert.ok(done, '送信後のページが開いていません。');
+  const query = new URL(done.url()).searchParams;
+  assert.equal(query.get('fromMonth'), '08');
+  assert.equal(query.get('toMonth'), '09');
+  assert.equal(query.get('codedMonth'), 'm9');
+  assert.equal(query.get('plainMonth'), '8');
+  // サイトのスクリプトが、選択に応じて「期間を指定する」を選んでいます。
+  assert.equal(query.get('range'), 'period');
+  await done.close();
+
+  // ゼロの有無が異なり一致しない場合は、記録時の選択肢（「3」）を選ばずに止まります。
+  const missing = await runFlow(
+    extensionPage,
+    flow([select('plain-month', '{{from.mm}}', '3')]),
+    params,
+  );
+  assert.equal(missing.status, 'failed');
+  // 当てはめた値は、実行履歴では伏せます（パラメータの値と同じ扱いです）。
+  assert.match(missing.reason ?? '', /選択肢「＊＊＊」がありません/);
+  assert.equal(pagesAt('/done.html').length, 0);
+
+  // パラメータを含まない手順は、これまでどおり記録時の表示文字列でも探します。
+  const recorded = await runFlow(
+    extensionPage,
+    flow([select('plain-month', 'old-value', '3')]),
+    params,
+  );
+  assert.equal(recorded.status, 'done', recorded.reason ?? '');
+  const [again] = pagesAt('/done.html');
+  assert.equal(new URL(again.url()).searchParams.get('plainMonth'), '3');
+  await again.close();
+  for (const opened of pagesAt('/period.html')) {
+    await opened.close();
+  }
+});
+
 test('翻訳の案内：翻訳で変わらない指定（id）の要素が見つからない場合は、翻訳をやめる案内を付けない（#206）', async () => {
   const { extensionPage } = browser;
   /**
