@@ -25,6 +25,13 @@ const cases = [
     button: 'recording-allow',
     notices: ['recording-allow-notice'],
   },
+  // 記録中に許可がないサイトへ移動したときの、最上部の知らせ（#209）です。並びの末尾の直後に出します。
+  {
+    page: 'サイドパネル',
+    html: sidepanel,
+    button: 'site-notice-skip',
+    notices: ['site-notice-notice'],
+  },
   {
     page: 'サイドパネル',
     html: sidepanel,

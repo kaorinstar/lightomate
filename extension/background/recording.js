@@ -22,6 +22,7 @@ import { getConfirmDetection } from '../common/confirm-detection-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
 import { makeLoop, sanitizePagerHint, sanitizeRowHint } from '../shared/record-loop.js';
 import { toLinkDownload } from '../shared/file-link.js';
+import { DECLINED_SITES_KEY } from '../shared/site-notice.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -138,7 +139,12 @@ export function startRecording(tabId) {
       pagerHints: [null],
     };
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
-    await chrome.storage.session.remove([LAST_FLOW_KEY, LAST_FLOW_HINTS_KEY, LAST_FLOW_PAGERS_KEY]);
+    await chrome.storage.session.remove([
+      LAST_FLOW_KEY,
+      LAST_FLOW_HINTS_KEY,
+      LAST_FLOW_PAGERS_KEY,
+      DECLINED_SITES_KEY,
+    ]);
     await attach(recording);
     return { ok: true };
   });
@@ -156,7 +162,7 @@ export function stopRecording() {
       return { ok: false, error: '記録していません。' };
     }
     if (recording.steps.length === 0) {
-      await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
+      await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY, DECLINED_SITES_KEY]);
       await detach(recording.tabId);
       return { ok: true, flow: null, errors: [] };
     }
@@ -175,7 +181,7 @@ export function stopRecording() {
       [LAST_FLOW_HINTS_KEY]: alignHints(recording.steps, recording.rowHints),
       [LAST_FLOW_PAGERS_KEY]: alignHints(recording.steps, recording.pagerHints),
     });
-    await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
+    await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY, DECLINED_SITES_KEY]);
     await detach(recording.tabId);
     return { ok: true, flow: orderFlow(flow), errors: validateFlow(flow) };
   });
@@ -256,6 +262,7 @@ export function resetRecording() {
       LAST_FLOW_HINTS_KEY,
       LAST_FLOW_PAGERS_KEY,
       RECORDING_PAGE_KEY,
+      DECLINED_SITES_KEY,
     ]);
     if (recording) {
       await detach(recording.tabId);
@@ -623,11 +630,9 @@ export async function onTabRemoved(tabId) {
  * @param {Recording} recording
  */
 async function attach(recording) {
-  await chrome.action.setBadgeText({ tabId: recording.tabId, text: 'REC' });
-  await chrome.action.setBadgeBackgroundColor({ tabId: recording.tabId, color: '#d93025' });
-
   const frame = await chrome.webNavigation.getFrame({ tabId: recording.tabId, frameId: 0 });
   if (!frame || !isWebUrl(frame.url)) {
+    await setRecordingBadge(recording.tabId, true);
     await chrome.storage.session.remove(RECORDING_PAGE_KEY);
     return;
   }
@@ -635,6 +640,7 @@ async function attach(recording) {
   const allowed =
     origin === recording.origin ||
     (await chrome.permissions.contains({ origins: [`${origin}/*`] }));
+  await setRecordingBadge(recording.tabId, allowed);
   /** @type {RecordingPage} */
   const page = { origin, allowed };
   await chrome.storage.session.set({ [RECORDING_PAGE_KEY]: page });
@@ -643,6 +649,18 @@ async function attach(recording) {
   }
   await injectRecorder(recording.tabId, 0, origin);
   await attachFrames(recording, page);
+}
+
+/**
+ * 記録中であることを、ツールバーのアイコンに表示します。許可がないサイトのページでは、記録が止まっていることを
+ * 「許可」（黄）で示します（#209）。利用者はサイトの画面に集中しているため、画面の近くで変化に気づけるようにします。
+ * @param {number} tabId
+ * @param {boolean} allowed 表示中のページで記録しているか
+ */
+async function setRecordingBadge(tabId, allowed) {
+  await chrome.action.setBadgeText({ tabId, text: allowed ? 'REC' : '許可' });
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: allowed ? '#d93025' : '#f59f00' });
+  await chrome.action.setBadgeTextColor({ tabId, color: allowed ? '#ffffff' : '#1d273b' });
 }
 
 /**

@@ -573,6 +573,78 @@ test('iframe：許可のないサイトの iframe は記録せず、そのサイ
   await page.close();
 });
 
+test('許可がないサイトの知らせ：記録中に許可がないサイトへ移動すると、サイドパネルの最上部に知らせを出し、アイコンを「許可」にする（#209）', async () => {
+  const { extensionPage } = browser;
+  // テスト用の拡張機能は 127.0.0.1 だけを許可しているため、localhost は許可のないサイトです。
+  const port = new URL(server.origin).port;
+  const blocked = `http://localhost:${port}`;
+  const startUrl = `${server.origin}/form.html`;
+  const page = await browser.context.newPage();
+  await page.goto(startUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, startUrl);
+  const started = await extensionPage.evaluate(
+    (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+    tabId,
+  );
+  assert.deepEqual(started, { ok: true });
+  const badge = () =>
+    extensionPage.evaluate((tabId) => chrome.action.getBadgeText({ tabId }), tabId);
+  assert.equal(await badge(), 'REC');
+
+  const panel = await browser.context.newPage();
+  await panel.goto(extensionPage.url().replace('options/options.html', 'sidepanel/sidepanel.html'));
+  const notice = panel.locator('#site-notice');
+  assert.equal(await notice.isHidden(), true);
+
+  // 1. 許可がないサイトへ移動すると、知らせとアイコンが変わります。サイト名は https:// などを除いて示します。
+  await page.goto(`${blocked}/form.html`);
+  await notice.waitFor({ state: 'visible' });
+  assert.equal(
+    await panel.locator('#site-notice-title').innerText(),
+    `localhost:${port} では記録が止まっています`,
+  );
+  assert.equal(await panel.locator('#site-notice-allow').isVisible(), true);
+  await waitUntil(badge, (text) => text === '許可');
+  // 記録中の区画には、許可がないサイトの説明と許可のボタンを重ねて出しません。
+  assert.equal(await panel.locator('#recording-allow').isHidden(), true);
+
+  // 2. ［このサイトは記録しない］で 1 行に畳み、同じサイトの別のページでも畳んだままにします。
+  await panel.click('#site-notice-skip');
+  await panel.locator('#site-notice-collapsed').waitFor({ state: 'visible' });
+  assert.equal(
+    await panel.locator('#site-notice-collapsed-text').innerText(),
+    `localhost:${port} は記録していません`,
+  );
+  await page.goto(`${blocked}/orders.html`);
+  await page.waitForTimeout(1000);
+  assert.equal(await panel.locator('#site-notice-full').isHidden(), true);
+  assert.equal(await panel.locator('#site-notice-collapsed').isVisible(), true);
+  // ［許可する］で、説明とボタンを開き直します。
+  await panel.click('#site-notice-expand');
+  await panel.locator('#site-notice-full').waitFor({ state: 'visible' });
+
+  // 3. 許可があるサイトへ戻ると、知らせを消し、アイコンを「REC」に戻します。
+  await page.goto(startUrl);
+  await notice.waitFor({ state: 'hidden' });
+  await waitUntil(badge, (text) => text === 'REC');
+
+  // 4. 記録を停止すると、知らせを消し、記録しないと選んだサイトも忘れます。
+  await page.goto(`${blocked}/form.html`);
+  await notice.waitFor({ state: 'visible' });
+  await extensionPage.evaluate(() => chrome.runtime.sendMessage({ kind: 'recording/stop' }));
+  await notice.waitFor({ state: 'hidden' });
+  const declined = await extensionPage.evaluate(() =>
+    chrome.storage.session.get('recordingDeclinedSites'),
+  );
+  assert.deepEqual(declined, {});
+  await extensionPage.evaluate(() => chrome.runtime.sendMessage({ kind: 'recording/reset' }));
+  await panel.close();
+  await page.close();
+});
+
 test('iframe：一致する iframe が 2 つある場合は、どちらにも入力せずに停止する（#20）', async () => {
   /** @type {Flow} */
   const flow = {
