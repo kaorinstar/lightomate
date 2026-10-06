@@ -54,6 +54,26 @@ body {
   font-weight: 700;
 }
 
+/*
+ * 見出しと、確定ボタンの手前で止めない設定の印（#222）の行です。幅が足りない場合は、印を次の行に送ります。
+ */
+.lm-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
+}
+
+.lm-title-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.lm-title-marks[hidden] {
+  display: none;
+}
+
 .lm-header .lm-sub {
   margin: 0;
 }

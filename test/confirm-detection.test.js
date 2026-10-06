@@ -6,6 +6,7 @@ import { decideDialog } from '../extension/shared/dialog.js';
 import {
   CONFIRM_DETECTION_OFF_NOTE,
   confirmDetectionFor,
+  confirmDetectionMarks,
 } from '../extension/shared/purchase-guard.js';
 import {
   CONFIRM_DETECTION_KEY,
@@ -110,4 +111,27 @@ test('一括バックアップには、確定ボタンの自動検出の設定�
   fakeStorage({ [CONFIRM_DETECTION_KEY]: false, [CONFIRM_DETECTION_SCHEDULE_KEY]: false });
   const backup = await exportBackup();
   assert.equal(JSON.stringify(backup).includes(CONFIRM_DETECTION_KEY), false);
+});
+
+test('サイドパネルの印（#222）：自動検出が有効の間は、印を出さない', () => {
+  assert.deepEqual(confirmDetectionMarks({ enabled: true, schedule: true }), []);
+});
+
+test('サイドパネルの印（#222）：確定ボタンの手前で止めない設定だけなら、印は 1 つ', () => {
+  const marks = confirmDetectionMarks({ enabled: false, schedule: true });
+  assert.deepEqual(
+    marks.map((mark) => mark.label),
+    ['確定で止まらない'],
+  );
+  assert.match(marks[0].description, /確定する可能性があります/);
+  assert.match(marks[0].description, /チェックを外すと戻せます/);
+});
+
+test('サイドパネルの印（#222）：定期実行でも止めない設定なら、定期実行の印を加える', () => {
+  const marks = confirmDetectionMarks({ enabled: false, schedule: false });
+  assert.deepEqual(
+    marks.map((mark) => mark.label),
+    ['確定で止まらない', '定期実行も'],
+  );
+  assert.match(marks[1].description, /人がその場にいない間に確定する可能性があります/);
 });
