@@ -121,7 +121,7 @@ test('サイドパネルの印（#222）：確定ボタンの手前で止めな�
   const marks = confirmDetectionMarks({ enabled: false, schedule: true });
   assert.deepEqual(
     marks.map((mark) => mark.label),
-    ['確定で止まらない'],
+    ['確定ボタンの手前で止めない'],
   );
   assert.match(marks[0].description, /確定する可能性があります/);
   assert.match(marks[0].description, /チェックを外すと戻せます/);
@@ -131,7 +131,7 @@ test('サイドパネルの印（#222）：定期実行でも止めない設定�
   const marks = confirmDetectionMarks({ enabled: false, schedule: false });
   assert.deepEqual(
     marks.map((mark) => mark.label),
-    ['確定で止まらない', '定期実行も'],
+    ['確定ボタンの手前で止めない', '定期実行でも止めない'],
   );
   assert.match(marks[1].description, /人がその場にいない間に確定する可能性があります/);
 });

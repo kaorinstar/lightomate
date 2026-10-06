@@ -150,7 +150,7 @@ export function confirmDetectionFor(settings, trigger) {
 
 /**
  * 自動検出を無効にしている間、サイドパネルの見出しの横に出す状態の印です（#222）。
- * 印の文字は短くし、内容はマウスを重ねたときと読み上げで伝えます。どちらも無効でなければ、空の配列を返します。
+ * 印の文字は、設定画面のチェックボックスの名前と同じにします。内容はマウスを重ねたときと読み上げで伝えます。どちらも無効でなければ、空の配列を返します。
  * @param {{ enabled: boolean, schedule: boolean }} settings getConfirmDetectionSettings の値
  * @returns {{ label: string, description: string }[]}
  */
@@ -160,14 +160,14 @@ export function confirmDetectionMarks(settings) {
   }
   const marks = [
     {
-      label: '確定で止まらない',
+      label: '確定ボタンの手前で止めない',
       description:
         'フローが確定ボタンを押し、購入や申し込みが確定する可能性があります。フローの管理の［設定］タブで、［確定ボタンの手前で止めない］のチェックを外すと戻せます。',
     },
   ];
   if (!settings.schedule) {
     marks.push({
-      label: '定期実行も',
+      label: '定期実行でも止めない',
       description:
         '定期実行でも、確定ボタンの手前で止まりません。人がその場にいない間に確定する可能性があります。',
     });
