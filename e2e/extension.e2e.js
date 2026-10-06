@@ -608,8 +608,8 @@ test('許可がないサイトの知らせ：記録中に許可がないサイ�
   );
   assert.equal(await panel.locator('#site-notice-allow').isVisible(), true);
   await waitUntil(badge, (text) => text === '許可');
-  // 記録中の区画には、許可がないサイトの説明と許可のボタンを重ねて出しません。
-  assert.equal(await panel.locator('#recording-allow').isHidden(), true);
+  // 記録中の区画には、許可がないサイトの説明を重ねて出しません。
+  assert.equal(await panel.locator('#recording-site').isHidden(), true);
 
   // 2. ［このサイトは記録しない］で 1 行に畳み、同じサイトの別のページでも畳んだままにします。
   await panel.click('#site-notice-skip');
@@ -640,6 +640,65 @@ test('許可がないサイトの知らせ：記録中に許可がないサイ�
     chrome.storage.session.get('recordingDeclinedSites'),
   );
   assert.deepEqual(declined, {});
+  await extensionPage.evaluate(() => chrome.runtime.sendMessage({ kind: 'recording/reset' }));
+  await panel.close();
+  await page.close();
+});
+
+test('見える枠だけの知らせ：見えない計測用の枠は知らせず、後から表示された決済の枠は上部の知らせとアイコンで知らせる（#230）', async () => {
+  const { extensionPage } = browser;
+  // テスト用の拡張機能は 127.0.0.1 だけを許可しているため、localhost は許可のないサイトです。
+  const port = new URL(server.origin).port;
+  const blocked = `http://localhost:${port}`;
+  const hostUrl = `${server.origin}/frame-hidden.html?frame=${encodeURIComponent(`${blocked}/frame-card.html`)}`;
+  const page = await browser.context.newPage();
+  await page.goto(hostUrl);
+  await page.locator('iframe').nth(1).waitFor({ state: 'attached' });
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, hostUrl);
+  const started = await extensionPage.evaluate(
+    (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+    tabId,
+  );
+  assert.deepEqual(started, { ok: true });
+  const recordingPage = () =>
+    extensionPage.evaluate(async () => {
+      const stored = await chrome.storage.session.get('recordingPage');
+      return /** @type {{ origin: string, allowed: boolean, blockedFrames?: string[] } | undefined} */ (
+        stored.recordingPage
+      );
+    });
+  const badge = () =>
+    extensionPage.evaluate((tabId) => chrome.action.getBadgeText({ tabId }), tabId);
+
+  const panel = await browser.context.newPage();
+  await panel.goto(extensionPage.url().replace('options/options.html', 'sidepanel/sidepanel.html'));
+  const notice = panel.locator('#site-notice');
+
+  // 1. 計測用の枠（1×1px）と非表示の決済の枠だけの間は、知らせを出さず、アイコンも「REC」のままにします。
+  await waitUntil(recordingPage, (value) => value?.allowed === true);
+  await page.waitForTimeout(1500);
+  assert.deepEqual(await recordingPage(), { origin: server.origin, allowed: true });
+  assert.equal(await badge(), 'REC');
+  assert.equal(await notice.isHidden(), true);
+
+  // 2. ［カードで支払う］で決済の枠が表示されると、枠の知らせを上部に出し、アイコンを「許可」にします。
+  await page.click('#show');
+  await waitUntil(recordingPage, (value) => Array.isArray(value?.blockedFrames));
+  assert.deepEqual((await recordingPage())?.blockedFrames, [blocked]);
+  await notice.waitFor({ state: 'visible' });
+  assert.equal(
+    await panel.locator('#site-notice-title').innerText(),
+    `このページの枠（localhost:${port}）では記録が止まっています`,
+  );
+  await waitUntil(badge, (text) => text === '許可');
+  // 記録中の区画には、枠の許可の説明を出しません。
+  assert.equal(await panel.locator('#recording-site').isHidden(), true);
+
+  await extensionPage.evaluate(() => chrome.runtime.sendMessage({ kind: 'recording/stop' }));
+  await notice.waitFor({ state: 'hidden' });
   await extensionPage.evaluate(() => chrome.runtime.sendMessage({ kind: 'recording/reset' }));
   await panel.close();
   await page.close();

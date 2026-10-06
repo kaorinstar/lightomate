@@ -11,6 +11,7 @@ import {
   makeRecordedLoop,
   onCommitted,
   onDOMContentLoaded,
+  onFramesChanged,
   onTabRemoved,
   removeRecordedStep,
   resetRecording,
@@ -248,6 +249,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // 選んだ要素の指定は、選択中のタブのページのスクリプトからだけ受け付けます（picker.js で照らし合わせます）。
       onPickerResult(message, sender).catch((error) =>
         console.error('選んだ要素を管理画面へ届けられませんでした。', error),
+      );
+      return false;
+
+    // 最上位のページの枠の大きさが変わったときの知らせです（#230）。
+    case 'recording/framesChanged':
+      onFramesChanged(sender).catch((error) =>
+        console.error('枠の知らせを判定し直せませんでした。', error),
       );
       return false;
 
