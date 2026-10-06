@@ -11,6 +11,7 @@ import {
   getConfirmDetectionSettings,
 } from '../common/confirm-detection-store.js';
 import { formatRunAt, nextRunAt } from '../shared/schedule.js';
+import { confirmDetectionMarks } from '../shared/purchase-guard.js';
 import {
   deleteFlow,
   getFlow,
@@ -617,17 +618,25 @@ onBatchesChanged(() => {
   renderFlows().catch(console.error);
 });
 /**
- * 確定ボタンの自動検出（#47）が無効の間だけ、上部の案内を表示します。定期実行でも無効にしている場合は、
- * その旨を加えます。
+ * 確定ボタンの自動検出（#47）が無効の間だけ、見出しの横に状態の印を表示します（#222）。
+ * 定期実行でも無効にしている場合は、その印を加えます。印の説明は、マウスを重ねたときと読み上げで伝えます。
  */
 async function renderConfirmDetection() {
-  const settings = await getConfirmDetectionSettings();
-  const off = /** @type {HTMLElement} */ (document.getElementById('confirm-detection-off'));
-  const scheduleOff = /** @type {HTMLElement} */ (
-    document.getElementById('confirm-detection-schedule-off')
+  const marks = confirmDetectionMarks(await getConfirmDetectionSettings());
+  const container = /** @type {HTMLElement} */ (document.getElementById('confirm-detection-off'));
+  container.replaceChildren(
+    ...marks.map(({ label, description }) => {
+      const mark = document.createElement('span');
+      mark.className = 'lm-status lm-status-warning';
+      mark.title = description;
+      const detail = document.createElement('span');
+      detail.className = 'visually-hidden';
+      detail.textContent = `：${description}`;
+      mark.append(label, detail);
+      return mark;
+    }),
   );
-  off.hidden = settings.enabled;
-  scheduleOff.hidden = settings.schedule;
+  container.hidden = marks.length === 0;
 }
 chrome.storage.onChanged.addListener((changes, area) => {
   if (
