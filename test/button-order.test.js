@@ -11,6 +11,11 @@ const pages = {
     'utf8',
   ),
   管理画面: readFileSync(new URL('../extension/options/options.html', import.meta.url), 'utf8'),
+  // 記録中に許可がないサイトへ移動したときに開く窓です（#209）。
+  サイトの許可の窓: readFileSync(
+    new URL('../extension/sidepanel/allow-site.html', import.meta.url),
+    'utf8',
+  ),
 };
 
 /**

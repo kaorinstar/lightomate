@@ -95,8 +95,15 @@ function fakeChrome(initial) {
     storage: { session: area(session), local: area(local) },
     action: { setBadgeText: async () => {} },
     tabs: { sendMessage: async () => {} },
+    windows: {
+      remove: async (/** @type {number} */ windowId) => {
+        removedWindows.push(windowId);
+      },
+    },
   };
-  return { session, local };
+  /** @type {number[]} 閉じた窓（#209） */
+  const removedWindows = [];
+  return { session, local, removedWindows };
 }
 
 const recording = {
@@ -162,6 +169,16 @@ test('記録中に破棄すると、記録を停止して手順を捨てる', as
   const { session } = fakeChrome({ recording });
   assert.deepEqual(await resetRecording(), { ok: true });
   assert.deepEqual(session, {});
+});
+
+test('記録を停止・破棄すると、許可を求める窓を閉じ、窓の状態も消す（#209）', async () => {
+  const prompt = { windowId: 7, origin: 'https://pay.example.net', prompted: [] };
+  for (const finish of [stopRecording, resetRecording]) {
+    const { session, removedWindows } = fakeChrome({ recording, recordingSitePrompt: prompt });
+    assert.equal((await finish()).ok, true);
+    assert.deepEqual(removedWindows, [7]);
+    assert.equal('recordingSitePrompt' in session, false);
+  }
 });
 
 test('破棄する記録がない場合は断る', async () => {

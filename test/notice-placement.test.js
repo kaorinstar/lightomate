@@ -10,6 +10,10 @@ const sidepanel = readFileSync(
   'utf8',
 );
 const options = readFileSync(new URL('../extension/options/options.html', import.meta.url), 'utf8');
+const allowSite = readFileSync(
+  new URL('../extension/sidepanel/allow-site.html', import.meta.url),
+  'utf8',
+);
 
 /**
  * 対象のボタンと、その直後に置く表示欄の組み合わせです。
@@ -24,6 +28,13 @@ const cases = [
     html: sidepanel,
     button: 'recording-allow',
     notices: ['recording-allow-notice'],
+  },
+  // 記録中に許可がないサイトへ移動したときに開く窓（#209）です。並びの末尾の［記録しない］の直後に出します。
+  {
+    page: 'サイトの許可の窓',
+    html: allowSite,
+    button: 'allow-site-skip',
+    notices: ['allow-site-notice'],
   },
   {
     page: 'サイドパネル',

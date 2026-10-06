@@ -488,6 +488,79 @@ test('iframe：許可のないサイトの iframe は記録せず、そのサイ
   await page.close();
 });
 
+/** 記録中に許可がないサイトへ移動したときに開く窓（#209）のうち、開いているものです。 */
+function allowSitePages() {
+  return browser.context.pages().filter((page) => page.url().includes('/allow-site.html'));
+}
+
+test('サイトの許可の窓：記録中に許可がないサイトへ移動すると上部に窓を開き、許可があるサイトへ戻る・［記録しない］・記録の停止で閉じる（#209）', async () => {
+  const { extensionPage } = browser;
+  // テスト用の拡張機能は 127.0.0.1 だけを許可しているため、localhost は許可のないサイトです。
+  const port = new URL(server.origin).port;
+  const blocked = `http://localhost:${port}`;
+  const page = await browser.context.newPage();
+  const startUrl = `${server.origin}/form.html`;
+
+  /** 記録を始めます。 */
+  const start = async () => {
+    await page.goto(startUrl);
+    const tabId = await extensionPage.evaluate(async (url) => {
+      const [tab] = await chrome.tabs.query({ url });
+      return tab.id;
+    }, startUrl);
+    const started = await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    );
+    assert.deepEqual(started, { ok: true });
+  };
+  /** 許可がないサイトへ移動し、窓が開くまで待ちます。 */
+  const openBlocked = async (/** @type {string} */ pathname) => {
+    const opened = browser.context.waitForEvent('page', {
+      predicate: (popup) => popup.url().includes('/allow-site.html'),
+    });
+    await page.goto(`${blocked}${pathname}`);
+    const popup = await opened;
+    await popup.waitForLoadState();
+    return popup;
+  };
+  const stop = () =>
+    extensionPage.evaluate(() => chrome.runtime.sendMessage({ kind: 'recording/stop' }));
+
+  // 1. 許可がないサイトへ移動すると、そのサイトを示す窓が開きます。許可があるサイトへ戻ると閉じます。
+  await start();
+  const popup = await openBlocked('/form.html');
+  assert.equal(new URL(popup.url()).searchParams.get('origin'), blocked);
+  assert.match(await popup.locator('#allow-site-text').innerText(), new RegExp(blocked));
+  await Promise.all([popup.waitForEvent('close'), page.goto(startUrl)]);
+
+  // 同じ記録の間は、一度窓を開いたサイトへ再び移動しても、開き直しません。
+  await page.goto(`${blocked}/orders.html`);
+  await page.waitForTimeout(1500);
+  assert.equal(allowSitePages().length, 0);
+  await stop();
+
+  // 2. ［記録しない］で閉じた後は、同じサイトの別のページへ移動しても開き直しません。
+  await start();
+  const skipped = await openBlocked('/form.html');
+  await Promise.all([skipped.waitForEvent('close'), skipped.locator('#allow-site-skip').click()]);
+  await page.goto(`${blocked}/orders.html`);
+  await page.waitForTimeout(1500);
+  assert.equal(allowSitePages().length, 0);
+  await stop();
+
+  // 3. 記録を停止すると、開いている窓を閉じます。
+  await start();
+  const stopped = await openBlocked('/form.html');
+  await Promise.all([stopped.waitForEvent('close'), stop()]);
+  assert.equal(allowSitePages().length, 0);
+  const prompt = await extensionPage.evaluate(() =>
+    chrome.storage.session.get('recordingSitePrompt'),
+  );
+  assert.deepEqual(prompt, {});
+  await page.close();
+});
+
 test('iframe：一致する iframe が 2 つある場合は、どちらにも入力せずに停止する（#20）', async () => {
   /** @type {Flow} */
   const flow = {

@@ -10,7 +10,12 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 
 const base = read('extension/shared/base.css');
 const fontCss = read('extension/vendor/noto-sans-jp/wght.css');
-const pages = ['extension/options/options.html', 'extension/sidepanel/sidepanel.html'];
+const pages = [
+  'extension/options/options.html',
+  'extension/sidepanel/sidepanel.html',
+  // 記録中に許可がないサイトへ移動したときに開く窓です（#209）。
+  'extension/sidepanel/allow-site.html',
+];
 
 test('OS で動きを減らす設定を選んだときは、すべての要素の動きを止める', () => {
   const media = base.slice(base.indexOf('@media (prefers-reduced-motion: reduce)'));

@@ -89,7 +89,7 @@ LIGHTOMATE_CHROMIUM=/opt/pw-browsers/chromium npm run test:e2e
 |---|---|
 | `extension/manifest.json` | 拡張機能の定義 |
 | `extension/background/` | バックグラウンド処理（Service Worker）：フローの実行管理、タブの制御、ダウンロード |
-| `extension/sidepanel/` | サイドパネル：記録の開始・停止、フローの一覧と実行 |
+| `extension/sidepanel/` | サイドパネル：記録の開始・停止、フローの一覧と実行。記録中に許可がないサイトで開く小さい窓（`allow-site.html`）もここに置きます |
 | `extension/options/` | 設定・編集画面：ビジュアルエディタを置く場所 |
 | `extension/shared/` | 共通モジュール：フロー定義の型と検証、パラメータの処理など。`chrome.*` を使いません |
 | `extension/common/` | Service Worker と拡張機能の画面の両方で使う、`chrome.*` を使うモジュール：フローの保存など |

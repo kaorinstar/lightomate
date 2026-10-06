@@ -22,6 +22,12 @@ import { getConfirmDetection } from '../common/confirm-detection-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
 import { makeLoop, sanitizePagerHint, sanitizeRowHint } from '../shared/record-loop.js';
 import { toLinkDownload } from '../shared/file-link.js';
+import {
+  SITE_PROMPT_HEIGHT,
+  SITE_PROMPT_WIDTH,
+  shouldOpenSitePrompt,
+  sitePromptPosition,
+} from '../shared/site-prompt.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -56,8 +62,20 @@ import { toLinkDownload } from '../shared/file-link.js';
  *   いない iframe のサイト（#20）。サイドパネルが［このサイトを許可して記録］を表示するために使います
  */
 
+/**
+ * 許可がないサイトで開く、許可を求める窓の状態です（#209）。
+ * @typedef {object} SitePrompt
+ * @property {number} [windowId] 開いている窓。閉じた後は省きます
+ * @property {string} [origin] 開いている窓が許可を求めているサイト
+ * @property {string[]} prompted 同じ記録の間に、窓を開いたサイト。開き直さないために使います
+ */
+
 const RECORDING_KEY = 'recording';
 const RECORDING_PAGE_KEY = 'recordingPage';
+/** 許可を求める窓の状態（#209）です。Service Worker が停止した後も窓を閉じられるよう保存します。 */
+const SITE_PROMPT_KEY = 'recordingSitePrompt';
+/** 許可を求める窓の画面です（#209）。 */
+const SITE_PROMPT_PAGE = 'sidepanel/allow-site.html';
 const LAST_FLOW_KEY = 'lastFlow';
 /** 保存前の手順（lastFlow の steps）と同じ順の、一覧の行の候補です（#167）。 */
 const LAST_FLOW_HINTS_KEY = 'lastFlowRowHints';
@@ -138,7 +156,12 @@ export function startRecording(tabId) {
       pagerHints: [null],
     };
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
-    await chrome.storage.session.remove([LAST_FLOW_KEY, LAST_FLOW_HINTS_KEY, LAST_FLOW_PAGERS_KEY]);
+    await chrome.storage.session.remove([
+      LAST_FLOW_KEY,
+      LAST_FLOW_HINTS_KEY,
+      LAST_FLOW_PAGERS_KEY,
+      SITE_PROMPT_KEY,
+    ]);
     await attach(recording);
     return { ok: true };
   });
@@ -629,6 +652,7 @@ async function attach(recording) {
   const frame = await chrome.webNavigation.getFrame({ tabId: recording.tabId, frameId: 0 });
   if (!frame || !isWebUrl(frame.url)) {
     await chrome.storage.session.remove(RECORDING_PAGE_KEY);
+    await updateSitePrompt(recording, undefined, true);
     return;
   }
   const origin = new URL(frame.url).origin;
@@ -638,6 +662,7 @@ async function attach(recording) {
   /** @type {RecordingPage} */
   const page = { origin, allowed };
   await chrome.storage.session.set({ [RECORDING_PAGE_KEY]: page });
+  await updateSitePrompt(recording, origin, allowed);
   if (!allowed) {
     return;
   }
@@ -789,10 +814,119 @@ async function hasChildFrame(tabId, origin) {
 }
 
 /**
+ * 許可を求める窓（#209）の開閉を、1 つずつ順に行うための待ち行列です。
+ * ページの読み込みが短い間隔で続いた場合に、窓が 2 つ開くことを防ぎます。
+ */
+let promptQueue = Promise.resolve();
+
+/**
+ * 許可を求める窓（#209）を、表示中のページに合わせて開閉します。
+ * 許可がないサイトでは、記録中のブラウザの窓の上部中央に開きます。許可があるサイトへ移動したときと、
+ * 別のサイトへ移動したときは、開いている窓を閉じます。別のサイトに許可がない場合は、そのサイトの窓を開き直します。
+ * @param {Recording} recording
+ * @param {string | undefined} origin 表示中のページのサイト。Web ページ以外の場合は undefined
+ * @param {boolean} allowed そのサイトを操作する許可があるか
+ * @returns {Promise<void>}
+ */
+function updateSitePrompt(recording, origin, allowed) {
+  const task = promptQueue.then(async () => {
+    const stored = await chrome.storage.session.get(SITE_PROMPT_KEY);
+    /** @type {SitePrompt} */
+    const prompt = /** @type {SitePrompt | undefined} */ (stored[SITE_PROMPT_KEY]) ?? {
+      prompted: [],
+    };
+    if (prompt.windowId !== undefined && (allowed || prompt.origin !== origin)) {
+      await closeWindow(prompt.windowId);
+      delete prompt.windowId;
+      delete prompt.origin;
+    }
+    if (
+      origin === undefined ||
+      prompt.windowId !== undefined ||
+      !shouldOpenSitePrompt({
+        origin,
+        allowed,
+        recordingOrigin: recording.origin,
+        extraOrigins: recording.extraOrigins ?? [],
+        prompted: prompt.prompted,
+        maxExtraOrigins: MAX_EXTRA_ORIGINS,
+      })
+    ) {
+      await chrome.storage.session.set({ [SITE_PROMPT_KEY]: prompt });
+      return;
+    }
+    // 記録を停止した直後に、停止の前のページの読み込みで窓を開かないよう、記録中であることを確かめ直します。
+    if ((await getRecording())?.tabId !== recording.tabId) {
+      return;
+    }
+    const windowId = await openSitePrompt(recording.tabId, origin);
+    prompt.prompted = [...prompt.prompted, origin];
+    if (windowId !== undefined) {
+      prompt.windowId = windowId;
+      prompt.origin = origin;
+    }
+    await chrome.storage.session.set({ [SITE_PROMPT_KEY]: prompt });
+  });
+  promptQueue = task.catch((error) => {
+    console.warn('許可を求める窓を開閉できませんでした。', error);
+  });
+  return promptQueue;
+}
+
+/**
+ * 許可を求める窓（#209）を、記録中のタブがあるブラウザの窓の上部中央に開きます。
+ * @param {number} tabId 記録中のタブ
+ * @param {string} origin 許可を求めるサイト
+ * @returns {Promise<number | undefined>} 開いた窓。開けなかった場合は undefined
+ */
+async function openSitePrompt(tabId, origin) {
+  const tab = await chrome.tabs.get(tabId);
+  const browserWindow = await chrome.windows.get(tab.windowId);
+  const created = await chrome.windows.create({
+    url: chrome.runtime.getURL(`${SITE_PROMPT_PAGE}?origin=${encodeURIComponent(origin)}`),
+    type: 'popup',
+    width: SITE_PROMPT_WIDTH,
+    height: SITE_PROMPT_HEIGHT,
+    ...sitePromptPosition(browserWindow),
+    focused: true,
+  });
+  return created?.id;
+}
+
+/**
+ * 許可を求める窓（#209）を閉じ、状態を消します。記録を停止・破棄したときに呼び出します。
+ * @returns {Promise<void>}
+ */
+function closeSitePrompt() {
+  const task = promptQueue.then(async () => {
+    const stored = await chrome.storage.session.get(SITE_PROMPT_KEY);
+    const prompt = /** @type {SitePrompt | undefined} */ (stored[SITE_PROMPT_KEY]);
+    await chrome.storage.session.remove(SITE_PROMPT_KEY);
+    if (prompt?.windowId !== undefined) {
+      await closeWindow(prompt.windowId);
+    }
+  });
+  promptQueue = task.catch((error) => {
+    console.warn('許可を求める窓を閉じられませんでした。', error);
+  });
+  return promptQueue;
+}
+
+/**
+ * 窓を閉じます。利用者がすでに閉じていた場合は何もしません。
+ * @param {number} windowId
+ */
+async function closeWindow(windowId) {
+  await chrome.windows.remove(windowId).catch(() => {});
+}
+
+/**
  * 記録の表示を消し、ページの記録用のスクリプトを止めます。iframe の中のスクリプト（#20）も止めます。
+ * 許可を求める窓（#209）も閉じます。
  * @param {number} tabId
  */
 async function detach(tabId) {
+  await closeSitePrompt();
   try {
     await chrome.action.setBadgeText({ tabId, text: '' });
     await chrome.tabs.sendMessage(tabId, { kind: 'recorder/stop' });
