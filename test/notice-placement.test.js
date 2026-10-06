@@ -58,6 +58,8 @@ const cases = [
   // ボタンの並びの末尾のボタンの直後に置きます（#112 で［JSON を保存］［整形］の順にしました）。
   { page: '管理画面', html: options, button: 'format', notices: ['json-notice'] },
   { page: '管理画面', html: options, button: 'speed-save', notices: ['speed-notice'] },
+  // サイトの許可（#232）の［すべてのサイトを許可］［Chrome のサイトへのアクセスの設定を開く］の直下です。
+  { page: '管理画面', html: options, button: 'all-sites-open', notices: ['all-sites-notice'] },
   // 手順のブロック（#9）の［手順を保存］［変更を取り消す］の直下です。
   { page: '管理画面', html: options, button: 'blocks-revert', notices: ['blocks-notice'] },
   { page: '管理画面', html: options, button: 'params-edit', notices: ['params-edit-notice'] },

@@ -27,8 +27,12 @@ test('拡張機能の ID が固定されている（#17）', () => {
   assert.equal(id, 'jlpfeijpfkllnmcfcfoepaokkeejbgil');
 });
 
-test('操作できるサイトは、初めから許可されていない（サイトごとに許可を求める）', () => {
-  assert.equal(manifest.host_permissions, undefined);
+test('操作できるサイトは、読み込んだ時点ですべてのサイトを許可する（#232）', () => {
+  assert.deepEqual(manifest.host_permissions, ['https://*/*', 'http://*/*']);
+  assert.equal(manifest.optional_host_permissions, undefined);
+});
+
+test('ページへのスクリプトは自動では読み込まず、記録中・実行中のタブにだけ読み込む', () => {
   assert.equal(manifest.content_scripts, undefined);
 });
 
