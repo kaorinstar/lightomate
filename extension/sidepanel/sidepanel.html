@@ -21,7 +21,14 @@
   <body>
     <header class="lm-header">
       <div class="lm-header-text">
-        <h1 class="lm-title">Lightomate</h1>
+        <div class="lm-title-row">
+          <h1 class="lm-title">Lightomate</h1>
+          <!--
+            確定ボタンの自動検出（#29）を無効にしている間は、状態の印を常に表示します（#47、#222）。
+            無効にしたまま忘れないためです。印の内容は sidepanel.js が設定から作ります。
+          -->
+          <span id="confirm-detection-off" class="lm-title-marks" hidden></span>
+        </div>
         <p class="lm-sub" id="page-origin">確認中です</p>
       </div>
       <a class="btn btn-sm btn-ghost-secondary" href="../options/options.html" target="_blank"
@@ -30,16 +37,6 @@
     </header>
 
     <main class="lm-stack" id="main">
-      <!-- 確定ボタンの自動検出（#29）を無効にしている間は、常に表示します（#47）。無効にしたまま忘れないためです。 -->
-      <div id="confirm-detection-off" class="alert alert-warning lm-guide m-0" role="status" hidden>
-        <p class="lm-guide-title">確定ボタンの手前で止めない設定です</p>
-        <p>
-          フローが確定ボタンを押し、購入や申し込みが確定する可能性があります。フローの管理の［設定］タブで、［確定ボタンの手前で止めない］のチェックを外すと戻せます。
-        </p>
-        <p id="confirm-detection-schedule-off" hidden>
-          定期実行でも、確定ボタンの手前で止まりません。人がその場にいない間に確定する可能性があります。
-        </p>
-      </div>
       <section id="run-section" class="lm-stack" aria-labelledby="run-heading" hidden>
         <h2 id="run-heading" class="visually-hidden">実行の状態</h2>
         <!--
