@@ -43,8 +43,26 @@ test('パラメータと、値を記録していない欄の値を手順に当�
     { type: 'navigate', cause: 'user', url: 'https://www.example.com/orders?m=2026-08' },
     { type: 'input', target, value: 'ねじ 2026年8月' },
     { type: 'input', target: { ...target, label: 'パスワード' }, value: 'pass' },
-    { type: 'select', target: { ...target, tag: 'select' }, values: ['08'], labels: ['月'] },
+    { type: 'select', target: { ...target, tag: 'select' }, values: ['08'], labels: ['08'] },
   ]);
+});
+
+test('パラメータを含む選択肢は、記録時の表示文字列ではなく当てはめた値で探す（#216）', () => {
+  const select = {
+    type: /** @type {const} */ ('select'),
+    target: { ...target, tag: 'select' },
+    values: ['{{month.month}}', 'b'],
+    labels: ['3', 'B プラン'],
+  };
+  const result = resolveSteps(
+    { ...flow, steps: [select] },
+    { q: 'ねじ' },
+    {},
+    new Date(2026, 8, 24),
+  );
+  assert.ok(result.ok);
+  // パラメータを含まない選択肢は、記録時の表示文字列でも探せるよう残します。
+  assert.deepEqual(result.steps, [{ ...select, values: ['8', 'b'], labels: ['8', 'B プラン'] }]);
 });
 
 test('値を記録していない欄の値がない場合は実行しない', () => {

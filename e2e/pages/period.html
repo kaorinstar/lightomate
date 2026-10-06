@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>期間の指定</title>
+  </head>
+  <body>
+    <!-- 期間を月と日のセレクトボックスで指定するサイトの再現です（#216、#217）。選択肢は先頭にゼロが付きます。 -->
+    <form action="done.html" method="get">
+      <label><input type="radio" id="period" name="range" value="period" />期間を指定する</label>
+      <select id="from-month" name="fromMonth" class="pick"></select>
+      月
+      <select id="from-day" name="fromDay" class="pick"></select>
+      日 ～
+      <select id="to-month" name="toMonth" class="pick"></select>
+      月
+      <select id="to-day" name="toDay" class="pick"></select>
+      日
+      <!-- 先頭にゼロが付かない選択肢です。 -->
+      <select id="plain-month" name="plainMonth"></select>
+      <!-- 内部の値と表示文字列が異なる選択肢です。 -->
+      <select id="coded-month" name="codedMonth"></select>
+      <button id="submit" type="submit">表示</button>
+    </form>
+    <script src="period.js"></script>
+  </body>
+</html>
