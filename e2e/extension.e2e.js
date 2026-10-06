@@ -662,22 +662,24 @@ test('確定ボタンの自動検出：［定期実行でも止めない］の�
   }
 });
 
-test('確定ボタンの自動検出：設定画面で無効にするとリスクを含む確認が出て、無効の間はサイドパネルに表示する（#47）', async () => {
+test('確定ボタンの自動検出：設定画面で［確定ボタンの手前で止めない］を選ぶとリスクを含む確認が出て、その間はサイドパネルに表示する（#47）', async () => {
   const { extensionPage: page } = browser;
   await page.reload();
   await page.click('#tab-settings');
+  // 2 つの欄は、どちらも「止めない」の向きです。初期値はどちらもチェックなしです。
   const toggle = page.locator('#confirm-detection');
-  assert.equal(await toggle.isChecked(), true);
-  await page.getByText('無効にした場合のリスク').waitFor();
-  // 1 段目が有効の間は、［定期実行でも止めない］を選べません。
+  assert.equal(await toggle.isChecked(), false);
+  await page.getByText('止めない場合のリスク').waitFor();
+  // 1 段目がチェックなしの間は、［定期実行でも止めない］を選べません。
   assert.equal(await page.locator('#confirm-detection-schedule').isDisabled(), true);
 
-  // ［キャンセル］では有効のままです。
+  // ［キャンセル］ではチェックなしのままです。
   await toggle.click();
   const confirm = page.locator('#confirm-detection-confirm');
   await confirm.getByText('誤って確定した場合の損害は、利用者の責任になります。').waitFor();
+  assert.equal(await toggle.isChecked(), false);
   await confirm.getByRole('button', { name: 'キャンセル' }).click();
-  assert.equal(await toggle.isChecked(), true);
+  assert.equal(await toggle.isChecked(), false);
   assert.equal(
     await page.evaluate(
       async () => (await chrome.storage.local.get('confirmDetection')).confirmDetection,
@@ -685,12 +687,12 @@ test('確定ボタンの自動検出：設定画面で無効にするとリス�
     undefined,
   );
 
-  // ［リスクを理解して無効にする］で無効になります。
+  // ［リスクを理解して設定する］でチェックが入り、止めない設定になります。
   await toggle.click();
-  await confirm.getByRole('button', { name: 'リスクを理解して無効にする' }).click();
+  await confirm.getByRole('button', { name: 'リスクを理解して設定する' }).click();
   await waitUntil(
     () => toggle.isChecked(),
-    (checked) => checked === false,
+    (checked) => checked,
   );
   assert.equal(
     await page.evaluate(
@@ -702,11 +704,11 @@ test('確定ボタンの自動検出：設定画面で無効にするとリス�
   const panel = await browser.context.newPage();
   await panel.goto(page.url().replace('options/options.html', 'sidepanel/sidepanel.html'));
   const banner = panel.locator('#confirm-detection-off');
-  await banner.getByText('確定ボタンの自動検出が無効です').waitFor();
+  await banner.getByText('確定ボタンの手前で止めない設定です').waitFor();
   const scheduleBanner = panel.locator('#confirm-detection-schedule-off');
   assert.equal(await scheduleBanner.isHidden(), true);
 
-  // 1 段目を無効にすると、［定期実行でも止めない］を選べます。選ぶ前にも、別の確認を出します。
+  // 1 段目にチェックを入れると、［定期実行でも止めない］を選べます。選ぶ前にも、別の確認を出します。
   const schedule = page.locator('#confirm-detection-schedule');
   await waitUntil(
     () => schedule.isEnabled(),
@@ -718,7 +720,7 @@ test('確定ボタンの自動検出：設定画面で無効にするとリス�
   await confirm.getByRole('button', { name: 'キャンセル' }).click();
   assert.equal(await schedule.isChecked(), false);
   await schedule.click();
-  await confirm.getByRole('button', { name: 'リスクを理解して無効にする' }).click();
+  await confirm.getByRole('button', { name: 'リスクを理解して設定する' }).click();
   await waitUntil(
     () => schedule.isChecked(),
     (checked) => checked,
@@ -732,9 +734,9 @@ test('確定ボタンの自動検出：設定画面で無効にするとリス�
   );
   await scheduleBanner.getByText('定期実行でも、確定ボタンの手前で止まりません。').waitFor();
 
-  // 有効に戻す操作では確認を出さず、［定期実行でも止めない］も外れ、サイドパネルの表示も消えます。
+  // 1 段目のチェックを外す操作では確認を出さず、［定期実行でも止めない］も外れ、サイドパネルの表示も消えます。
   await toggle.click();
-  assert.equal(await toggle.isChecked(), true);
+  assert.equal(await toggle.isChecked(), false);
   assert.equal(await confirm.isHidden(), true);
   await waitUntil(
     () => schedule.isChecked(),

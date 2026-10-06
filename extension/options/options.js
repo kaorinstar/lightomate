@@ -3146,33 +3146,32 @@ chrome.permissions.onRemoved.addListener(() => {
 renderAllSites().catch(console.error);
 
 // ---- 確定ボタンの自動検出（#47） ----
-// 無効にする操作では、切り替えを保留して、リスクを含む確認を出します。［リスクを理解して無効にする］を押した場合
-// だけ無効を保存し、［キャンセル］では有効のままにします。有効に戻す操作では、確認を出しません。
-// 2 段目の［定期実行でも止めない］は、1 段目を無効にしている間だけ選べます。選ぶ前に、人がその場にいない間に
-// 確定するリスクについて、別の確認を出します。
+// 2 つの欄は、どちらも「止めない」の向きでそろえます。チェックを入れる操作がリスクのある操作になり、そのときだけ
+// 切り替えを保留して、リスクを含む確認を出します。［リスクを理解して設定する］を押した場合だけ保存し、
+// ［キャンセル］ではチェックなしのままにします。チェックを外す操作では、確認を出しません。
+// 2 段目の［定期実行でも止めない］は、1 段目にチェックを入れている間だけ選べます。
 
 /** 2 段の設定の表示を、保存した設定に合わせます。 */
 async function renderConfirmDetection() {
   const settings = await getConfirmDetectionSettings();
-  elements.confirmDetection.checked = settings.enabled;
+  elements.confirmDetection.checked = !settings.enabled;
   elements.confirmDetectionSchedule.checked = !settings.schedule;
   elements.confirmDetectionSchedule.disabled = settings.enabled;
 }
 
 /**
- * 切り替えを保留して、リスクを含む確認を出します。確認の間は、どちらの切り替えも操作できなくします。
- * @param {HTMLInputElement} toggle 操作した切り替え
- * @param {boolean} pending 確認の間の表示
+ * チェックを入れる操作を保留して、リスクを含む確認を出します。確認の間は、どちらの欄も操作できなくします。
+ * @param {HTMLInputElement} toggle 操作した欄
  * @param {string} message
  * @returns {Promise<boolean>} 承認した場合は true
  */
-async function confirmDetectionChange(toggle, pending, message) {
-  toggle.checked = pending;
+async function confirmDetectionChange(toggle, message) {
+  toggle.checked = false;
   elements.confirmDetection.disabled = true;
   elements.confirmDetectionSchedule.disabled = true;
   const confirmed = await confirmInline(elements.confirmDetectionConfirm, {
     message,
-    confirmLabel: 'リスクを理解して無効にする',
+    confirmLabel: 'リスクを理解して設定する',
     danger: true,
   });
   elements.confirmDetection.disabled = false;
@@ -3182,16 +3181,15 @@ async function confirmDetectionChange(toggle, pending, message) {
 
 elements.confirmDetection.addEventListener('change', async () => {
   clearNotices();
-  if (elements.confirmDetection.checked) {
+  if (!elements.confirmDetection.checked) {
     await setConfirmDetection(true);
     await renderConfirmDetection();
-    showToast(elements.toast, '確定ボタンの自動検出を有効にしました。');
+    showToast(elements.toast, '確定ボタンの手前で止まるように戻しました。');
     return;
   }
   const confirmed = await confirmDetectionChange(
     elements.confirmDetection,
-    true,
-    '確定ボタンの自動検出を無効にします。無効にすると、フローが確定ボタンを押し、購入や申し込みが確定する可能性があります。確定した注文の取り消しは、サイトによってはできません。誤って確定した場合の損害は、利用者の責任になります。',
+    '確定ボタンの手前で止めないようにします。フローが確定ボタンを押し、購入や申し込みが確定する可能性があります。確定した注文の取り消しは、サイトによってはできません。誤って確定した場合の損害は、利用者の責任になります。',
   );
   if (!confirmed) {
     return;
@@ -3200,7 +3198,7 @@ elements.confirmDetection.addEventListener('change', async () => {
   await renderConfirmDetection();
   showNotice(
     elements.confirmDetectionNotice,
-    '確定ボタンの自動検出を無効にしました。次に始める記録と実行から、確定ボタンの手前で自動では止まりません。定期実行では、［定期実行でも止めない］を選ばない限り止まります。',
+    '確定ボタンの手前で止めないようにしました。次に始める記録と実行から効きます。定期実行は、［定期実行でも止めない］を選ばない限り止まります。',
     'warning',
   );
 });
@@ -3215,7 +3213,6 @@ elements.confirmDetectionSchedule.addEventListener('change', async () => {
   }
   const confirmed = await confirmDetectionChange(
     elements.confirmDetectionSchedule,
-    false,
     '定期実行でも、確定ボタンの手前で止めないようにします。定期実行は人がその場にいない間に動くため、確定ボタンを押して購入や申し込みが確定しても、気付くのは実行の後になります。確定した注文の取り消しは、サイトによってはできません。誤って確定した場合の損害は、利用者の責任になります。',
   );
   if (!confirmed) {
@@ -3225,7 +3222,7 @@ elements.confirmDetectionSchedule.addEventListener('change', async () => {
   await renderConfirmDetection();
   showNotice(
     elements.confirmDetectionNotice,
-    '定期実行でも、確定ボタンの手前で自動では止まらなくなりました。次に始める定期実行から効きます。',
+    '定期実行でも、確定ボタンの手前で止めないようにしました。次に始める定期実行から効きます。',
     'warning',
   );
 });
