@@ -10,6 +10,7 @@ import {
   allowRecordingOrigin,
   attachRecordedPager,
   cancelPickSecond,
+  finishRecordingGuide,
   makeRecordedLoop,
   onCommitted,
   onDOMContentLoaded,
@@ -144,6 +145,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       }
       setRecordingGuide(message.purpose).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/guideFinish':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      finishRecordingGuide(message.count).then(sendResponse, (error) =>
         sendResponse({ ok: false, error: String(error) }),
       );
       return true;

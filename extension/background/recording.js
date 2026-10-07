@@ -32,6 +32,7 @@ import {
   guideAfterRemoval,
   guideAfterStep,
   guideBack,
+  guideLoop,
   guideNext,
   startGuide,
   waitsForPick,
@@ -515,6 +516,45 @@ export function stepRecordingGuide(action, count) {
     await chrome.storage.session.set({ [RECORDING_KEY]: next });
     return { ok: true };
   });
+}
+
+/**
+ * 「ファイルをまとめて保存する」の案内を最後まで終えた記録から、繰り返し・ファイル名・対象の月・ページ送りを
+ * 設定し、記録を停止します（#248）。利用者が［繰り返しにする］の欄で印を付けなくても、保存して実行できるように
+ * するためです。
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true, flow: Flow | null, errors: string[] } | { ok: false, error: string }>}
+ */
+export async function finishRecordingGuide(count) {
+  const recording = await getRecording();
+  if (!recording?.guide) {
+    return { ok: false, error: '案内付きの記録ではありません。' };
+  }
+  const result = guideLoop(
+    recording.guide,
+    recording.steps,
+    alignHints(recording.steps, recording.rowHints),
+  );
+  if (!result.ok) {
+    return result;
+  }
+  const { from, to, key, names, nextPage, dateStep } = result.loop;
+  const looped = await makeRecordedLoop(
+    from,
+    to,
+    key,
+    count,
+    names,
+    false,
+    nextPage,
+    dateStep,
+    // 一覧は新しい順として、対象の月より古い行に達したら終えます（#183 の既定と同じです）。
+    dateStep !== undefined ? true : undefined,
+  );
+  if (!looped.ok) {
+    return looped;
+  }
+  return stopRecording();
 }
 
 /**

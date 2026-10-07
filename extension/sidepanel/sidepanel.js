@@ -386,6 +386,14 @@ elements.stop.addEventListener('click', async () => {
     showNotice(elements.recordingNotice, response?.error ?? '記録を停止できません。', 'error');
     return;
   }
+  showStopped(response);
+});
+
+/**
+ * 記録を停止した後に、保存の区画の入力欄と、記録した内容の誤りを表示します。
+ * @param {{ flow: Flow | null, errors: string[] }} response
+ */
+function showStopped(response) {
   if (!response.flow) {
     // 手順をすべて削除していた場合は、保存するものがないため、記録を破棄しています。
     showToast(elements.toast, '記録した手順がないため、記録を破棄しました。', { kind: 'info' });
@@ -400,7 +408,7 @@ elements.stop.addEventListener('click', async () => {
       'error',
     );
   }
-});
+}
 
 elements.saveFlow.addEventListener('click', async () => {
   clearNotices();
@@ -485,6 +493,7 @@ function renderGuide(recording) {
   elements.guideMismatch.textContent = view.notice ? `⚠ ${view.notice}` : '';
   elements.guideNext.hidden = !view.button;
   elements.guideNext.textContent = view.button ?? '';
+  elements.guideNext.dataset.finish = view.finish ? 'true' : 'false';
   elements.guideSkip.hidden = !view.skip;
   elements.guideSkip.textContent = view.skip ?? '';
   elements.guideBack.hidden = !view.canBack;
@@ -519,7 +528,26 @@ async function stepGuide(action) {
   }
 }
 
-elements.guideNext.addEventListener('click', () => stepGuide('next'));
+elements.guideNext.addEventListener('click', async () => {
+  if (elements.guideNext.dataset.finish !== 'true') {
+    await stepGuide('next');
+    return;
+  }
+  // 案内の最後で、繰り返しを作って記録を停止します（#248）。
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'recording/guideFinish',
+    count: Number(elements.stepCount.textContent),
+  });
+  if (!response?.ok) {
+    showNotice(elements.guideNotice, response?.error ?? '繰り返しを作れません。', 'error');
+    await render();
+    return;
+  }
+  showStopped(response);
+  showToast(elements.toast, '完成しました。名前を付けて保存してください。');
+  elements.flowName.focus();
+});
 elements.guideSkip.addEventListener('click', () => stepGuide('skip'));
 elements.guideBack.addEventListener('click', () => stepGuide('back'));
 
