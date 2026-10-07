@@ -4,6 +4,9 @@
 // Chrome は PDF などのファイルを表示画面で開くため、記録したままでは、実行してもファイルは保存されません。
 // 判定には、移動先の URL の拡張子と、クリックした要素がリンク（a）であることを使います。表示の文字は、
 // 翻訳で置き換わるため使いません（CLAUDE.md）。
+//
+// ボタンなどのクリックで、サイトがファイルのダウンロードを始めた場合は、そのクリックを「ダウンロードを保存する」
+// 指定（click の download）に変えます（#223）。
 
 /** @typedef {import('./flow.js').Step} Step */
 
@@ -106,4 +109,64 @@ export function toLinkDownload(previous, url, cause, href) {
     },
     download: { path: DEFAULT_LINK_DOWNLOAD_PATH, onConflict: 'rename', from: 'link', all: true },
   };
+}
+
+/**
+ * 記録中のクリックの後、この時間（ミリ秒）までに始まったダウンロードを、そのクリックで始まったものとみなします（#223）。
+ * 確認の画面を経てファイルを作るサイトでは、クリックから数秒かかるためです。
+ */
+export const CLICK_DOWNLOAD_WINDOW_MS = 10000;
+
+/**
+ * ダウンロードの URL の種類のうち、オリジンを持たないもの（data: など）を除いた、ダウンロードの URL と参照元の
+ * オリジンを返します。blob: の URL は、作ったページのオリジンになります。
+ * @param {{ url?: string, finalUrl?: string, referrer?: string }} item
+ * @returns {string[]}
+ */
+function downloadOrigins({ url, finalUrl, referrer }) {
+  /** @type {string[]} */
+  const origins = [];
+  for (const value of [url, finalUrl, referrer]) {
+    if (!value) {
+      continue;
+    }
+    try {
+      const { origin } = new URL(value);
+      if (origin !== 'null') {
+        origins.push(origin);
+      }
+    } catch {
+      // URL として読めない値は使いません。
+    }
+  }
+  return origins;
+}
+
+/**
+ * 記録中に始まったダウンロードが、直前に記録したクリックで始まったものであれば、そのクリックをサイトのファイルを
+ * ダウンロードして保存する指定（click の download）に変えた手順を返します。変えない場合は null です（#223）。
+ * 楽天市場の［発行する］のように、ボタンを押すとサイトがファイルを作ってダウンロードさせる場合に使います。
+ * chrome.downloads の通知には、どのタブから始まったかが含まれないため、次をすべて満たす場合だけ結び付けます。
+ * - 直前の手順がクリックで、まだ保存の指定も新しいタブの指定もない
+ * - ほかの拡張機能（Lightomate を含む）が始めたダウンロードではない
+ * - クリックから CLICK_DOWNLOAD_WINDOW_MS 以内に始まった
+ * - ダウンロードの URL か参照元が、クリックしたページのサイトのもの
+ * @param {Step | undefined} previous 直前に記録した手順
+ * @param {{ url?: string, finalUrl?: string, referrer?: string, byExtensionId?: string }} item 始まったダウンロード
+ * @param {string} site クリックしたページのオリジン
+ * @param {number} elapsed クリックを記録してから、ダウンロードが始まるまでの時間（ミリ秒）
+ * @returns {Step | null}
+ */
+export function toClickDownload(previous, item, site, elapsed) {
+  if (
+    previous?.type !== 'click' ||
+    previous.download !== undefined ||
+    previous.newTab !== undefined ||
+    item.byExtensionId !== undefined ||
+    !(elapsed >= 0 && elapsed <= CLICK_DOWNLOAD_WINDOW_MS) ||
+    !downloadOrigins(item).includes(site)
+  ) {
+    return null;
+  }
+  return { ...previous, download: { path: DEFAULT_LINK_DOWNLOAD_PATH, onConflict: 'rename' } };
 }

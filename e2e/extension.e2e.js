@@ -2642,6 +2642,83 @@ test('1 件目だけ class が異なる一覧：記録から作る繰り返し�
   }
 });
 
+test('ボタンで始まるダウンロード：記録すると保存の手順になり、一覧の注文日と注文番号の名前で全行の領収書を保存する（#223）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/issue-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  // 一覧の 1 件目で注文日と注文番号の文字を押し、［注文詳細］から詳細のページへ移って［発行する］を押します。
+  await site.click('.order:nth-child(1) .order-date');
+  await site.click('.order:nth-child(1) .order-number');
+  await site.click('.order:nth-child(1) a.detail');
+  await site.waitForURL(/issue-detail\.html/);
+  await site.click('#issue');
+  const recorded = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[], rowHints: any[] }} */ (recording);
+      }),
+    (recording) => {
+      const step = recording.steps.at(-1);
+      return step?.type === 'click' && step.download !== undefined;
+    },
+  );
+  const last = recorded.steps.length - 1;
+  const issue = /** @type {any} */ (recorded.steps[last]);
+  assert.equal(issue.target.label, '発行する');
+  assert.equal(issue.download.from, undefined);
+  const key = JSON.stringify(recorded.rowHints[3][0].items.selectors);
+  const looped = await extensionPage.evaluate(
+    ({ key, to }) =>
+      chrome.runtime.sendMessage({
+        kind: 'recording/makeLoop',
+        from: 1,
+        to,
+        key,
+        count: to + 1,
+        names: [1, 2],
+        withSite: false,
+      }),
+    { key, to: last },
+  );
+  assert.deepEqual(looped, { ok: true });
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.deepEqual(stopped.errors, []);
+  await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...stopped.flow, name: '発行', interval: { min: 1000, max: 1000 } };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/発行/')),
+    (list) => list.length >= 2,
+  );
+  // 日付の「/」は、フォルダーの区切りにならないよう「_」に置き換わります。
+  assert.deepEqual(files, [
+    'Lightomate/発行/2026_09_20(日)_R-002.pdf',
+    'Lightomate/発行/2026_09_25(金)_R-001.pdf',
+  ]);
+  for (const page of pagesAt('/issue-orders.html')) {
+    await page.close();
+  }
+});
+
 test('ページ送り：記録で押した「次へ」をページ送りにすると、位置が変わる「次へ」でも最後のページまで保存する（#182）', async () => {
   const { extensionPage } = browser;
   const site = await browser.context.newPage();
