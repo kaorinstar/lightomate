@@ -2565,6 +2565,83 @@ test('ファイル名：注文番号の文字を押して記録し、ファイ�
   }
 });
 
+test('1 件目だけ class が異なる一覧：記録から作る繰り返しが注文の枠を選び、全行を注文番号の名前で保存する（#236）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/first-differs-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  // 1 件目の注文番号の文字を押してから、明細書のリンクを押します。
+  await site.click('#list > div:nth-child(1) .value');
+  await site.click('#list > div:nth-child(1) a.invoice');
+  const recorded = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[], rowHints: any[] }} */ (recording);
+      }),
+    (recording) =>
+      recording.steps.length >= 3 &&
+      recording.steps[2].type === 'click' &&
+      recording.steps[2].download?.from === 'link',
+  );
+  // 注文番号と明細書の両方の手順に共通する行の候補は、3 件の注文の枠です。
+  const keysOf = (/** @type {any[]} */ hint) =>
+    hint.map((candidate) => JSON.stringify(candidate.items.selectors));
+  const common = recorded.rowHints[1].filter((/** @type {any} */ candidate) =>
+    keysOf(recorded.rowHints[2]).includes(JSON.stringify(candidate.items.selectors)),
+  );
+  const orders = common.find((/** @type {any} */ candidate) => candidate.count === 3);
+  assert.ok(orders, JSON.stringify(recorded.rowHints));
+  const looped = await extensionPage.evaluate(
+    (key) =>
+      chrome.runtime.sendMessage({
+        kind: 'recording/makeLoop',
+        from: 1,
+        to: 2,
+        key,
+        count: 3,
+        names: [1],
+        withSite: false,
+      }),
+    JSON.stringify(orders.items.selectors),
+  );
+  assert.deepEqual(looped, { ok: true });
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.deepEqual(stopped.errors, []);
+  await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...stopped.flow, name: '一件目', interval: { min: 1000, max: 1000 } };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/一件目/')),
+    (list) => list.length >= 3,
+  );
+  assert.deepEqual(files, [
+    'Lightomate/一件目/F-001.pdf',
+    'Lightomate/一件目/F-002.pdf',
+    'Lightomate/一件目/F-003.pdf',
+  ]);
+  for (const page of pagesAt('/first-differs-orders.html')) {
+    await page.close();
+  }
+});
+
 test('ボタンで始まるダウンロード：記録すると保存の手順になり、一覧の注文日と注文番号の名前で全行の領収書を保存する（#223）', async () => {
   const { extensionPage } = browser;
   const site = await browser.context.newPage();

@@ -271,3 +271,37 @@ test('rel="next" のリンクは、その属性の指定を先に使う（#182�
     <div><a href="?p=1">1</a><a rel="next" href="?p=2">次へ</a><a href="?p=9">最後</a></div>`);
   assert.deepEqual(plain(window.pagerSelectors($('a[rel]'))), ['a[rel~="next"]']);
 });
+
+// 楽天市場の購入履歴と同じ形です（#236）。1 件目の注文の枠だけ、余白の class（m-none）が 2 件目以降（m-top）と異なり、
+// 最後にページ送りの枠が同じ親に並びます。
+const firstDiffers = `
+  <div id="list">
+    <div class="spacer col white m-none"><div class="head"><span class="date">2023/12/25(月)</span></div><a class="detail" href="/d/1">注文詳細</a></div>
+    <div class="spacer col white m-top"><div class="head"><span class="date">2023/12/24(日)</span></div><a class="detail" href="/d/2">注文詳細</a></div>
+    <div class="spacer col white m-top"><div class="head"><span class="date">2023/12/23(土)</span></div><a class="detail" href="/d/3">注文詳細</a></div>
+    <div class="spacer row-center pager"><button class="nav-next">次へ</button></div>
+  </div>`;
+
+test('1 件目の行だけ class が 1 つ異なる一覧でも、共通する class で全行に一致させ、ページ送りの枠は含めない（#236）', () => {
+  const { window, document, $ } = page(firstDiffers);
+  const candidates = plain(window.rowCandidates($('#list > div:nth-child(1) .date')));
+  const rows = candidates.find((/** @type {any} */ candidate) => candidate.count === 3);
+  assert.ok(rows, JSON.stringify(candidates));
+  assert.equal(rows.items.selectors[0], 'div.col.spacer.white');
+  assert.equal(document.querySelectorAll(rows.items.selectors[0]).length, 3);
+  assert.equal(rows.inner.scope, 'item');
+  // 2 件目を押した場合も、1 件目を含めた 3 件にします。
+  const fromSecond = window.buildRowsTarget($('#list > div:nth-child(2) .detail'), document);
+  assert.ok(fromSecond);
+  assert.equal(fromSecond.rows.length, 3);
+});
+
+test('class の違いが 3 つ以上ある兄弟と、共通する class が 1 つしかない兄弟は、同じ行とみなさない（#236）', () => {
+  for (const html of [
+    '<div class="x y p q"><span id="t">1</span></div><div class="x y r s"><span>2</span></div>',
+    '<div class="x p"><span id="t">1</span></div><div class="x q"><span>2</span></div>',
+  ]) {
+    const { window, $ } = page(`<main>${html}</main>`);
+    assert.deepEqual(plain(window.rowCandidates($('#t'))), [], html);
+  }
+});
