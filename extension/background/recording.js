@@ -49,6 +49,8 @@ import { visibleFrameOrigins } from '../shared/frame-visibility.js';
  *   フロー定義には含めません
  * @property {import('../shared/params.js').Param[]} [params] 繰り返しにするときに加えたパラメータ（対象の月の
  *   条件の年月、#183）。記録を停止すると、フローの params になります
+ * @property {boolean} [picking] 2 件目の同じものを押してもらうのを待っているか（#241）。サイドパネルが、待っている間の
+ *   表示と、押された後に繰り返しの欄を開くために使います
  * @property {string} [lastHref] 最後に記録した手順がリンクのクリックの場合の、そのリンク先（#185）。直後にファイルへ
  *   移動したときに、同じ種類のリンクを探す指定を作るために使います。フロー定義には含めません
  * @property {number} [lastClickAt] 最後に記録した手順がクリックの場合の、記録した時刻（Date.now() の値、#223）。直後に
@@ -741,7 +743,131 @@ async function attach(recording) {
     return;
   }
   await injectRecorder(recording.tabId, 0, origin);
+  // 2 件目を押してもらうのを待っている間にページを移動した場合（詳細のページから一覧へ戻った場合など）は、
+  // 読み込み直したスクリプトにも待つよう伝えます（#241）。
+  if (recording.picking) {
+    await sendPickSecond(recording);
+  }
   await attachFrames(recording, page);
+}
+
+/**
+ * 1 件目で記録した手順のうち、ページで要素を探せる手順の番号と指定を返します（#241）。iframe と Shadow DOM の中の
+ * 要素と、すでに繰り返しの中にある手順は、最上位のページから指定だけでは探せないため除きます。
+ * @param {Step[]} steps
+ * @returns {{ index: number, selectors: string[] }[]}
+ */
+function pickCandidates(steps) {
+  return steps.flatMap((step, index) =>
+    PAGE_STEP_TYPES.includes(step.type) &&
+    'target' in step &&
+    step.target.frame === undefined &&
+    step.target.shadow === undefined &&
+    step.target.scope === undefined
+      ? [{ index, selectors: [...step.target.selectors] }]
+      : [],
+  );
+}
+
+/**
+ * 記録中のタブのページに、2 件目の同じものを押してもらうのを待つよう伝えます（#241）。
+ * @param {Recording} recording
+ * @returns {Promise<boolean>} 伝えられたか
+ */
+async function sendPickSecond(recording) {
+  return chrome.tabs
+    .sendMessage(
+      recording.tabId,
+      { kind: 'recorder/pickSecond', candidates: pickCandidates(recording.steps) },
+      { frameId: 0 },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+}
+
+/**
+ * 繰り返しにする前に、2 件目の同じものを押してもらうのを待ち始めます（#241）。押された 2 か所から 1 件分を決め
+ * （onSecondPicked）、利用者に件数や枠を選ばせないためです。
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function startPickSecond() {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (!recording) {
+      return {
+        ok: false,
+        error: '記録中に行ってください。記録を始め直し、1 件目の操作を記録してください。',
+      };
+    }
+    if (pickCandidates(recording.steps).length === 0) {
+      return { ok: false, error: '1 件目の操作を記録してから押してください。' };
+    }
+    await chrome.storage.session.set({ [RECORDING_KEY]: { ...recording, picking: true } });
+    await sendPickSecond(recording);
+    return { ok: true };
+  });
+}
+
+/**
+ * 2 件目の同じものを押してもらうのをやめます（#241）。
+ * @returns {Promise<{ ok: true }>}
+ */
+export function cancelPickSecond() {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (recording?.picking) {
+      /** @type {Recording} */
+      const next = { ...recording };
+      delete next.picking;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
+      await chrome.tabs
+        .sendMessage(recording.tabId, { kind: 'recorder/pickCancel' }, { frameId: 0 })
+        .catch(() => {});
+    }
+    return { ok: true };
+  });
+}
+
+/**
+ * ページで 2 件目が押され、1 件分の行が決まったときに、手順に添える行の候補を、その行だけにします（#241）。
+ * 行の中の手順には、その行の候補を 1 つだけ添え、ほかの手順の候補は除きます。繰り返しの欄が、この行で範囲と
+ * 「1 件の中」の手順を決めるためです。送信元が記録中のタブの最上位のページであることを確かめます。
+ * @param {unknown} result content/picker-rows.js の rowsFromExamples の値
+ * @param {chrome.runtime.MessageSender} sender
+ * @returns {Promise<void>}
+ */
+export function onSecondPicked(result, sender) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (
+      !recording?.picking ||
+      sender.tab?.id !== recording.tabId ||
+      sender.frameId !== 0 ||
+      typeof result !== 'object' ||
+      result === null
+    ) {
+      return;
+    }
+    const { items, count, inners } = /** @type {Record<string, any>} */ (result);
+    if (typeof inners !== 'object' || inners === null) {
+      return;
+    }
+    /** @type {RowHint[]} */
+    const rowHints = recording.steps.map((_, index) =>
+      Object.hasOwn(inners, String(index))
+        ? sanitizeRowHint([{ items, count, inner: inners[String(index)] }])
+        : null,
+    );
+    if (!rowHints.some((hint) => hint !== null)) {
+      return;
+    }
+    /** @type {Recording} */
+    const next = { ...recording, rowHints };
+    delete next.picking;
+    await chrome.storage.session.set({ [RECORDING_KEY]: next });
+  });
 }
 
 /**

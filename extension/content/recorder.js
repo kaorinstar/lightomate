@@ -6,7 +6,7 @@
 // Service Worker から停止の連絡を受けると終了します。
 // 記録した手順は Service Worker へ送り、ここでは保存しません。
 
-/* global buildTarget, elementKeys, elementTexts, isPageTranslated, matchStopSelector, pagerSelectors, rowCandidates, shadowRootOf, showNotice, showStatusOverlay */
+/* global buildTarget, elementKeys, elementTexts, isPageTranslated, matchStopSelector, pagerSelectors, rowCandidates, rowsFromExamples, shadowRootOf, showNotice, showStatusOverlay */
 
 (() => {
   /** 同じページに 2 回読み込まれた場合に、記録が二重にならないようにする目印です。 */
@@ -48,6 +48,46 @@
    */
   const watchedRoots = new Set();
 
+  /**
+   * 2 件目の同じものを押してもらう間（#241）の、1 件目で記録した手順の番号と要素の指定です。待っていない間は null です。
+   * @type {{ index: number, selectors: string[] }[] | null}
+   */
+  let picking = null;
+
+  /**
+   * 2 件目で押した要素から 1 件分を求め、Service Worker へ送ります（#241）。押した操作は記録せず、ページの処理も
+   * 起こしません。1 件目の要素はページの中を指定で探します。1 件目と同じものでない場合は、押し直しを案内します。
+   * @param {MouseEvent} event
+   * @param {Element} element
+   */
+  const pickSecond = (event, element) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    /** @type {{ index: number, element: Element }[]} */
+    const firsts = [];
+    for (const { index, selectors } of picking ?? []) {
+      for (const selector of selectors) {
+        let found;
+        try {
+          found = document.querySelectorAll(selector);
+        } catch {
+          continue;
+        }
+        if (found.length === 1) {
+          firsts.push({ index, element: found[0] });
+          break;
+        }
+      }
+    }
+    const result = rowsFromExamples(element, firsts);
+    if (!result) {
+      showNotice('1 件目で押したものと同じもの（注文番号の文字など）を、2 件目で押してください。');
+      return;
+    }
+    picking = null;
+    chrome.runtime.sendMessage({ kind: 'recording/secondPicked', result }).catch(() => {});
+  };
+
   /** @param {MouseEvent} event */
   const onClick = (event) => {
     // ページのスクリプトが発生させた操作（element.click() など）は記録しません（#14）。
@@ -56,6 +96,10 @@
     }
     const pressed = deepTarget(event);
     const element = pressed.closest(clickable) ?? pressed;
+    if (picking) {
+      pickSecond(event, element);
+      return;
+    }
     if (isTextEntry(element) || element === document.body || element === document.documentElement) {
       // 入力欄へのクリックは、入力の準備にすぎないため記録しません。値は change で記録します。
       return;
@@ -222,6 +266,18 @@
     }
     if (message?.kind === 'recorder/notice' && typeof message.text === 'string') {
       showNotice(message.text);
+      return;
+    }
+    // 2 件目の同じものを押してもらう間は、クリックを記録しません（#241）。最上位のページだけで受け付けます。
+    if (message?.kind === 'recorder/pickSecond' && Array.isArray(message.candidates)) {
+      picking = window === window.top ? message.candidates : null;
+      if (picking) {
+        showNotice('2 件目の注文で、1 件目と同じもの（注文番号の文字など）を押してください。');
+      }
+      return;
+    }
+    if (message?.kind === 'recorder/pickCancel') {
+      picking = null;
       return;
     }
     if (message?.kind !== 'recorder/stop') {

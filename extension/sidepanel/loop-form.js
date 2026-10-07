@@ -29,19 +29,23 @@ let nextId = 0;
 
 /**
  * 繰り返しにする欄を作ります。
- * @param {{ open: HTMLButtonElement, container: HTMLElement, list: HTMLElement, toast: HTMLElement }} parts
+ * 記録中の区画（pick）では、欄を開くと、まず 2 件目の同じものをページで押してもらいます（#241）。押された 2 か所
+ * から Service Worker が 1 件分を決めた後に、繰り返す手順を選ぶ表示に切り替えます。保存前の区画では、ページが
+ * 一覧にあるとは限らず 2 件目を押してもらえないため、記録中に行うよう案内します。
+ * @param {{ open: HTMLButtonElement, container: HTMLElement, list: HTMLElement, toast: HTMLElement, pick?: boolean }} parts
  *   open は欄を開くボタン、container は欄を置く場所、list は区画の手順の一覧（欄を開いている間は隠します）、
- *   toast は成功の知らせを出す場所です
+ *   toast は成功の知らせを出す場所、pick は記録中の区画か（2 件目を押してもらうか）です
  * @returns {{
  *   update: (
  *     steps: Step[],
  *     hints: RowHint[] | undefined,
  *     locked: boolean,
  *     pagers?: PagerHint[] | undefined,
+ *     picking?: boolean,
  *   ) => void,
  * }}
  */
-export function createLoopForm({ open, container, list, toast }) {
+export function createLoopForm({ open, container, list, toast, pick = false }) {
   const id = `loop-${(nextId += 1)}`;
   /** @type {Step[]} */
   let steps = [];
@@ -86,8 +90,8 @@ export function createLoopForm({ open, container, list, toast }) {
     '1 件目で行った操作に印を付けます。印を付けた手順を、一覧の 1 件ごとに行います。' +
     '複数のページを処理する場合は、この欄を開く前に一覧へ戻って「次へ」を押しておくと、ページ送りに選べます。' +
     '繰り返しにした後に押した「次へ」も、手順の一覧からページ送りにできます。';
-  const pick = document.createElement('ul');
-  pick.className = 'lm-loop-pick mb-2';
+  const pickList = document.createElement('ul');
+  pickList.className = 'lm-loop-pick mb-2';
 
   const summary = document.createElement('div');
   summary.className = 'alert alert-info lm-guide mb-2';
@@ -115,8 +119,32 @@ export function createLoopForm({ open, container, list, toast }) {
   const notice = document.createElement('p');
   notice.hidden = true;
 
-  fieldset.append(legend, hint, pick, summary, rowField, buttons, notice);
+  fieldset.append(legend, hint, pickList, summary, rowField, buttons, notice);
   container.replaceChildren(fieldset);
+
+  // 2 件目の同じものを押してもらう間の表示です（#241）。
+  /** 2 件目が押されるのを待っているか（#241）です。 */
+  let waiting = false;
+  const waitBox = document.createElement('fieldset');
+  waitBox.className = 'lm-loop-form';
+  const waitTitle = document.createElement('legend');
+  waitTitle.className = 'lm-loop-title';
+  waitTitle.textContent = '2 件目を押してください';
+  const waitText = document.createElement('p');
+  waitText.className = 'mb-2';
+  waitText.textContent =
+    '一覧のページで、2 件目の注文の、1 件目で押したものと同じもの（注文番号の文字など）を 1 回押してください。' +
+    '押した場所から、注文 1 件分の範囲を決めます。押してもページは移動せず、手順にも残りません。';
+  const waitCancel = document.createElement('button');
+  waitCancel.type = 'button';
+  waitCancel.className = 'btn btn-sm';
+  waitCancel.textContent = 'キャンセル';
+  const waitButtons = document.createElement('div');
+  waitButtons.className = 'lm-buttons';
+  waitButtons.append(waitCancel);
+  const waitNotice = document.createElement('p');
+  waitNotice.hidden = true;
+  waitBox.append(waitTitle, waitText, waitButtons, waitNotice);
 
   /**
    * 範囲の一覧の行の候補です。最も多くの手順が中を操作した候補だけにします。行の外の小さな枠の中の
@@ -399,7 +427,7 @@ export function createLoopForm({ open, container, list, toast }) {
     }
     const scopes = range && chosen ? stepScopes(steps, hints, range.from, range.to, rowKey) : [];
 
-    pick.replaceChildren(
+    pickList.replaceChildren(
       ...steps.map((step, index) => {
         const inRange = Boolean(range && index >= range.from && index <= range.to);
         return pickItem(step, index, inRange, scopes[index - (range?.from ?? 0)] ?? null);
@@ -476,15 +504,31 @@ export function createLoopForm({ open, container, list, toast }) {
   };
 
   const close = () => {
+    if (waiting) {
+      waiting = false;
+      chrome.runtime.sendMessage({ kind: 'recording/pickCancel' }).catch(() => {});
+    }
     container.hidden = true;
     list.hidden = false;
-    open.hidden = !defaultLoopRange(steps, hints);
+    open.hidden = !canOpen();
     notice.hidden = true;
+    container.replaceChildren(fieldset);
   };
 
-  open.addEventListener('click', () => {
+  /**
+   * 欄を開くボタンを出すかです。記録中の区画では、ページで要素を操作した手順があれば出します（#241）。
+   * @returns {boolean}
+   */
+  const canOpen = () =>
+    pick
+      ? steps.some((step) => 'target' in step && step.target.scope === undefined)
+      : Boolean(defaultLoopRange(steps, hints));
+
+  /** 繰り返す手順を選ぶ表示を始めます。2 件目が押された後（#241）と、保存前の区画で欄を開いたときに使います。 */
+  const begin = () => {
     range = defaultLoopRange(steps, hints);
     if (!range) {
+      close();
       return;
     }
     rowKey = '';
@@ -494,11 +538,49 @@ export function createLoopForm({ open, container, list, toast }) {
     dating = null;
     stopAtOlder = true;
     draw();
+    container.replaceChildren(fieldset);
     container.hidden = false;
     list.hidden = true;
     open.hidden = true;
-    /** @type {HTMLInputElement | null} */ (pick.querySelector('input:not(:disabled)'))?.focus();
+    /** @type {HTMLInputElement | null} */ (
+      pickList.querySelector('input:not(:disabled)')
+    )?.focus();
+  };
+
+  open.addEventListener('click', async () => {
+    if (!pick) {
+      // 保存前の区画では、ページが一覧にあるとは限らず、2 件目を押してもらえないため、記録中に行うよう案内します（#241）。
+      waitTitle.textContent = '繰り返しにする';
+      waitText.textContent =
+        '繰り返しにする操作は、記録中に行います。記録を停止した後は、2 件目を押して注文 1 件分の範囲を決められないためです。' +
+        '［記録開始］から 1 件目の操作を記録し直し、記録中に［繰り返しにする］を押してください。';
+      waitNotice.hidden = true;
+      container.replaceChildren(waitBox);
+      container.hidden = false;
+      list.hidden = true;
+      open.hidden = true;
+      waitCancel.textContent = '閉じる';
+      waitCancel.focus();
+      return;
+    }
+    waitNotice.hidden = true;
+    container.replaceChildren(waitBox);
+    container.hidden = false;
+    list.hidden = true;
+    open.hidden = true;
+    // 依頼の応答より先に、記録中の状態の変化（picking）が画面の更新として届くため、待つ印を先に付けます。
+    waiting = true;
+    const response = await chrome.runtime
+      .sendMessage({ kind: 'recording/pickSecond' })
+      .catch((error) => ({ ok: false, error: String(error) }));
+    if (!response?.ok) {
+      waiting = false;
+      showNotice(waitNotice, response?.error ?? '2 件目を押す準備ができません。', 'error');
+      return;
+    }
+    waitCancel.focus();
   });
+  waitCancel.addEventListener('click', close);
   rowSelect.addEventListener('change', () => {
     rowKey = rowSelect.value;
     draw();
@@ -549,18 +631,26 @@ export function createLoopForm({ open, container, list, toast }) {
   open.hidden = true;
 
   return {
-    update(nextSteps, nextHints, nextLocked, nextPagers) {
+    update(nextSteps, nextHints, nextLocked, nextPagers, picking = false) {
       const previousLength = steps.length;
       steps = nextSteps;
       locked = nextLocked;
       hints = nextSteps.map((_, index) => nextHints?.[index] ?? null);
       pagers = nextSteps.map((_, index) => nextPagers?.[index] ?? null);
-      const possible = Boolean(defaultLoopRange(steps, hints));
       open.disabled = locked;
       if (container.hidden) {
-        open.hidden = !possible;
+        open.hidden = !canOpen();
         return;
       }
+      // 2 件目が押され、Service Worker が 1 件分を決めた後に、繰り返す手順を選ぶ表示に切り替えます（#241）。
+      if (waiting) {
+        if (!picking) {
+          waiting = false;
+          begin();
+        }
+        return;
+      }
+      const possible = Boolean(defaultLoopRange(steps, hints));
       if (!possible) {
         close();
         return;
