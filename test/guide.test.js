@@ -10,6 +10,7 @@ import {
   guideBack,
   guideLoop,
   guideNext,
+  guideStop,
   guideView,
   startGuide,
 } from '../extension/shared/guide.js';
@@ -39,7 +40,7 @@ test('6 種類の目的のうち、ファイルは段階で、自由に記録す
   assert.ok(files);
   assert.equal(currentStage(files)?.id, 'list');
   assert.deepEqual(guideView(files).step, { number: 1, total: 7 });
-  for (const purpose of ['pdf', 'purchase', 'form', 'routine']) {
+  for (const purpose of ['pdf', 'form', 'routine']) {
     const guide = startGuide(purpose, 1);
     assert.ok(guide);
     const view = guideView(guide);
@@ -241,4 +242,49 @@ test('最後まで進めた記録から、範囲・ファイル名・対象の�
   );
   assert.equal(noRow.ok, false);
   assert.match(noRow.ok ? '' : noRow.error, /1 件分が決まっていません/);
+});
+
+test('購入の案内は、商品のページ・選択・かご・手続きの段階で進み、［ここで止める］で一時停止を 1 つだけ加える（#249）', () => {
+  let guide = /** @type {import('../extension/shared/guide.js').GuideState} */ (
+    startGuide('purchase', 1)
+  );
+  assert.deepEqual(guideView(guide).step, { number: 1, total: 5 });
+  assert.equal(guideView(guide).button, 'このページから始める');
+  guide = guideNext(guide, 1, 'button');
+  assert.equal(currentStage(guide)?.id, 'options');
+  assert.equal(guideView(guide).skip, 'なし');
+  guide = guideNext(guide, 1, 'skip');
+  assert.equal(currentStage(guide)?.id, 'cart');
+  // ［かごに入れる］のクリックで進みます。
+  const steps = [navigate, click('かごに入れる', 'button')];
+  guide = guideAfterStep(guide, steps);
+  assert.equal(currentStage(guide)?.id, 'checkout');
+  assert.equal(guideView(guide).button, 'ここで止める');
+
+  const stopped = guideStop(guide, steps);
+  assert.equal(currentStage(stopped.guide)?.id, 'rest');
+  assert.deepEqual(stopped.steps.at(-1), {
+    type: 'pause',
+    note: '注文の確定は人が押してください。',
+  });
+  assert.equal(stopped.steps.length, 3);
+  // 最後の手順がすでに一時停止の場合は、重ねて加えません。
+  const twice = guideStop(guide, stopped.steps);
+  assert.equal(twice.steps.length, 3);
+  assert.equal(guideView(stopped.guide).finish, true);
+  // ほかの段階では、何も加えません。
+  assert.deepEqual(guideStop(stopped.guide, stopped.steps).steps, stopped.steps);
+});
+
+test('購入の案内の途中で確定ボタンが押されると、最後の段階へ進み、注文を確かめるよう知らせる（#249）', () => {
+  const guide = guideNext(
+    /** @type {import('../extension/shared/guide.js').GuideState} */ (startGuide('purchase', 1)),
+    1,
+    'button',
+  );
+  /** @type {Step} */
+  const pause = { type: 'pause' };
+  const next = guideAfterStep(guide, [navigate, pause]);
+  assert.equal(currentStage(next)?.id, 'rest');
+  assert.match(next.notice ?? '', /注文が確定していないか/);
 });

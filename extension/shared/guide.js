@@ -34,11 +34,13 @@ export const PURPOSES = [
  * - picked：ボタン（label）を押すと、ページで 2 件目の同じものを押すのを待ち、押されて 1 件分が決まると
  *   進みます（#241、#247）。
  * - pager：次のページへ送るのに使えるクリック（#182 の PagerHint を作れたもの）を記録すると進みます（#247）。
+ * - click：クリックを記録すると進みます（［かごに入れる］など、#249）。
+ * - stop：ボタン（label）を押すと、手順の最後に一時停止を加えて進みます（購入の確定の手前で止める、#249）。
  * - end：最後の段階です。これより先には進みません。
  * @typedef {object} GuideStage
  * @property {string} id
  * @property {string} text 案内の 1 文
- * @property {'button' | 'date' | 'text' | 'save' | 'picked' | 'pager' | 'end'} advance
+ * @property {'button' | 'date' | 'text' | 'save' | 'picked' | 'pager' | 'click' | 'stop' | 'end'} advance
  * @property {string} [label] advance が button か picked の場合の、ボタンの文言。end の場合は、完成のボタンの文言です（#248）
  * @property {string} [waiting] advance が picked で、ページで押すのを待っている間の案内の文
  * @property {boolean} [skippable] 次の段階へ、［飛ばす］で進めるか
@@ -97,12 +99,47 @@ const STAGES = {
   ],
 };
 
+STAGES.purchase = [
+  {
+    id: 'product',
+    text: '買いたい商品のページを開き、［このページから始める］を押してください。',
+    advance: 'button',
+    label: 'このページから始める',
+  },
+  {
+    id: 'options',
+    text: '色や数量などを選ぶ場合は、選んでから［選び終えました］を押してください。選ぶものがない場合は［なし］を押してください。',
+    advance: 'button',
+    label: '選び終えました',
+    skippable: true,
+    skipLabel: 'なし',
+  },
+  {
+    id: 'cart',
+    text: '［かごに入れる］を押してください。',
+    advance: 'click',
+  },
+  {
+    id: 'checkout',
+    text: '買い物かごを開き、購入の手続きを進めてください。注文を確定するボタンが見えたら、そのボタンは押さずに、［ここで止める］を押してください。',
+    advance: 'stop',
+    label: 'ここで止める',
+  },
+  {
+    id: 'rest',
+    text: '完成しました。実行すると、注文を確定するボタンの手前で止まります。確定は人が押してください。［記録を停止して保存へ進む］を押してください。',
+    advance: 'end',
+    label: '記録を停止して保存へ進む',
+  },
+];
+
+/** 購入の確定の手前で止める一時停止の、止まる理由です（#249）。 */
+export const PURCHASE_STOP_NOTE = '注文の確定は人が押してください。';
+
 /** 1 文の案内だけを出す目的の、案内の文です。 */
 /** @type {Partial<Record<Purpose, string>>} */
 const HINTS = {
   pdf: '保存したいページを開くまでの操作を記録してください。PDF の保存の手順は、記録の後に管理画面の編集画面で「PDF を保存」を加えます。',
-  purchase:
-    '買いたい商品のページを開き、［かごに入れる］から購入の手続きまで進めてください。注文を確定するボタンは押さないでください。確定ボタンを押すと、実際に注文が確定します。',
   form: '入力する欄に記入し、送信のボタンを押してください。毎回変わる値は、後で実行するときに入力する項目にできます。',
   routine: 'いつも行う操作を、最初から最後まで 1 回行ってください。',
 };
@@ -209,6 +246,17 @@ export function guideAfterStep(guide, steps, pagerHints = []) {
   if (!stage || !step) {
     return guide;
   }
+  // 購入の案内の途中で確定ボタンが押された場合は、一時停止として記録されています（#249）。最後の段階へ進み、
+  // 注文が確定していないかを確かめるよう知らせます。
+  if (guide.purpose === 'purchase' && step.type === 'pause' && stage.advance !== 'end') {
+    const stages = STAGES.purchase ?? [];
+    return {
+      ...clearNotice(guide),
+      done: [...guide.done, ...Array(stages.length - 1 - guide.done.length).fill(steps.length)],
+      notice:
+        '確定ボタンが押されました。手順には、押す代わりに一時停止を記録しています。注文が確定していないか、サイトの注文履歴を確かめてください。',
+    };
+  }
   if (stage.advance === 'save') {
     const from = stageStart(guide, guide.done.length);
     return steps.slice(from).some(isSaveStep) ? advanced(guide, steps.length) : guide;
@@ -233,6 +281,8 @@ export function guideAfterStep(guide, steps, pagerHints = []) {
         );
       }
       return step.target.text ? advanced(guide, steps.length) : guide;
+    case 'click':
+      return advanced(guide, steps.length);
     case 'pager':
       return pagerHints[steps.length - 1]
         ? advanced(guide, steps.length)
@@ -341,7 +391,10 @@ export function guideView(guide, picking = false) {
   return {
     text: waiting && stage.waiting ? stage.waiting : stage.text,
     ...(guide.notice ? { notice: guide.notice } : {}),
-    ...((stage.advance === 'button' || stage.advance === 'picked' || stage.advance === 'end') &&
+    ...((stage.advance === 'button' ||
+      stage.advance === 'picked' ||
+      stage.advance === 'stop' ||
+      stage.advance === 'end') &&
     stage.label &&
     !waiting
       ? { button: stage.label }
@@ -428,4 +481,30 @@ export function guideLoop(guide, steps, rowHints) {
       ...(dateStep !== undefined ? { dateStep } : {}),
     },
   };
+}
+
+/**
+ * 今の段階が、［ここで止める］で一時停止を加える段階かを返します（#249）。
+ * @param {GuideState} guide
+ */
+export function stopsHere(guide) {
+  return currentStage(guide)?.advance === 'stop';
+}
+
+/**
+ * ［ここで止める］を押した後の手順と案内の状態です（#249）。手順の最後に一時停止を 1 つだけ加えます。
+ * 最後の手順がすでに一時停止の場合は、加えません。
+ * @param {GuideState} guide
+ * @param {Step[]} steps
+ * @returns {{ guide: GuideState, steps: Step[] }}
+ */
+export function guideStop(guide, steps) {
+  if (!stopsHere(guide)) {
+    return { guide, steps };
+  }
+  const next =
+    steps.at(-1)?.type === 'pause'
+      ? steps
+      : [...steps, /** @type {Step} */ ({ type: 'pause', note: PURCHASE_STOP_NOTE })];
+  return { guide: advanced(guide, next.length), steps: next };
 }

@@ -3494,3 +3494,59 @@ test('案内付きの記録：ファイル名・保存・2 件目・次へ の�
     await page.close();
   }
 });
+
+test('案内付きの記録：購入の案内に従うと、確定ボタンを押さずに、確定の手前で止まるフローができる（#249）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const productUrl = `${server.origin}/product.html`;
+  await site.goto(productUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, productUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  const id = new URL(extensionPage.url()).host;
+  const panel = await browser.context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
+  /** @param {number} number */
+  const stage = (number) =>
+    panel.locator('#guide-step', { hasText: `5 段階中 ${number} 段階目` }).waitFor();
+
+  await panel.selectOption('#recording-purpose', 'purchase');
+  await panel.locator('#guide-next', { hasText: 'このページから始める' }).click();
+  await stage(2);
+  await panel.locator('#guide-skip', { hasText: 'なし' }).click();
+  await stage(3);
+  await site.click('#add-to-cart');
+  await site.waitForURL(/cart\.html/);
+  await stage(4);
+  // 確定ボタンは押さずに、［ここで止める］を押します。
+  await panel.locator('#guide-next', { hasText: 'ここで止める' }).click();
+  await stage(5);
+  await panel.locator('#guide-next', { hasText: '記録を停止して保存へ進む' }).click();
+  await panel.locator('#result-section').waitFor();
+  const lastFlow = await extensionPage.evaluate(async () => {
+    const { lastFlow } = await chrome.storage.session.get('lastFlow');
+    return /** @type {Flow} */ (lastFlow);
+  });
+  assert.deepEqual(lastFlow.steps.at(-1), {
+    type: 'pause',
+    note: '注文の確定は人が押してください。',
+  });
+  await panel.close();
+  await site.close();
+
+  // 実行すると、確定の手前の一時停止で止まり、注文の完了のページへは進みません。
+  const entry = await runFlow(extensionPage, { ...lastFlow, name: '購入の案内' });
+  assert.equal(entry.status, 'halted', entry.reason ?? '');
+  assert.equal(pagesAt('/done.html').length, 0);
+  for (const page of [...pagesAt('/product.html'), ...pagesAt('/cart.html')]) {
+    await page.close();
+  }
+});
