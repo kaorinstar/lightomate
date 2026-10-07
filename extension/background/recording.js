@@ -28,11 +28,13 @@ import {
 } from '../shared/record-loop.js';
 import { toClickDownload, toLinkDownload } from '../shared/file-link.js';
 import {
+  guideAfterPicked,
   guideAfterRemoval,
   guideAfterStep,
   guideBack,
   guideNext,
   startGuide,
+  waitsForPick,
 } from '../shared/guide.js';
 import { DECLINED_SITES_KEY } from '../shared/site-notice.js';
 import { visibleFrameOrigins } from '../shared/frame-visibility.js';
@@ -473,7 +475,24 @@ export function stepRecordingGuide(action, count) {
     }
     /** @type {Recording} */
     const next = { ...recording };
-    if (action === 'next' || action === 'skip') {
+    if (action === 'next' && waitsForPick(recording.guide)) {
+      // 一覧のページへ戻った後に、2 件目の同じものを押してもらうのを待ち始めます（#247）。
+      if (pickCandidates(recording.steps).length === 0) {
+        return { ok: false, error: '1 件目の操作を記録してから押してください。' };
+      }
+      next.picking = true;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
+      await sendPickSecond(next);
+      return { ok: true };
+    } else if (action === 'back' && recording.picking && waitsForPick(recording.guide)) {
+      // 待っている間の［ひとつ戻る］は、待つのをやめます。
+      delete next.picking;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
+      await chrome.tabs
+        .sendMessage(recording.tabId, { kind: 'recorder/pickCancel' }, { frameId: 0 })
+        .catch(() => {});
+      return { ok: true };
+    } else if (action === 'next' || action === 'skip') {
       next.guide = guideNext(
         recording.guide,
         recording.steps.length,
@@ -496,6 +515,16 @@ export function stepRecordingGuide(action, count) {
     await chrome.storage.session.set({ [RECORDING_KEY]: next });
     return { ok: true };
   });
+}
+
+/**
+ * 記録した手順が変わった後に、案内付きの記録（#246、#247）の段階を確かめ直します。
+ * @param {Recording} recording 変更する記録中の状態
+ */
+function refreshGuide(recording) {
+  if (recording.guide) {
+    recording.guide = guideAfterStep(recording.guide, recording.steps, recording.pagerHints);
+  }
 }
 
 /**
@@ -691,7 +720,7 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
       recording.steps.push(recorded);
       // 案内付きの記録（#246）では、記録した手順で次の段階へ進むかを決めます。
       if (recording.guide) {
-        recording.guide = guideAfterStep(recording.guide, recording.steps);
+        recording.guide = guideAfterStep(recording.guide, recording.steps, recording.pagerHints);
       }
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
     }
@@ -730,12 +759,14 @@ export function onCommitted(details) {
     delete recording.lastClickAt;
     if (converted) {
       recording.steps[recording.steps.length - 1] = converted;
+      refreshGuide(recording);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
       return;
     }
     recording.rowHints = [...alignHints(recording.steps, recording.rowHints), null];
     recording.pagerHints = [...alignHints(recording.steps, recording.pagerHints), null];
     recording.steps.push({ type: 'navigate', url: details.url, cause });
+    refreshGuide(recording);
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
   });
 }
@@ -762,6 +793,8 @@ export function onDownloadCreated(item) {
     // 1 回のクリックで複数のファイルが始まった場合も、変えるのは 1 回だけです。
     delete recording.lastClickAt;
     recording.steps[recording.steps.length - 1] = converted;
+    // ダウンロードの保存に変わったクリックで、案内の「保存」の段階を終えます（#247）。
+    refreshGuide(recording);
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
   });
 }
@@ -952,6 +985,10 @@ export function onSecondPicked(result, sender) {
     /** @type {Recording} */
     const next = { ...recording, rowHints };
     delete next.picking;
+    // 案内付きの記録では、2 件目の段階を終えます（#247）。
+    if (next.guide) {
+      next.guide = guideAfterPicked(next.guide, next.steps.length);
+    }
     await chrome.storage.session.set({ [RECORDING_KEY]: next });
   });
 }

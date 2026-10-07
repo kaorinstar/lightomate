@@ -475,7 +475,7 @@ function renderGuide(recording) {
   if (!guide) {
     return;
   }
-  const view = guideView(guide);
+  const view = guideView(guide, recording.picking === true);
   elements.guideStep.hidden = !view.step;
   elements.guideStep.textContent = view.step
     ? `${view.step.total} 段階中 ${view.step.number} 段階目`
@@ -485,7 +485,8 @@ function renderGuide(recording) {
   elements.guideMismatch.textContent = view.notice ? `⚠ ${view.notice}` : '';
   elements.guideNext.hidden = !view.button;
   elements.guideNext.textContent = view.button ?? '';
-  elements.guideSkip.hidden = !view.canSkip;
+  elements.guideSkip.hidden = !view.skip;
+  elements.guideSkip.textContent = view.skip ?? '';
   elements.guideBack.hidden = !view.canBack;
 }
 

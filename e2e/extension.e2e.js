@@ -3282,9 +3282,9 @@ test('案内付きの記録：目的を選ぶと案内が出て、日付以外�
 
   await panel.selectOption('#recording-purpose', 'files');
   await panel.locator('#guide-next', { hasText: 'このページから始める' }).waitFor();
-  assert.equal(await panel.locator('#guide-step').innerText(), '3 段階中 1 段階目');
+  assert.equal(await panel.locator('#guide-step').innerText(), '7 段階中 1 段階目');
   await panel.click('#guide-next');
-  await panel.locator('#guide-step', { hasText: '3 段階中 2 段階目' }).waitFor();
+  await panel.locator('#guide-step', { hasText: '7 段階中 2 段階目' }).waitFor();
   assert.match(await panel.locator('#guide-text').innerText(), /1 件目の日付/);
 
   // 日付ではない文字を押すと、理由を出して進みません。押した手順は残ります。
@@ -3292,16 +3292,16 @@ test('案内付きの記録：目的を選ぶと案内が出て、日付以外�
   const mismatch = panel.locator('#guide-mismatch');
   await mismatch.waitFor();
   assert.match(await mismatch.innerText(), /「C-003」は、日付として読めません/);
-  assert.equal(await panel.locator('#guide-step').innerText(), '3 段階中 2 段階目');
+  assert.equal(await panel.locator('#guide-step').innerText(), '7 段階中 2 段階目');
 
   // 日付を押すと、次の段階へ進みます。
   await site.click('.order-row:nth-child(1) .order-date');
-  await panel.locator('#guide-step', { hasText: '3 段階中 3 段階目' }).waitFor();
+  await panel.locator('#guide-step', { hasText: '7 段階中 3 段階目' }).waitFor();
   assert.equal(await mismatch.isVisible(), false);
 
   // ［ひとつ戻る］で日付の段階に戻り、その段階で記録した 2 件の手順を消します。
   await panel.click('#guide-back');
-  await panel.locator('#guide-step', { hasText: '3 段階中 2 段階目' }).waitFor();
+  await panel.locator('#guide-step', { hasText: '7 段階中 2 段階目' }).waitFor();
   const steps = await extensionPage.evaluate(async () => {
     const { recording } = await chrome.storage.session.get('recording');
     return /** @type {{ steps: Step[] }} */ (recording).steps.length;
@@ -3311,6 +3311,77 @@ test('案内付きの記録：目的を選ぶと案内が出て、日付以外�
   // 「自由に記録する」に戻すと、案内を出しません。
   await panel.selectOption('#recording-purpose', 'free');
   await guide.waitFor({ state: 'hidden' });
+  await panel.close();
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.equal(stopped.ok, true);
+  await site.close();
+});
+
+test('案内付きの記録：ファイル名・保存・2 件目・次へ の段階を、押した操作で進める（#247）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/issue-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  const id = new URL(extensionPage.url()).host;
+  const panel = await browser.context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
+  /** @param {number} number */
+  const stage = (number) =>
+    panel.locator('#guide-step', { hasText: `7 段階中 ${number} 段階目` }).waitFor();
+
+  await panel.selectOption('#recording-purpose', 'files');
+  await panel.locator('#guide-next', { hasText: 'このページから始める' }).click();
+  await stage(2);
+  await site.click('.order:nth-child(1) .order-date');
+  await stage(3);
+  assert.equal(await panel.locator('#guide-skip').innerText(), 'なし');
+  await site.click('.order:nth-child(1) .order-number');
+  await stage(4);
+
+  // 詳細のページの［発行する］でダウンロードが始まると、保存の段階を終えます。
+  await site.click('.order:nth-child(1) a.detail');
+  await site.waitForURL(/issue-detail\.html/);
+  await site.click('#issue');
+  await stage(5);
+
+  // 一覧へ戻り、2 件目の注文番号を押します。押してもページは移動せず、手順にも残りません。
+  await site.goBack();
+  await site.waitForURL(listUrl);
+  const before = await extensionPage.evaluate(async () => {
+    const { recording } = await chrome.storage.session.get('recording');
+    return /** @type {{ steps: Step[] }} */ (recording).steps.length;
+  });
+  await panel.locator('#guide-next', { hasText: '一覧のページに戻りました' }).click();
+  await panel.locator('#guide-text', { hasText: '2 件目の' }).waitFor();
+  await site.click('.order:nth-child(2) .order-number');
+  await stage(6);
+  assert.equal(site.url(), listUrl);
+  const recorded = await extensionPage.evaluate(async () => {
+    const { recording } = await chrome.storage.session.get('recording');
+    return /** @type {{ steps: Step[], rowHints: any[] }} */ (recording);
+  });
+  assert.equal(recorded.steps.length, before);
+  // 1 件分が決まり、行の中の手順に行の候補が 1 つだけ添えられます。
+  assert.equal(recorded.rowHints.filter((hint) => hint !== null).length, 3);
+
+  // 次のページがない一覧では［次のページはない］で終えます。
+  assert.equal(await panel.locator('#guide-skip').innerText(), '次のページはない');
+  await panel.click('#guide-skip');
+  await stage(7);
+  assert.match(await panel.locator('#guide-text').innerText(), /記録ができました/);
   await panel.close();
   const stopped = await extensionPage.evaluate(() =>
     chrome.runtime.sendMessage({ kind: 'recording/stop' }),
