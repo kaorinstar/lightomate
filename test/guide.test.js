@@ -1,0 +1,111 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  PURPOSES,
+  currentStage,
+  guideAfterRemoval,
+  guideAfterStep,
+  guideBack,
+  guideNext,
+  guideView,
+  startGuide,
+} from '../extension/shared/guide.js';
+
+/** @typedef {import('../extension/shared/flow.js').Step} Step */
+
+/** @type {Step} */
+const navigate = { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' };
+/**
+ * @param {string} text
+ * @param {string} [tag]
+ * @returns {Step}
+ */
+const click = (text, tag = 'span') => ({
+  type: 'click',
+  target: { selectors: ['.x'], tag, label: text, text },
+});
+
+test('6 種類の目的のうち、ファイルは段階で、自由に記録するは案内なし、ほかは 1 文で案内する（#246）', () => {
+  assert.deepEqual(
+    PURPOSES.map((purpose) => purpose.id),
+    ['free', 'files', 'pdf', 'purchase', 'form', 'routine'],
+  );
+  assert.equal(startGuide('free', 1), undefined);
+  assert.equal(startGuide('unknown', 1), undefined);
+  const files = startGuide('files', 1);
+  assert.ok(files);
+  assert.equal(currentStage(files)?.id, 'list');
+  assert.deepEqual(guideView(files).step, { number: 1, total: 3 });
+  for (const purpose of ['pdf', 'purchase', 'form', 'routine']) {
+    const guide = startGuide(purpose, 1);
+    assert.ok(guide);
+    const view = guideView(guide);
+    assert.notEqual(view.text, '');
+    assert.equal(view.step, undefined);
+    assert.equal(view.canBack, false);
+  }
+});
+
+test('［このページから始める］で日付の段階へ進み、日付として読める文字を押すと次へ進む（#246）', () => {
+  let guide = /** @type {import('../extension/shared/guide.js').GuideState} */ (
+    startGuide('files', 1)
+  );
+  // 一覧の段階は、文字を押しても進みません。
+  guide = guideAfterStep(guide, [navigate, click('2026/09/25(金)')]);
+  assert.equal(currentStage(guide)?.id, 'list');
+  guide = guideNext(guide, 2, 'button');
+  assert.equal(currentStage(guide)?.id, 'date');
+  assert.equal(guideView(guide).canSkip, true);
+
+  // 日付ではない文字は、理由を返して進みません。
+  const steps = [navigate, click('2026/09/25(金)'), click('注文番号 203694')];
+  guide = guideAfterStep(guide, steps);
+  assert.equal(currentStage(guide)?.id, 'date');
+  assert.match(guide.notice ?? '', /「注文番号 203694」は、日付として読めません/);
+  // ボタンやリンクの文字は、日付が含まれていても日付の手順にしません。
+  guide = guideAfterStep(guide, [...steps, click('2026/09/25 の注文詳細', 'a')]);
+  assert.equal(currentStage(guide)?.id, 'date');
+
+  guide = guideAfterStep(guide, [...steps, click('2026年9月25日')]);
+  assert.equal(currentStage(guide)?.id, 'rest');
+  assert.equal(guide.notice, undefined);
+  assert.deepEqual(guide.done, [2, 4]);
+  // 最後の段階からは進みません。
+  assert.deepEqual(guideNext(guide, 9, 'skip'), guide);
+});
+
+test('［飛ばす］は飛ばせる段階だけで進み、ボタンの段階では使えない（#246）', () => {
+  const guide = /** @type {import('../extension/shared/guide.js').GuideState} */ (
+    startGuide('files', 1)
+  );
+  assert.deepEqual(guideNext(guide, 1, 'skip'), guide);
+  const date = guideNext(guide, 1, 'button');
+  assert.deepEqual(guideNext(date, 1, 'button'), date);
+  assert.equal(currentStage(guideNext(date, 3, 'skip'))?.id, 'rest');
+});
+
+test('［ひとつ戻る］で前の段階に戻り、前の段階の始まりまでの手順を残す（#246）', () => {
+  const start = /** @type {import('../extension/shared/guide.js').GuideState} */ (
+    startGuide('files', 1)
+  );
+  assert.equal(guideBack(start), undefined);
+  const date = guideNext(start, 2, 'button');
+  const rest = guideAfterStep(date, [navigate, click('x'), click('2026/9/25')]);
+  const back = guideBack(rest);
+  assert.ok(back);
+  assert.equal(currentStage(back.guide)?.id, 'date');
+  // 日付の段階は手順 2 から始まったため、2 件を残し、押した日付の手順を消します。
+  assert.equal(back.keep, 2);
+  const first = guideBack(back.guide);
+  assert.ok(first);
+  assert.equal(currentStage(first.guide)?.id, 'list');
+  assert.equal(first.keep, 1);
+});
+
+test('手順を削除すると、削除した手順を使って終えた段階に戻る（#246）', () => {
+  const guide = { purpose: /** @type {const} */ ('files'), start: 1, done: [2, 4] };
+  assert.deepEqual(guideAfterRemoval(guide, 3).done, [2]);
+  assert.deepEqual(guideAfterRemoval(guide, 5).done, [2, 4]);
+  assert.deepEqual(guideAfterRemoval(guide, 0), { purpose: 'files', start: 0, done: [] });
+});

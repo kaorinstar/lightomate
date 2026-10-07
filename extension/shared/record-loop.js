@@ -609,7 +609,16 @@ export function stepScopes(steps, hints, from, to, key) {
 }
 
 /** ファイル名に使えないクリックの対象です（#179）。押すとページが移動したり、値が変わったりするためです。 */
-const ACTION_TAGS = ['a', 'button', 'input', 'select', 'textarea', 'label', 'summary', 'option'];
+export const ACTION_TAGS = [
+  'a',
+  'button',
+  'input',
+  'select',
+  'textarea',
+  'label',
+  'summary',
+  'option',
+];
 
 /**
  * 保存先とファイル名を決める手順か（リンク先やクリックで始まるダウンロード、PDF の保存）を判定します（#179）。
