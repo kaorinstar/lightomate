@@ -3,7 +3,7 @@
 // guideAfterStep で次の段階へ進むかを決めます。サイドパネルは guideView の内容を表示します。
 
 import { parseDate } from './condition.js';
-import { ACTION_TAGS } from './record-loop.js';
+import { ACTION_TAGS, candidateKey } from './record-loop.js';
 
 /** @typedef {import('./flow.js').Step} Step */
 
@@ -39,7 +39,7 @@ export const PURPOSES = [
  * @property {string} id
  * @property {string} text 案内の 1 文
  * @property {'button' | 'date' | 'text' | 'save' | 'picked' | 'pager' | 'end'} advance
- * @property {string} [label] advance が button か picked の場合の、ボタンの文言
+ * @property {string} [label] advance が button か picked の場合の、ボタンの文言。end の場合は、完成のボタンの文言です（#248）
  * @property {string} [waiting] advance が picked で、ページで押すのを待っている間の案内の文
  * @property {boolean} [skippable] 次の段階へ、［飛ばす］で進めるか
  * @property {string} [skipLabel] 飛ばすボタンの文言。省略した場合は「飛ばす」です
@@ -90,8 +90,9 @@ const STAGES = {
     },
     {
       id: 'rest',
-      text: '記録ができました。［繰り返しにする］を押し、もう一度 2 件目の同じものを押して、繰り返しにしてください。',
+      text: '記録ができました。［繰り返しを作って保存へ進む］を押すと、2 件目以降の注文と次のページにも同じ操作をするよう設定し、記録を停止します。',
       advance: 'end',
+      label: '繰り返しを作って保存へ進む',
     },
   ],
 };
@@ -326,7 +327,8 @@ export function guideAfterRemoval(guide, index) {
  * サイドパネルに表示する案内です。
  * @param {GuideState} guide
  * @param {boolean} [picking] ページで 2 件目を押すのを待っているか（記録中の状態の picking）
- * @returns {{ text: string, notice?: string, button?: string, skip?: string, canBack: boolean, step?: { number: number, total: number } }}
+ * @returns {{ text: string, notice?: string, button?: string, finish?: boolean, skip?: string, canBack: boolean, step?: { number: number, total: number } }}
+ *   finish は、button が完成のボタン（繰り返しを作って記録を停止する、#248）か
  */
 export function guideView(guide, picking = false) {
   const stages = STAGES[guide.purpose];
@@ -339,12 +341,91 @@ export function guideView(guide, picking = false) {
   return {
     text: waiting && stage.waiting ? stage.waiting : stage.text,
     ...(guide.notice ? { notice: guide.notice } : {}),
-    ...((stage.advance === 'button' || stage.advance === 'picked') && stage.label && !waiting
+    ...((stage.advance === 'button' || stage.advance === 'picked' || stage.advance === 'end') &&
+    stage.label &&
+    !waiting
       ? { button: stage.label }
       : {}),
+    ...(stage.advance === 'end' && stage.label ? { finish: true } : {}),
     ...(stage.skippable === true ? { skip: stage.skipLabel ?? '飛ばす' } : {}),
     // 待っている間の［ひとつ戻る］は、待つのをやめます。
     canBack: guide.done.length > 0 || waiting,
     step: { number: number + 1, total: stages.length },
+  };
+}
+
+/**
+ * 段階を終えたときに記録した、最後の手順の番号です。段階で手順を記録していない場合（飛ばした場合）は undefined です。
+ * @param {GuideState} guide
+ * @param {number} stage
+ */
+function lastStepOf(guide, stage) {
+  const end = guide.done[stage];
+  if (end === undefined || end <= stageStart(guide, stage)) {
+    return undefined;
+  }
+  return end - 1;
+}
+
+/**
+ * 繰り返しを作る値です（background/recording.js の makeRecordedLoop に渡します）。
+ * @typedef {object} GuideLoop
+ * @property {number} from 範囲の先頭
+ * @property {number} to 範囲の末尾（保存の手順）
+ * @property {string} key 一覧の行の候補（candidateKey の値）
+ * @property {number[]} names ファイル名に使う手順の番号
+ * @property {number} [nextPage] 次のページへ送るクリックの番号
+ * @property {number} [dateStep] 対象の月の条件に使う日付の手順の番号
+ */
+
+/**
+ * 「ファイルをまとめて保存する」の案内を最後まで終えた記録から、繰り返しを作る値を求めます（#248）。
+ * 範囲は 1 件目の日付（飛ばした場合はファイル名、さらに飛ばした場合は保存の段階の最初の手順）から保存の手順まで、
+ * ファイル名は日付とファイル名の文字、対象の月は日付、ページ送りは［次へ］のクリックです。
+ * @param {GuideState} guide
+ * @param {Step[]} steps
+ * @param {import('./record-loop.js').RowHint[]} rowHints steps と同じ順の、一覧の行の候補
+ * @returns {{ ok: true, loop: GuideLoop } | { ok: false, error: string }}
+ */
+export function guideLoop(guide, steps, rowHints) {
+  const stages = STAGES[guide.purpose];
+  if (guide.purpose !== 'files' || !stages || guide.done.length < stages.length - 1) {
+    return { ok: false, error: '案内の最後の段階まで進んでから押してください。' };
+  }
+  const order = stages.map((stage) => stage.id);
+  const at = (/** @type {string} */ id) => order.indexOf(id);
+  const dateStep = lastStepOf(guide, at('date'));
+  const nameStep = lastStepOf(guide, at('name'));
+  const from = stageStart(guide, at('date'));
+  const saveEnd = guide.done[at('save')];
+  // 保存の手順は、保存の段階の最後の手順です。段階は、保存の手順ができた時点で終えるためです。
+  const to = saveEnd - 1;
+  if (!(to >= from) || to >= steps.length) {
+    return {
+      ok: false,
+      error: '保存の手順が見つかりません。［ひとつ戻る］で保存の段階からやり直してください。',
+    };
+  }
+  const hint = rowHints
+    .slice(from, to + 1)
+    .find((candidates) => candidates && candidates.length > 0);
+  if (!hint) {
+    return {
+      ok: false,
+      error:
+        '一覧の 1 件分が決まっていません。［ひとつ戻る］で 2 件目の段階からやり直してください。',
+    };
+  }
+  const nextPage = lastStepOf(guide, at('next'));
+  return {
+    ok: true,
+    loop: {
+      from,
+      to,
+      key: candidateKey(hint[0].items),
+      names: [dateStep, nameStep].filter((index) => index !== undefined),
+      ...(nextPage !== undefined ? { nextPage } : {}),
+      ...(dateStep !== undefined ? { dateStep } : {}),
+    },
   };
 }

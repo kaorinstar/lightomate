@@ -8,6 +8,7 @@ import {
   guideAfterStep,
   guideAfterPicked,
   guideBack,
+  guideLoop,
   guideNext,
   guideView,
   startGuide,
@@ -185,4 +186,59 @@ test('次へ の段階は、ページ送りに使えるクリックで進み、�
   const rest = filesAt('rest');
   assert.deepEqual(guideNext(rest, 9, 'skip'), rest);
   assert.deepEqual(guideView(rest).step, { number: 7, total: 7 });
+});
+
+test('最後まで進めた記録から、範囲・ファイル名・対象の月・ページ送りを求める（#248）', () => {
+  /** @type {Step} */
+  const issue = {
+    type: 'click',
+    target: { selectors: ['#issue'], tag: 'button', label: '発行する' },
+    download: { path: 'Lightomate/{{flow}}/{{run.date}}', onConflict: 'rename' },
+  };
+  /** @type {Step} */
+  const detailPage = { type: 'navigate', url: 'https://shop.example.com/detail', cause: 'page' };
+  const steps = [
+    navigate,
+    click('2026/09/25(金)'),
+    click('R-001'),
+    click('注文詳細', 'a'),
+    detailPage,
+    issue,
+    navigate,
+    click('次へ', 'a'),
+    navigate,
+  ];
+  const row = {
+    items: { selectors: ['.order'], tag: 'div', label: '' },
+    count: 2,
+    inner: { selectors: ['.x'], tag: 'span', label: '', scope: /** @type {const} */ ('item') },
+  };
+  /** @type {import('../extension/shared/record-loop.js').RowHint[]} */
+  const hints = [null, [row], [row], [row], null, null, null, null, null];
+  const guide = { purpose: /** @type {const} */ ('files'), start: 1, done: [1, 2, 3, 6, 7, 8] };
+  const result = guideLoop(guide, steps, hints);
+  assert.ok(result.ok);
+  assert.deepEqual(result.loop, {
+    from: 1,
+    to: 5,
+    key: JSON.stringify(['.order']),
+    names: [1, 2],
+    nextPage: 7,
+    dateStep: 1,
+  });
+
+  // 日付とファイル名と［次へ］を飛ばした場合は、それぞれ使いません。
+  const skipped = guideLoop({ ...guide, done: [1, 1, 1, 4, 5, 5] }, steps.slice(0, 5), hints);
+  assert.ok(skipped.ok);
+  assert.deepEqual(skipped.loop, { from: 1, to: 3, key: JSON.stringify(['.order']), names: [] });
+
+  // 最後の段階まで進んでいない場合と、1 件分が決まっていない場合は、理由を返します。
+  assert.equal(guideLoop({ ...guide, done: [1, 2] }, steps, hints).ok, false);
+  const noRow = guideLoop(
+    guide,
+    steps,
+    steps.map(() => null),
+  );
+  assert.equal(noRow.ok, false);
+  assert.match(noRow.ok ? '' : noRow.error, /1 件分が決まっていません/);
 });

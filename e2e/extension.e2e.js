@@ -3360,10 +3360,20 @@ test('案内付きの記録：ファイル名・保存・2 件目・次へ の�
   // 一覧へ戻り、2 件目の注文番号を押します。押してもページは移動せず、手順にも残りません。
   await site.goBack();
   await site.waitForURL(listUrl);
-  const before = await extensionPage.evaluate(async () => {
-    const { recording } = await chrome.storage.session.get('recording');
-    return /** @type {{ steps: Step[] }} */ (recording).steps.length;
-  });
+  // 一覧へ戻る移動の手順は、ページの移動の後に少し遅れて加わります。加わるまで待ってから数えます。
+  const before = (
+    await waitUntil(
+      () =>
+        extensionPage.evaluate(async () => {
+          const { recording } = await chrome.storage.session.get('recording');
+          return /** @type {{ steps: Step[] }} */ (recording).steps;
+        }),
+      (steps) => {
+        const last = steps.at(-1);
+        return last?.type === 'navigate' && last.url === listUrl;
+      },
+    )
+  ).length;
   await panel.locator('#guide-next', { hasText: '一覧のページに戻りました' }).click();
   await panel.locator('#guide-text', { hasText: '2 件目の' }).waitFor();
   await site.click('.order:nth-child(2) .order-number');
@@ -3382,10 +3392,35 @@ test('案内付きの記録：ファイル名・保存・2 件目・次へ の�
   await panel.click('#guide-skip');
   await stage(7);
   assert.match(await panel.locator('#guide-text').innerText(), /記録ができました/);
+
+  // ［繰り返しを作って保存へ進む］で、繰り返し・ファイル名・対象の月を設定し、記録を停止します（#248）。
+  await panel.locator('#guide-next', { hasText: '繰り返しを作って保存へ進む' }).click();
+  await panel.locator('#result-section').waitFor();
+  const lastFlow = await extensionPage.evaluate(async () => {
+    const { lastFlow } = await chrome.storage.session.get('lastFlow');
+    return /** @type {Flow} */ (lastFlow);
+  });
+  assert.equal(lastFlow.params?.[0].type, 'month');
+  assert.ok(lastFlow.steps.some((step) => step.type === 'forEach'));
   await panel.close();
-  const stopped = await extensionPage.evaluate(() =>
-    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
-  );
-  assert.equal(stopped.ok, true);
   await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...lastFlow, name: '案内', interval: { min: 1000, max: 1000 } };
+  const entry = await runFlow(extensionPage, flow, {
+    [lastFlow.params?.[0].name ?? '']: '2026-09',
+  });
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/案内/')),
+    (list) => list.length >= 2,
+  );
+  assert.deepEqual(files, [
+    'Lightomate/案内/2026_09_20(日)_R-002.pdf',
+    'Lightomate/案内/2026_09_25(金)_R-001.pdf',
+  ]);
+  for (const page of pagesAt('/issue-orders.html')) {
+    await page.close();
+  }
 });
