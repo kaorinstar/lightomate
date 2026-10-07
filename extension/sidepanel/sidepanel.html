@@ -102,6 +102,29 @@
           <p id="recording-notice" hidden></p>
           <p class="lm-sub mb-2" id="recording-origin"></p>
           <p id="recording-site" class="mb-2" hidden></p>
+          <!-- 案内付きの記録（#246）：目的を選ぶと、次にすることを 1 文で案内します。 -->
+          <div class="mb-2" id="recording-guide">
+            <label class="form-label mb-1" for="recording-purpose">記録の目的</label>
+            <select class="form-select form-select-sm" id="recording-purpose"></select>
+            <div class="alert alert-info lm-guide mt-2 mb-0" id="guide-box" role="status" hidden>
+              <p class="lm-sub mb-1" id="guide-step" hidden></p>
+              <p class="mb-0" id="guide-text"></p>
+              <p class="fw-bold mt-1 mb-0" id="guide-mismatch" hidden></p>
+              <div class="lm-buttons mt-2" id="guide-buttons">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-primary"
+                  id="guide-next"
+                  hidden
+                ></button>
+                <button type="button" class="btn btn-sm" id="guide-skip" hidden></button>
+                <button type="button" class="btn btn-sm btn-ghost-secondary" id="guide-back" hidden>
+                  ひとつ戻る
+                </button>
+              </div>
+              <p id="guide-notice" hidden></p>
+            </div>
+          </div>
           <ol id="steps" class="lm-steps"></ol>
           <div class="lm-buttons mt-2" id="recording-buttons">
             <button type="button" class="btn btn-sm" id="recording-loop" hidden>

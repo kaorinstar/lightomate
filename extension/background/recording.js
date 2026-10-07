@@ -27,6 +27,16 @@ import {
   sanitizeRowHint,
 } from '../shared/record-loop.js';
 import { toClickDownload, toLinkDownload } from '../shared/file-link.js';
+import {
+  guideAfterPicked,
+  guideAfterRemoval,
+  guideAfterStep,
+  guideBack,
+  guideLoop,
+  guideNext,
+  startGuide,
+  waitsForPick,
+} from '../shared/guide.js';
 import { DECLINED_SITES_KEY } from '../shared/site-notice.js';
 import { visibleFrameOrigins } from '../shared/frame-visibility.js';
 
@@ -34,6 +44,7 @@ import { visibleFrameOrigins } from '../shared/frame-visibility.js';
 /** @typedef {import('../shared/flow.js').Step} Step */
 /** @typedef {import('../shared/record-loop.js').RowHint} RowHint */
 /** @typedef {import('../shared/record-loop.js').PagerHint} PagerHint */
+/** @typedef {import('../shared/guide.js').GuideState} GuideState */
 
 /**
  * 記録中の状態です。
@@ -55,6 +66,7 @@ import { visibleFrameOrigins } from '../shared/frame-visibility.js';
  *   移動したときに、同じ種類のリンクを探す指定を作るために使います。フロー定義には含めません
  * @property {number} [lastClickAt] 最後に記録した手順がクリックの場合の、記録した時刻（Date.now() の値、#223）。直後に
  *   始まったダウンロードを、そのクリックに結び付けるために使います。フロー定義には含めません
+ * @property {GuideState} [guide] 案内付きの記録（#246）の、目的と今の段階。フロー定義には含めません
  */
 
 /**
@@ -225,6 +237,10 @@ export function removeRecordedStep(index, count) {
       const next = { ...recording, steps, rowHints, pagerHints };
       // 手順を削除した後の最後の手順は、控えた時刻のクリックとは限らないため、ダウンロードを結び付けません（#223）。
       delete next.lastClickAt;
+      // 削除した手順を使って終えた案内の段階は、終えていないことにします（#246）。
+      if (next.guide && typeof index === 'number') {
+        next.guide = guideAfterRemoval(next.guide, index);
+      }
       await chrome.storage.session.set({ [RECORDING_KEY]: next });
       return { ok: true };
     }
@@ -352,6 +368,8 @@ export function makeRecordedLoop(
       };
       // 繰り返しに変えた後は、最後の手順が控えた時刻のクリックとは限らないため、ダウンロードを結び付けません（#223）。
       delete next.lastClickAt;
+      // 繰り返しにした後は手順の番号が変わるため、案内（#246）を終えます。
+      delete next.guide;
       await chrome.storage.session.set({ [RECORDING_KEY]: next });
     } else if (lastFlow) {
       await chrome.storage.session.set({
@@ -414,6 +432,139 @@ export function attachRecordedPager(index, count) {
     }
     return { ok: true };
   });
+}
+
+/**
+ * 記録の目的を選びます（#246）。「自由に記録する」を選ぶと、案内を終えます。
+ * @param {unknown} purpose
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function setRecordingGuide(purpose) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (!recording) {
+      return { ok: false, error: '記録中ではありません。' };
+    }
+    const guide = startGuide(purpose, recording.steps.length);
+    /** @type {Recording} */
+    const next = { ...recording };
+    if (guide) {
+      next.guide = guide;
+    } else {
+      delete next.guide;
+    }
+    await chrome.storage.session.set({ [RECORDING_KEY]: next });
+    return { ok: true };
+  });
+}
+
+/**
+ * 案内の段階を、サイドパネルのボタンで進める・飛ばす・戻ります（#246）。
+ * 戻る場合は、前の段階の始まりより後に記録した手順を削除します。
+ * @param {unknown} action next（［このページから始める］など）、skip（［飛ばす］）、back（［ひとつ戻る］）
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function stepRecordingGuide(action, count) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (!recording?.guide) {
+      return { ok: false, error: '案内付きの記録ではありません。' };
+    }
+    if (count !== recording.steps.length) {
+      return { ok: false, error: STALE_STEPS_ERROR };
+    }
+    /** @type {Recording} */
+    const next = { ...recording };
+    if (action === 'next' && waitsForPick(recording.guide)) {
+      // 一覧のページへ戻った後に、2 件目の同じものを押してもらうのを待ち始めます（#247）。
+      if (pickCandidates(recording.steps).length === 0) {
+        return { ok: false, error: '1 件目の操作を記録してから押してください。' };
+      }
+      next.picking = true;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
+      await sendPickSecond(next);
+      return { ok: true };
+    } else if (action === 'back' && recording.picking && waitsForPick(recording.guide)) {
+      // 待っている間の［ひとつ戻る］は、待つのをやめます。
+      delete next.picking;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
+      await chrome.tabs
+        .sendMessage(recording.tabId, { kind: 'recorder/pickCancel' }, { frameId: 0 })
+        .catch(() => {});
+      return { ok: true };
+    } else if (action === 'next' || action === 'skip') {
+      next.guide = guideNext(
+        recording.guide,
+        recording.steps.length,
+        action === 'next' ? 'button' : 'skip',
+      );
+    } else if (action === 'back') {
+      const back = guideBack(recording.guide);
+      if (!back) {
+        return { ok: false, error: '最初の段階のため、戻れません。' };
+      }
+      next.guide = back.guide;
+      next.steps = recording.steps.slice(0, back.keep);
+      next.rowHints = alignHints(recording.steps, recording.rowHints).slice(0, back.keep);
+      next.pagerHints = alignHints(recording.steps, recording.pagerHints).slice(0, back.keep);
+      delete next.lastClickAt;
+      delete next.lastHref;
+    } else {
+      return { ok: false, error: '案内の操作が正しくありません。' };
+    }
+    await chrome.storage.session.set({ [RECORDING_KEY]: next });
+    return { ok: true };
+  });
+}
+
+/**
+ * 「ファイルをまとめて保存する」の案内を最後まで終えた記録から、繰り返し・ファイル名・対象の月・ページ送りを
+ * 設定し、記録を停止します（#248）。利用者が［繰り返しにする］の欄で印を付けなくても、保存して実行できるように
+ * するためです。
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true, flow: Flow | null, errors: string[] } | { ok: false, error: string }>}
+ */
+export async function finishRecordingGuide(count) {
+  const recording = await getRecording();
+  if (!recording?.guide) {
+    return { ok: false, error: '案内付きの記録ではありません。' };
+  }
+  const result = guideLoop(
+    recording.guide,
+    recording.steps,
+    alignHints(recording.steps, recording.rowHints),
+  );
+  if (!result.ok) {
+    return result;
+  }
+  const { from, to, key, names, nextPage, dateStep } = result.loop;
+  const looped = await makeRecordedLoop(
+    from,
+    to,
+    key,
+    count,
+    names,
+    false,
+    nextPage,
+    dateStep,
+    // 一覧は新しい順として、対象の月より古い行に達したら終えます（#183 の既定と同じです）。
+    dateStep !== undefined ? true : undefined,
+  );
+  if (!looped.ok) {
+    return looped;
+  }
+  return stopRecording();
+}
+
+/**
+ * 記録した手順が変わった後に、案内付きの記録（#246、#247）の段階を確かめ直します。
+ * @param {Recording} recording 変更する記録中の状態
+ */
+function refreshGuide(recording) {
+  if (recording.guide) {
+    recording.guide = guideAfterStep(recording.guide, recording.steps, recording.pagerHints);
+  }
 }
 
 /**
@@ -607,6 +758,10 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
         delete recording.lastClickAt;
       }
       recording.steps.push(recorded);
+      // 案内付きの記録（#246）では、記録した手順で次の段階へ進むかを決めます。
+      if (recording.guide) {
+        recording.guide = guideAfterStep(recording.guide, recording.steps, recording.pagerHints);
+      }
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
     }
     if (notice !== undefined) {
@@ -644,12 +799,14 @@ export function onCommitted(details) {
     delete recording.lastClickAt;
     if (converted) {
       recording.steps[recording.steps.length - 1] = converted;
+      refreshGuide(recording);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
       return;
     }
     recording.rowHints = [...alignHints(recording.steps, recording.rowHints), null];
     recording.pagerHints = [...alignHints(recording.steps, recording.pagerHints), null];
     recording.steps.push({ type: 'navigate', url: details.url, cause });
+    refreshGuide(recording);
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
   });
 }
@@ -676,6 +833,8 @@ export function onDownloadCreated(item) {
     // 1 回のクリックで複数のファイルが始まった場合も、変えるのは 1 回だけです。
     delete recording.lastClickAt;
     recording.steps[recording.steps.length - 1] = converted;
+    // ダウンロードの保存に変わったクリックで、案内の「保存」の段階を終えます（#247）。
+    refreshGuide(recording);
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
   });
 }
@@ -866,6 +1025,10 @@ export function onSecondPicked(result, sender) {
     /** @type {Recording} */
     const next = { ...recording, rowHints };
     delete next.picking;
+    // 案内付きの記録では、2 件目の段階を終えます（#247）。
+    if (next.guide) {
+      next.guide = guideAfterPicked(next.guide, next.steps.length);
+    }
     await chrome.storage.session.set({ [RECORDING_KEY]: next });
   });
 }
