@@ -8,13 +8,18 @@
 import {
   addStep,
   allowRecordingOrigin,
+  attachRecordedPager,
+  cancelPickSecond,
   makeRecordedLoop,
   onCommitted,
+  onDownloadCreated,
   onDOMContentLoaded,
   onFramesChanged,
+  onSecondPicked,
   onTabRemoved,
   removeRecordedStep,
   resetRecording,
+  startPickSecond,
   startRecording,
   stopRecording,
 } from './recording.js';
@@ -137,6 +142,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.stopAtOlder,
       ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
       return true;
+
+    case 'recording/attachPager':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      attachRecordedPager(message.index, message.count).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/pickSecond':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      startPickSecond().then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/pickCancel':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      cancelPickSecond().then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/secondPicked':
+      onSecondPicked(message.result, sender).catch((error) =>
+        console.error('2 件目の指定を受け取れませんでした。', error),
+      );
+      return false;
 
     case 'recording/reset':
       if (!fromExtensionPage) {
@@ -293,6 +331,12 @@ chrome.webNavigation.onCommitted.addListener((details) => {
 chrome.webNavigation.onDOMContentLoaded.addListener((details) => {
   onDOMContentLoaded(details).catch((error) =>
     console.error('記録用のスクリプトを読み込めませんでした。', error),
+  );
+});
+
+chrome.downloads.onCreated.addListener((item) => {
+  onDownloadCreated(item).catch((error) =>
+    console.error('ダウンロードを記録できませんでした。', error),
   );
 });
 
