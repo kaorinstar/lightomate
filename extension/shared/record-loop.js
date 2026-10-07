@@ -472,11 +472,38 @@ function isPageNavigation(step) {
 const PAGER_TAGS = ['a', 'button'];
 
 /**
+ * 手順を記録した時点のページを、オリジンとパスで返します（#240）。直前のページの移動（navigate）の URL です。
+ * クエリは含めません。一覧の 2 ページ目以降は、クエリ（`?p=2` など）だけが変わるためです。
+ * 前にページの移動がない場合と、URL を読めない場合は null です。
+ * @param {Step[]} steps
+ * @param {number} index
+ * @returns {string | null}
+ */
+function pageAt(steps, index) {
+  for (let position = index - 1; position >= 0; position -= 1) {
+    const step = steps[position];
+    if (step.type === 'navigate') {
+      try {
+        const url = new URL(step.url);
+        return url.origin + url.pathname;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * 次のページへ送るクリックとして選べる手順の番号を返します（#182）。範囲の 2 番目以降の手順のうち、次をすべて
  * 満たすものです。記録中に、1 件目の操作と「次へ」の間でほかの場所を押していても選べるよう、位置の条件は
  * 設けません。間の手順は、選んだ後に除きます（pagerSpan）。
  * - リンクかボタンのクリックで、ページ番号の数で位置が変わらない指定（PagerHint）を作れたもの
  * - 選んだ行の外の要素を押したもの
+ * - 一覧のページ（範囲の先頭を記録したページ）で押したもの（#240）。詳細のページの［発行する］などを
+ *   除くためです。どちらかのページが分からない場合は、この条件で除きません
+ * - ページを読み込まずに一覧だけを差し替えるサイトでは、ページの移動が記録されないため、一覧のページのままと
+ *   判定します
  * @param {Step[]} steps
  * @param {RowHint[]} hints
  * @param {PagerHint[]} pagers steps と同じ順の、ページ送りに使う場合の指定
@@ -487,12 +514,15 @@ const PAGER_TAGS = ['a', 'button'];
 export function pagerSteps(steps, hints, pagers, from, key) {
   /** @type {number[]} */
   const indexes = [];
+  const listPage = pageAt(steps, from);
   for (let index = from + 1; index < steps.length; index += 1) {
     const step = steps[index];
     const inRow = (usableHint(step, hints[index]) ?? []).some(
       (candidate) => candidateKey(candidate.items) === key,
     );
+    const page = pageAt(steps, index);
     if (
+      (listPage === null || page === null || page === listPage) &&
       step.type === 'click' &&
       step.download === undefined &&
       step.newTab === undefined &&
@@ -677,4 +707,86 @@ function nameSaveSteps(inner, names) {
       inner[index] = { ...step, download: { ...step.download, path, onConflict: 'overwrite' } };
     }
   });
+}
+
+/**
+ * 繰り返しを作った後に記録した「次へ」のクリックについて、ページ送りを付けられる繰り返しの番号を返します（#237）。
+ * 付けられない手順は null です。次をすべて満たす手順が対象です。
+ * - リンクかボタンのクリックで、ページ番号の数で位置が変わらない指定（PagerHint）を作れたもの
+ * - 直前の繰り返し（最上位の forEach）にページ送りがなく、そのクリックが繰り返しの行の中の要素ではないもの
+ * - 繰り返しとクリックの間の手順が、ページの移動（一覧へ戻る移動など）だけのもの。間にほかの操作がある場合は、
+ *   その操作を手順から除くことになるため、対象にしません
+ * @param {Step[]} steps
+ * @param {RowHint[]} hints
+ * @param {PagerHint[]} pagers
+ * @returns {(number | null)[]} steps と同じ順の、ページ送りを付ける繰り返しの番号
+ */
+export function pagerLoops(steps, hints, pagers) {
+  return steps.map((step, index) => {
+    if (
+      step.type !== 'click' ||
+      step.download !== undefined ||
+      step.newTab !== undefined ||
+      step.target.scope !== undefined ||
+      !PAGER_TAGS.includes(step.target.tag) ||
+      !pagers[index]
+    ) {
+      return null;
+    }
+    let loop = index - 1;
+    while (loop >= 0 && steps[loop].type === 'navigate') {
+      loop -= 1;
+    }
+    const target = steps[loop];
+    if (target?.type !== 'forEach' || target.nextPage !== undefined) {
+      return null;
+    }
+    const key = candidateKey(target.items);
+    const inRow = (usableHint(step, hints[index]) ?? []).some(
+      (candidate) => candidateKey(candidate.items) === key,
+    );
+    return inRow ? null : loop;
+  });
+}
+
+/**
+ * 繰り返しを作った後に記録した「次へ」のクリックを、その繰り返しのページ送り（nextPage）にします（#237）。
+ * 繰り返しの後から「次へ」までの手順（一覧へ戻る移動）と、「次へ」と直後のページの移動を、手順から除きます。
+ * 元の配列は変更しません。
+ * @param {Step[]} steps
+ * @param {RowHint[]} hints
+ * @param {PagerHint[]} pagers
+ * @param {unknown} index 「次へ」のクリックの番号（0 から数えます）
+ * @returns {{ ok: true, steps: Step[], hints: RowHint[], pagers: PagerHint[], loop: number } | { ok: false, error: string }}
+ */
+export function attachPager(steps, hints, pagers, index) {
+  const at = Number.isInteger(index) ? /** @type {number} */ (index) : -1;
+  const loop = at >= 0 && at < steps.length ? pagerLoops(steps, hints, pagers)[at] : null;
+  const step = steps[at];
+  const selectors = pagers[at];
+  const target = loop === null ? undefined : steps[loop];
+  if (loop === null || step?.type !== 'click' || !selectors || target?.type !== 'forEach') {
+    return {
+      ok: false,
+      error: 'ページ送りにできない手順です。手順の一覧を確かめてから押し直してください。',
+    };
+  }
+  let removeEnd = at;
+  while (isPageNavigation(steps[removeEnd + 1])) {
+    removeEnd += 1;
+  }
+  // 表示の文字（text）は書きません。見つからない場合に文字で探すと、最後のページの押せない「次へ」を押すことが
+  // あるためです（makeLoop と同じ扱い、#182）。
+  /** @type {Step} */
+  const paged = {
+    ...target,
+    nextPage: { selectors: [...selectors], tag: step.target.tag, label: step.target.label },
+  };
+  return {
+    ok: true,
+    steps: [...steps.slice(0, loop), paged, ...steps.slice(removeEnd + 1)],
+    hints: [...hints.slice(0, loop + 1), ...hints.slice(removeEnd + 1)],
+    pagers: [...pagers.slice(0, loop + 1), ...pagers.slice(removeEnd + 1)],
+    loop,
+  };
 }
