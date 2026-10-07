@@ -34,7 +34,9 @@ import {
   guideBack,
   guideLoop,
   guideNext,
+  guideStop,
   startGuide,
+  stopsHere,
   waitsForPick,
 } from '../shared/guide.js';
 import { DECLINED_SITES_KEY } from '../shared/site-notice.js';
@@ -476,7 +478,16 @@ export function stepRecordingGuide(action, count) {
     }
     /** @type {Recording} */
     const next = { ...recording };
-    if (action === 'next' && waitsForPick(recording.guide)) {
+    if (action === 'next' && stopsHere(recording.guide)) {
+      // ［ここで止める］で、購入の確定の手前で止まる一時停止を加えます（#249）。
+      const stopped = guideStop(recording.guide, recording.steps);
+      next.guide = stopped.guide;
+      next.steps = stopped.steps;
+      next.rowHints = stopped.steps.map((_, index) => recording.rowHints?.[index] ?? null);
+      next.pagerHints = stopped.steps.map((_, index) => recording.pagerHints?.[index] ?? null);
+      delete next.lastClickAt;
+      delete next.lastHref;
+    } else if (action === 'next' && waitsForPick(recording.guide)) {
       // 一覧のページへ戻った後に、2 件目の同じものを押してもらうのを待ち始めます（#247）。
       if (pickCandidates(recording.steps).length === 0) {
         return { ok: false, error: '1 件目の操作を記録してから押してください。' };
@@ -529,6 +540,10 @@ export async function finishRecordingGuide(count) {
   const recording = await getRecording();
   if (!recording?.guide) {
     return { ok: false, error: '案内付きの記録ではありません。' };
+  }
+  // 購入の案内（#249）は、繰り返しを作らずに記録を停止します。
+  if (recording.guide.purpose !== 'files') {
+    return stopRecording();
   }
   const result = guideLoop(
     recording.guide,
