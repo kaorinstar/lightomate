@@ -12,15 +12,17 @@ import {
   cancelPickSecond,
   makeRecordedLoop,
   onCommitted,
-  onDownloadCreated,
   onDOMContentLoaded,
+  onDownloadCreated,
   onFramesChanged,
   onSecondPicked,
   onTabRemoved,
   removeRecordedStep,
   resetRecording,
+  setRecordingGuide,
   startPickSecond,
   startRecording,
+  stepRecordingGuide,
   stopRecording,
 } from './recording.js';
 import { removeHistory } from '../common/history-store.js';
@@ -135,6 +137,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.dateStep,
         message.stopAtOlder,
       ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
+      return true;
+
+    case 'recording/guide':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      setRecordingGuide(message.purpose).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/guideStep':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      stepRecordingGuide(message.action, message.count).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
       return true;
 
     case 'recording/attachPager':

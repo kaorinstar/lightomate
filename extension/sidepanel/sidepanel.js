@@ -46,6 +46,7 @@ import { MAX_EXTRA_ORIGINS, flowOrigins, orderFlow } from '../shared/flow.js';
 import { DECLINED_SITES_KEY, siteNotice, siteNoticeText } from '../shared/site-notice.js';
 import { createLoopForm } from './loop-form.js';
 import { pagerLoops } from '../shared/record-loop.js';
+import { PURPOSES, guideView } from '../shared/guide.js';
 import {
   RUN_KEY_PREFIX,
   conflictMessage,
@@ -118,6 +119,15 @@ const elements = {
   recordingSection: byId('recording-section'),
   recordingOrigin: byId('recording-origin'),
   recordingSite: byId('recording-site'),
+  recordingPurpose: /** @type {HTMLSelectElement} */ (byId('recording-purpose')),
+  guideBox: byId('guide-box'),
+  guideStep: byId('guide-step'),
+  guideText: byId('guide-text'),
+  guideMismatch: byId('guide-mismatch'),
+  guideNext: /** @type {HTMLButtonElement} */ (byId('guide-next')),
+  guideSkip: /** @type {HTMLButtonElement} */ (byId('guide-skip')),
+  guideBack: /** @type {HTMLButtonElement} */ (byId('guide-back')),
+  guideNotice: byId('guide-notice'),
   siteNotice: byId('site-notice'),
   siteNoticeFull: byId('site-notice-full'),
   siteNoticeTitle: byId('site-notice-title'),
@@ -191,6 +201,7 @@ const notices = [
   elements.formNotice,
   elements.recordingNotice,
   elements.recordingDiscardNotice,
+  elements.guideNotice,
   elements.siteNoticeNotice,
   elements.resultNotice,
   elements.saveNotice,
@@ -443,6 +454,73 @@ elements.recordingDiscard.addEventListener('click', async () => {
     '記録を停止し、記録した手順を破棄しました。',
   );
 });
+
+// ---- 案内付きの記録（#246） ----
+
+for (const purpose of PURPOSES) {
+  elements.recordingPurpose.append(new Option(purpose.label, purpose.id));
+}
+
+/**
+ * 記録の目的と、今の段階の案内を表示します。
+ * @param {Recording} recording
+ */
+function renderGuide(recording) {
+  const guide = recording.guide;
+  // 選んでいる間に表示し直しても、選ぶ欄の値を戻さないよう、フォーカスがある間は値を変えません。
+  if (document.activeElement !== elements.recordingPurpose) {
+    elements.recordingPurpose.value = guide?.purpose ?? 'free';
+  }
+  elements.guideBox.hidden = !guide;
+  if (!guide) {
+    return;
+  }
+  const view = guideView(guide);
+  elements.guideStep.hidden = !view.step;
+  elements.guideStep.textContent = view.step
+    ? `${view.step.total} 段階中 ${view.step.number} 段階目`
+    : '';
+  elements.guideText.textContent = view.text;
+  elements.guideMismatch.hidden = !view.notice;
+  elements.guideMismatch.textContent = view.notice ? `⚠ ${view.notice}` : '';
+  elements.guideNext.hidden = !view.button;
+  elements.guideNext.textContent = view.button ?? '';
+  elements.guideSkip.hidden = !view.canSkip;
+  elements.guideBack.hidden = !view.canBack;
+}
+
+elements.recordingPurpose.addEventListener('change', async () => {
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'recording/guide',
+    purpose: elements.recordingPurpose.value,
+  });
+  if (!response?.ok) {
+    showNotice(elements.guideNotice, response?.error ?? '目的を選べません。', 'error');
+    await render();
+  }
+});
+
+/**
+ * 案内の段階を進める・飛ばす・戻ります。
+ * @param {'next' | 'skip' | 'back'} action
+ */
+async function stepGuide(action) {
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'recording/guideStep',
+    action,
+    count: Number(elements.stepCount.textContent),
+  });
+  if (!response?.ok) {
+    showNotice(elements.guideNotice, response?.error ?? '案内を進められません。', 'error');
+    await render();
+  }
+}
+
+elements.guideNext.addEventListener('click', () => stepGuide('next'));
+elements.guideSkip.addEventListener('click', () => stepGuide('skip'));
+elements.guideBack.addEventListener('click', () => stepGuide('back'));
 
 /**
  * 記録した手順を破棄します。記録中の場合は、記録を停止してから破棄します。
@@ -830,6 +908,7 @@ async function render() {
       }),
     );
     elements.recordingDiscard.disabled = running || recording.steps.length === 0;
+    renderGuide(recording);
     recordingLoopForm.update(
       recording.steps,
       recording.rowHints,

@@ -19,6 +19,8 @@ const options = readFileSync(new URL('../extension/options/options.html', import
 const cases = [
   { page: 'サイドパネル', html: sidepanel, button: 'start', notices: ['flows-notice'] },
   { page: 'サイドパネル', html: sidepanel, button: 'stop', notices: ['recording-notice'] },
+  // 案内付きの記録（#246）の［ひとつ戻る］などのボタンの並びの直下です。
+  { page: 'サイドパネル', html: sidepanel, button: 'guide-back', notices: ['guide-notice'] },
   // 記録中に許可がないサイトへ移動したときの、最上部の知らせ（#209）です。並びの末尾の直後に出します。
   {
     page: 'サイドパネル',
