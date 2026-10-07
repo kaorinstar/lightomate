@@ -8,8 +8,10 @@
 import {
   addStep,
   allowRecordingOrigin,
+  attachRecordedPager,
   makeRecordedLoop,
   onCommitted,
+  onDownloadCreated,
   onDOMContentLoaded,
   onFramesChanged,
   onTabRemoved,
@@ -130,6 +132,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.dateStep,
         message.stopAtOlder,
       ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
+      return true;
+
+    case 'recording/attachPager':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      attachRecordedPager(message.index, message.count).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
       return true;
 
     case 'recording/reset':
@@ -287,6 +298,12 @@ chrome.webNavigation.onCommitted.addListener((details) => {
 chrome.webNavigation.onDOMContentLoaded.addListener((details) => {
   onDOMContentLoaded(details).catch((error) =>
     console.error('記録用のスクリプトを読み込めませんでした。', error),
+  );
+});
+
+chrome.downloads.onCreated.addListener((item) => {
+  onDownloadCreated(item).catch((error) =>
+    console.error('ダウンロードを記録できませんでした。', error),
   );
 });
 

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>注文履歴（1 件目だけ class が異なる）</title>
+  </head>
+  <body>
+    <!-- 楽天市場の購入履歴と同じく、1 件目の注文の枠だけ余白の class が 2 件目以降と異なり、最後にページ送りの枠が
+         並ぶ一覧です（#236）。記録から作る繰り返しが、注文の枠を行に選ぶことを確かめます。 -->
+    <div id="list">
+      <div class="spacer col white m-none">
+        <div class="info">
+          <div class="line">
+            <span class="label">注文番号：</span><span class="value">F-001</span>
+          </div>
+        </div>
+        <div class="buttons">
+          <div class="cell"><a class="invoice" href="/auth/invoice.pdf?n=F-001">明細書</a></div>
+          <div class="cell more"><button type="button">その他</button></div>
+        </div>
+      </div>
+      <div class="spacer col white m-top">
+        <div class="info">
+          <div class="line">
+            <span class="label">注文番号：</span><span class="value">F-002</span>
+          </div>
+        </div>
+        <div class="buttons">
+          <div class="cell"><a class="invoice" href="/auth/invoice.pdf?n=F-002">明細書</a></div>
+          <div class="cell more"><button type="button">その他</button></div>
+        </div>
+      </div>
+      <div class="spacer col white m-top">
+        <div class="info">
+          <div class="line">
+            <span class="label">注文番号：</span><span class="value">F-003</span>
+          </div>
+        </div>
+        <div class="buttons">
+          <div class="cell"><a class="invoice" href="/auth/invoice.pdf?n=F-003">明細書</a></div>
+          <div class="cell more"><button type="button">その他</button></div>
+        </div>
+      </div>
+      <div class="spacer row-center pager">
+        <button type="button" class="nav-next">次へ</button>
+      </div>
+    </div>
+    <script src="link-orders.js"></script>
+  </body>
+</html>
