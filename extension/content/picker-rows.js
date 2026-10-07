@@ -42,8 +42,60 @@ function shapeSelector(element) {
 }
 
 /**
+ * 2 つの要素の形が近いかを判定します（#236）。タグが同じで、class が 2 つ以上共通し、違う class が合わせて 2 つ
+ * 以下の場合です。1 件目の行だけ余白の class が入れ替わる一覧（楽天市場の購入履歴）の行を、同じ行とみなすためです。
+ * class が少ない要素は、違いの 1 つが形の大半になるため、近いとみなしません。
+ * @param {Element} a
+ * @param {Element} b
+ * @returns {boolean}
+ */
+function nearShape(a, b) {
+  if (a.tagName !== b.tagName) {
+    return false;
+  }
+  const first = new Set(Array.from(a.classList).filter((name) => name !== ''));
+  const second = new Set(Array.from(b.classList).filter((name) => name !== ''));
+  const common = [...first].filter((name) => second.has(name)).length;
+  return common >= 2 && first.size - common + (second.size - common) <= 2;
+}
+
+/**
+ * 要素と同じ行として並ぶ兄弟（要素を含む）と、それらすべてに一致する形のセレクターを返します。
+ * 形（タグと class の組）が同じ兄弟を基本とします。形の近い兄弟（nearShape）を含めると行が増える場合は、それらに
+ * 共通する class だけで形を作り、近い兄弟も行に含めます（#236）。共通する class だけの形が、親の子のうち近い兄弟
+ * 以外にも一致する場合は、形が同じ兄弟だけにします。
+ * @param {Element} element
+ * @returns {{ shape: string, siblings: Element[] }}
+ */
+function rowGroup(element) {
+  const shape = shapeSelector(element);
+  const parent = element.parentElement;
+  if (!parent) {
+    return { shape, siblings: [element] };
+  }
+  const children = Array.from(parent.children);
+  const exact = children.filter((child) => shapeSelector(child) === shape);
+  const near = children.filter((child) => child === element || nearShape(element, child));
+  if (near.length <= exact.length) {
+    return { shape, siblings: exact };
+  }
+  const common = Array.from(element.classList)
+    .filter((name) => name !== '' && near.every((child) => child.classList.contains(name)))
+    .sort();
+  if (common.length < 2) {
+    return { shape, siblings: exact };
+  }
+  const loose =
+    element.tagName.toLowerCase() + common.map((name) => `.${CSS.escape(name)}`).join('');
+  const matched = children.filter((child) => child.matches(loose));
+  return sameElements(matched, near)
+    ? { shape: loose, siblings: near }
+    : { shape, siblings: exact };
+}
+
+/**
  * 押した要素を含む、一覧の 1 行を探します。
- * 押した要素から親をたどり、同じ形の兄弟が 2 つ以上ある最初の階層の要素を行とします。
+ * 押した要素から親をたどり、同じ形か形の近い兄弟（rowGroup、#236）が 2 つ以上ある最初の階層の要素を行とします。
  * @param {Element} element 押した要素
  * @param {Document | Element} root 探す範囲。繰り返しの中の繰り返しでは、外側の行です
  * @returns {Element | null}
@@ -53,11 +105,7 @@ function findRowElement(element, root) {
   let current = element;
   const top = root instanceof Document ? root.body : root;
   while (current && current !== top && current.parentElement) {
-    const shape = shapeSelector(current);
-    const siblings = Array.from(current.parentElement.children).filter(
-      (child) => shapeSelector(child) === shape,
-    );
-    if (siblings.length >= 2) {
+    if (rowGroup(current).siblings.length >= 2) {
       return current;
     }
     current = current.parentElement;
@@ -163,8 +211,7 @@ function rowsTargetOf(row, root) {
   if (!parent) {
     return null;
   }
-  const shape = shapeSelector(row);
-  const siblings = Array.from(parent.children).filter((child) => shapeSelector(child) === shape);
+  const { shape, siblings } = rowGroup(row);
   const selectors = [];
   if (sameElements(queryAll(root, shape), siblings)) {
     selectors.push(shape);
@@ -230,7 +277,8 @@ function buildInnerTarget(element, row) {
  * 記録した操作の要素を含む、一覧の行の候補を、内側から順に返します（#167）。
  * 記録を終えた後に、記録した手順を「各行で繰り返す」に変えるときに使います。ページを移動すると要素を
  * 調べられなくなるため、操作した時点で求めます。
- * 要素の親をたどり、同じ形の兄弟が 2 つ以上ある階層を、それぞれ候補にします。要素そのものは候補にしません。
+ * 要素の親をたどり、同じ形か形の近い兄弟（rowGroup、#236）が 2 つ以上ある階層を、それぞれ候補にします。
+ * 要素そのものは候補にしません。
  * 翻訳が差し込んだ要素（font）を押した場合は、その外側の本来の要素を、操作した要素とします。
  * 行の内側の指定は、行を起点にするため、行と要素が同じでは作れないためです。
  * @param {Element} element 操作した要素
@@ -251,11 +299,7 @@ function rowCandidates(element) {
     current.parentElement &&
     candidates.length < maxCandidates
   ) {
-    const shape = shapeSelector(current);
-    const siblings = Array.from(current.parentElement.children).filter(
-      (child) => shapeSelector(child) === shape,
-    );
-    if (siblings.length >= 2) {
+    if (rowGroup(current).siblings.length >= 2) {
       const built = rowsTargetOf(current, document);
       if (built) {
         candidates.push({

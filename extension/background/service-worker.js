@@ -11,6 +11,7 @@ import {
   attachRecordedPager,
   makeRecordedLoop,
   onCommitted,
+  onDownloadCreated,
   onDOMContentLoaded,
   onFramesChanged,
   onTabRemoved,
@@ -297,6 +298,12 @@ chrome.webNavigation.onCommitted.addListener((details) => {
 chrome.webNavigation.onDOMContentLoaded.addListener((details) => {
   onDOMContentLoaded(details).catch((error) =>
     console.error('記録用のスクリプトを読み込めませんでした。', error),
+  );
+});
+
+chrome.downloads.onCreated.addListener((item) => {
+  onDownloadCreated(item).catch((error) =>
+    console.error('ダウンロードを記録できませんでした。', error),
   );
 });
 
