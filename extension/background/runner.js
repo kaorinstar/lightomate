@@ -83,6 +83,8 @@ import { conditionKind, describeCondition, evaluateCondition } from '../shared/c
 import { describeStepForPage, pageStepText } from '../shared/describe.js';
 import { decideDialog } from '../shared/dialog.js';
 import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../shared/redirect.js';
+import { WATCH_RECHECK_MS } from '../shared/watch-value.js';
+import { checkWatchedValue } from './watch-notify.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -268,7 +270,8 @@ const savedFiles = new Map();
  * 実行ごとの、原因を調べるための情報です（#198）。成功以外で終わったときに、伏せた変数の値と
  * フローの指紋を実行履歴に記録します。values は実行中に読み取った値を加えていくオブジェクトです。
  * secrets は値を記録していない欄に入力した値で、変数の値の中に同じ文字があれば伏せるために使います。
- * @type {Map<string, { flow: Flow, values: Record<string, string>, secrets: string[], flowHash: string }>}
+ * flowId は、値の変化を知らせる読み取り（#251）で、前回の値をフローごとに覚えるために使います。
+ * @type {Map<string, { flow: Flow, flowId: string, values: Record<string, string>, secrets: string[], flowHash: string }>}
  */
 const runDetails = new Map();
 
@@ -817,6 +820,7 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
   savedFiles.set(runId, []);
   runDetails.set(runId, {
     flow,
+    flowId,
     values: pathValues,
     secrets: Object.values(secretInput),
     flowHash,
@@ -1609,6 +1613,31 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             pathValues[step.name] = text.slice(0, EXTRACT_MAX_LENGTH);
             // 読み取った値は個人情報を含む場合があるため、実行履歴の理由には残しません。
             redactions.get(runId)?.push(pathValues[step.name]);
+            const flowId = runDetails.get(runId)?.flowId;
+            if (step.notifyOnChange === true && flowId !== undefined) {
+              // 前回の実行から値が変わったときに知らせます（#251）。翻訳で文字が置き換わる途中の値で知らせない
+              // よう、変わったと判定したら、待ってから同じ要素を読み直します。
+              await checkWatchedValue({
+                flowId,
+                name: step.name,
+                label: step.target.label,
+                first: pathValues[step.name],
+                reread: async () => {
+                  await waitWithStopCheck(runId, WATCH_RECHECK_MS);
+                  const again = await withRetry(runId, flow, () =>
+                    runInPage(runId, flow, tabId, step, expectedUrl, scope),
+                  );
+                  const reread = typeof again.response.text === 'string' ? again.response.text : '';
+                  redactions.get(runId)?.push(reread.slice(0, EXTRACT_MAX_LENGTH));
+                  return reread.slice(0, EXTRACT_MAX_LENGTH);
+                },
+                pageUrl: () =>
+                  chrome.tabs.get(tabId).then(
+                    (tab) => tab.url,
+                    () => undefined,
+                  ),
+              });
+            }
           }
         }
       } catch (error) {

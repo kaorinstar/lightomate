@@ -46,6 +46,7 @@ import {
 } from './runner.js';
 import { registerScheduleEvents } from './scheduler.js';
 import { onPickerCommitted, onPickerResult, onPickerTabRemoved, startPicker } from './picker.js';
+import { openWatchedPage } from './watch-notify.js';
 
 // ツールバーのアイコンを押したときに、ポップアップではなくサイドパネルを開きます。
 // ポップアップはページをクリックした時点で閉じるため、記録中に開いたままにできないためです。
@@ -63,6 +64,11 @@ markInterruptedBatches().catch((error) =>
 );
 // 定期実行（#22）の予約をやり直し、取りこぼした予約を実行します。
 registerScheduleEvents();
+
+// 値の変化の通知（#251）を押されたときに、値を読み取ったページを開きます。
+chrome.notifications.onClicked.addListener((id) => {
+  openWatchedPage(id).catch((error) => console.error('通知のページを開けませんでした。', error));
+});
 
 // 緊急停止のキー（#18）です。既定は Alt+Shift+Q で、chrome://extensions/shortcuts で変えられます。
 // サイドパネルを開いていなくても、実行中と一時停止中のすべての実行を停止します。

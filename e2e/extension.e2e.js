@@ -2582,177 +2582,6 @@ test('ファイル名：注文番号の文字を押して記録し、ファイ�
   }
 });
 
-test('1 件目だけ class が異なる一覧：記録から作る繰り返しが注文の枠を選び、全行を注文番号の名前で保存する（#236）', async () => {
-  const { extensionPage } = browser;
-  const site = await browser.context.newPage();
-  const listUrl = `${server.origin}/first-differs-orders.html`;
-  await site.goto(listUrl);
-  const tabId = await extensionPage.evaluate(async (url) => {
-    const [tab] = await chrome.tabs.query({ url });
-    return tab.id;
-  }, listUrl);
-  assert.deepEqual(
-    await extensionPage.evaluate(
-      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
-      tabId,
-    ),
-    { ok: true },
-  );
-  // 1 件目の注文番号の文字を押してから、明細書のリンクを押します。
-  await site.click('#list > div:nth-child(1) .value');
-  await site.click('#list > div:nth-child(1) a.invoice');
-  const recorded = await waitUntil(
-    () =>
-      extensionPage.evaluate(async () => {
-        const { recording } = await chrome.storage.session.get('recording');
-        return /** @type {{ steps: Step[], rowHints: any[] }} */ (recording);
-      }),
-    (recording) =>
-      recording.steps.length >= 3 &&
-      recording.steps[2].type === 'click' &&
-      recording.steps[2].download?.from === 'link',
-  );
-  // 注文番号と明細書の両方の手順に共通する行の候補は、3 件の注文の枠です。
-  const keysOf = (/** @type {any[]} */ hint) =>
-    hint.map((candidate) => JSON.stringify(candidate.items.selectors));
-  const common = recorded.rowHints[1].filter((/** @type {any} */ candidate) =>
-    keysOf(recorded.rowHints[2]).includes(JSON.stringify(candidate.items.selectors)),
-  );
-  const orders = common.find((/** @type {any} */ candidate) => candidate.count === 3);
-  assert.ok(orders, JSON.stringify(recorded.rowHints));
-  const looped = await extensionPage.evaluate(
-    (key) =>
-      chrome.runtime.sendMessage({
-        kind: 'recording/makeLoop',
-        from: 1,
-        to: 2,
-        key,
-        count: 3,
-        names: [1],
-        withSite: false,
-      }),
-    JSON.stringify(orders.items.selectors),
-  );
-  assert.deepEqual(looped, { ok: true });
-  const stopped = await extensionPage.evaluate(() =>
-    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
-  );
-  assert.deepEqual(stopped.errors, []);
-  await site.close();
-
-  /** @type {Flow} */
-  const flow = { ...stopped.flow, name: '一件目', interval: { min: 1000, max: 1000 } };
-  const entry = await runFlow(extensionPage, flow);
-  assert.equal(entry.status, 'done', entry.reason ?? '');
-  const files = await waitUntil(
-    async () =>
-      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/一件目/')),
-    (list) => list.length >= 3,
-  );
-  assert.deepEqual(files, [
-    'Lightomate/一件目/F-001.pdf',
-    'Lightomate/一件目/F-002.pdf',
-    'Lightomate/一件目/F-003.pdf',
-  ]);
-  for (const page of pagesAt('/first-differs-orders.html')) {
-    await page.close();
-  }
-});
-
-test('2 件目を押して 1 件分を決める：件数や枠を選ばずに、全件を注文番号の名前で保存する（#241）', async () => {
-  const { extensionPage } = browser;
-  const site = await browser.context.newPage();
-  const listUrl = `${server.origin}/first-differs-orders.html`;
-  await site.goto(listUrl);
-  const tabId = await extensionPage.evaluate(async (url) => {
-    const [tab] = await chrome.tabs.query({ url });
-    return tab.id;
-  }, listUrl);
-  assert.deepEqual(
-    await extensionPage.evaluate(
-      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
-      tabId,
-    ),
-    { ok: true },
-  );
-  await site.click('#list > div:nth-child(1) .value');
-  await site.click('#list > div:nth-child(1) a.invoice');
-  await waitUntil(
-    () =>
-      extensionPage.evaluate(async () => {
-        const { recording } = await chrome.storage.session.get('recording');
-        return /** @type {{ steps: Step[] }} */ (recording).steps;
-      }),
-    (steps) => steps.length >= 3 && steps[2].type === 'click' && steps[2].download?.from === 'link',
-  );
-  if (!site.url().endsWith('first-differs-orders.html')) {
-    await site.goBack();
-    await site.waitForURL(listUrl);
-    // 一覧へ戻る移動の手順は、ページの移動の後に少し遅れて加わります。加わるまで待ってから数えます。
-    await waitUntil(
-      () =>
-        extensionPage.evaluate(async () => {
-          const { recording } = await chrome.storage.session.get('recording');
-          return /** @type {{ steps: Step[] }} */ (recording).steps;
-        }),
-      (steps) => {
-        const last = steps.at(-1);
-        return last?.type === 'navigate' && last.url === listUrl;
-      },
-    );
-  }
-  const before = await extensionPage.evaluate(async () => {
-    const { recording } = await chrome.storage.session.get('recording');
-    return /** @type {{ steps: Step[] }} */ (recording).steps.length;
-  });
-
-  const id = new URL(extensionPage.url()).host;
-  const panel = await browser.context.newPage();
-  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
-  // 2 件目の明細書のリンクを押します。リンク先へは移動せず、手順にも残りません。
-  await pickSecond(panel, site, '#list > div:nth-child(2) a.invoice');
-  assert.equal(site.url(), listUrl);
-  const after = await extensionPage.evaluate(async () => {
-    const { recording } = await chrome.storage.session.get('recording');
-    return /** @type {{ steps: Step[] }} */ (recording).steps.length;
-  });
-  assert.equal(after, before);
-  const form = panel.locator('#recording-loop-form');
-  // 「1 件分の枠」の選択欄は出ません。
-  assert.equal(await form.locator('select').isVisible(), false);
-  await form.getByLabel('この文字をファイル名に使う').check();
-  await form.getByRole('button', { name: '3 件で繰り返す' }).click();
-  await waitUntil(
-    () => panel.locator('#steps > li').count(),
-    // 一覧へ［戻る］操作は、繰り返しの後に一覧を開く手順として残ります。
-    (count) => count === 3,
-  );
-  await panel.close();
-  const stopped = await extensionPage.evaluate(() =>
-    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
-  );
-  assert.deepEqual(stopped.errors, []);
-  await site.close();
-
-  /** @type {Flow} */
-  const flow = { ...stopped.flow, name: '二件目', interval: { min: 500, max: 500 } };
-  const entry = await runFlow(extensionPage, flow);
-  assert.equal(entry.status, 'done', entry.reason ?? '');
-  const files = await waitUntil(
-    async () =>
-      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/二件目/')),
-    (list) => list.length >= 3,
-  );
-  assert.deepEqual(files, [
-    'Lightomate/二件目/F-001.pdf',
-    'Lightomate/二件目/F-002.pdf',
-    'Lightomate/二件目/F-003.pdf',
-  ]);
-  for (const page of pagesAt('/first-differs-orders.html')) {
-    await page.close();
-  }
-});
-
 test('ページ送り：記録で押した「次へ」をページ送りにすると、位置が変わる「次へ」でも最後のページまで保存する（#182）', async () => {
   const { extensionPage } = browser;
   const site = await browser.context.newPage();
@@ -3066,6 +2895,247 @@ test('ファイル名：同じ実行の中で同じ名前を 2 回保存した�
     ['Lightomate/同じ名前/領収書 (1).pdf', 'Lightomate/同じ名前/領収書.pdf'],
   );
   for (const page of pagesAt('/done.html')) {
+    await page.close();
+  }
+});
+
+test('値の変化の通知：初回は覚えるだけで、変わったときに知らせ、置き換えの途中の値では知らせない（#251）', async () => {
+  const { extensionPage } = browser;
+  await extensionPage.evaluate(async () => {
+    await chrome.storage.local.remove('watchValues');
+    for (const id of Object.keys(await chrome.notifications.getAll())) {
+      await chrome.notifications.clear(id);
+    }
+  });
+  /** @param {string} query */
+  const flowFor = (query) =>
+    /** @type {Flow} */ ({
+      schemaVersion: 19,
+      name: '在庫の確認',
+      origin: server.origin,
+      interval: { min: 1000, max: 1000 },
+      steps: [
+        { type: 'navigate', url: `${server.origin}/stock.html?${query}`, cause: 'user' },
+        {
+          type: 'extract',
+          target: target('#stock', 'span', '在庫'),
+          name: 'stock',
+          notifyOnChange: true,
+        },
+      ],
+    });
+  const stored = () =>
+    extensionPage.evaluate(async () => {
+      const { watchValues } = await chrome.storage.local.get('watchValues');
+      return /** @type {Record<string, Record<string, string>> | undefined} */ (watchValues)?.e2e
+        ?.stock;
+    });
+  const notices = () =>
+    extensionPage.evaluate(async () => Object.keys(await chrome.notifications.getAll()));
+
+  // 初回は知らせず、値を覚えるだけです。
+  let entry = await runFlow(extensionPage, flowFor('v=在庫なし'));
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.equal(await stored(), '在庫なし');
+  assert.deepEqual(await notices(), []);
+
+  // 同じ値では知らせません。
+  entry = await runFlow(extensionPage, flowFor('v=在庫なし'));
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.deepEqual(await notices(), []);
+
+  // 値が変わると知らせ、新しい値を覚えます。
+  entry = await runFlow(extensionPage, flowFor('v=在庫あり'));
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.equal(await stored(), '在庫あり');
+  const created = await notices();
+  assert.equal(created.length, 1);
+  assert.match(created[0], /^lightomate-watch-/);
+
+  // 1 回目と読み直しで値が異なる場合は、置き換えの途中と考え、知らせず、覚えもしません。
+  entry = await runFlow(extensionPage, flowFor('v=在庫なし&later=残りわずか'));
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  assert.equal(await stored(), '在庫あり');
+  assert.deepEqual(await notices(), created);
+
+  // 通知を押したときに開くページとして、値を読み取ったページを覚えています。通知そのものは自動テストでは押せません。
+  const pages = await extensionPage.evaluate(async () => {
+    const { watchNotificationPages } = await chrome.storage.session.get('watchNotificationPages');
+    return /** @type {Record<string, string>} */ (watchNotificationPages);
+  });
+  assert.equal(decodeURIComponent(new URL(pages[created[0]]).search), '?v=在庫あり');
+  for (const page of pagesAt('/stock.html')) {
+    await page.close();
+  }
+});
+
+test('1 件目だけ class が異なる一覧：記録から作る繰り返しが注文の枠を選び、全行を注文番号の名前で保存する（#236）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/first-differs-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  // 1 件目の注文番号の文字を押してから、明細書のリンクを押します。
+  await site.click('#list > div:nth-child(1) .value');
+  await site.click('#list > div:nth-child(1) a.invoice');
+  const recorded = await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[], rowHints: any[] }} */ (recording);
+      }),
+    (recording) =>
+      recording.steps.length >= 3 &&
+      recording.steps[2].type === 'click' &&
+      recording.steps[2].download?.from === 'link',
+  );
+  // 注文番号と明細書の両方の手順に共通する行の候補は、3 件の注文の枠です。
+  const keysOf = (/** @type {any[]} */ hint) =>
+    hint.map((candidate) => JSON.stringify(candidate.items.selectors));
+  const common = recorded.rowHints[1].filter((/** @type {any} */ candidate) =>
+    keysOf(recorded.rowHints[2]).includes(JSON.stringify(candidate.items.selectors)),
+  );
+  const orders = common.find((/** @type {any} */ candidate) => candidate.count === 3);
+  assert.ok(orders, JSON.stringify(recorded.rowHints));
+  const looped = await extensionPage.evaluate(
+    (key) =>
+      chrome.runtime.sendMessage({
+        kind: 'recording/makeLoop',
+        from: 1,
+        to: 2,
+        key,
+        count: 3,
+        names: [1],
+        withSite: false,
+      }),
+    JSON.stringify(orders.items.selectors),
+  );
+  assert.deepEqual(looped, { ok: true });
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.deepEqual(stopped.errors, []);
+  await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...stopped.flow, name: '一件目', interval: { min: 1000, max: 1000 } };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/一件目/')),
+    (list) => list.length >= 3,
+  );
+  assert.deepEqual(files, [
+    'Lightomate/一件目/F-001.pdf',
+    'Lightomate/一件目/F-002.pdf',
+    'Lightomate/一件目/F-003.pdf',
+  ]);
+  for (const page of pagesAt('/first-differs-orders.html')) {
+    await page.close();
+  }
+});
+
+test('2 件目を押して 1 件分を決める：件数や枠を選ばずに、全件を注文番号の名前で保存する（#241）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/first-differs-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  await site.click('#list > div:nth-child(1) .value');
+  await site.click('#list > div:nth-child(1) a.invoice');
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps;
+      }),
+    (steps) => steps.length >= 3 && steps[2].type === 'click' && steps[2].download?.from === 'link',
+  );
+  if (!site.url().endsWith('first-differs-orders.html')) {
+    await site.goBack();
+    await site.waitForURL(listUrl);
+    // 一覧へ戻る移動の手順は、ページの移動の後に少し遅れて加わります。加わるまで待ってから数えます。
+    await waitUntil(
+      () =>
+        extensionPage.evaluate(async () => {
+          const { recording } = await chrome.storage.session.get('recording');
+          return /** @type {{ steps: Step[] }} */ (recording).steps;
+        }),
+      (steps) => {
+        const last = steps.at(-1);
+        return last?.type === 'navigate' && last.url === listUrl;
+      },
+    );
+  }
+  const before = await extensionPage.evaluate(async () => {
+    const { recording } = await chrome.storage.session.get('recording');
+    return /** @type {{ steps: Step[] }} */ (recording).steps.length;
+  });
+
+  const id = new URL(extensionPage.url()).host;
+  const panel = await browser.context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
+  // 2 件目の明細書のリンクを押します。リンク先へは移動せず、手順にも残りません。
+  await pickSecond(panel, site, '#list > div:nth-child(2) a.invoice');
+  assert.equal(site.url(), listUrl);
+  const after = await extensionPage.evaluate(async () => {
+    const { recording } = await chrome.storage.session.get('recording');
+    return /** @type {{ steps: Step[] }} */ (recording).steps.length;
+  });
+  assert.equal(after, before);
+  const form = panel.locator('#recording-loop-form');
+  // 「1 件分の枠」の選択欄は出ません。
+  assert.equal(await form.locator('select').isVisible(), false);
+  await form.getByLabel('この文字をファイル名に使う').check();
+  await form.getByRole('button', { name: '3 件で繰り返す' }).click();
+  await waitUntil(
+    () => panel.locator('#steps > li').count(),
+    // 一覧へ［戻る］操作は、繰り返しの後に一覧を開く手順として残ります。
+    (count) => count === 3,
+  );
+  await panel.close();
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.deepEqual(stopped.errors, []);
+  await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...stopped.flow, name: '二件目', interval: { min: 500, max: 500 } };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/二件目/')),
+    (list) => list.length >= 3,
+  );
+  assert.deepEqual(files, [
+    'Lightomate/二件目/F-001.pdf',
+    'Lightomate/二件目/F-002.pdf',
+    'Lightomate/二件目/F-003.pdf',
+  ]);
+  for (const page of pagesAt('/first-differs-orders.html')) {
     await page.close();
   }
 });
