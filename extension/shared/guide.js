@@ -29,13 +29,20 @@ export const PURPOSES = [
  * 段階の進み方です。
  * - button：利用者がサイドパネルのボタン（label）を押すと進みます。
  * - date：日付として読める文字のクリックを記録すると進みます。
+ * - text：リンクやボタンではない文字のクリックを記録すると進みます（ファイル名にする文字、#247）。
+ * - save：段階の中で、ファイルを保存する手順（ダウンロードか PDF の保存）を記録すると進みます（#247）。
+ * - picked：ボタン（label）を押すと、ページで 2 件目の同じものを押すのを待ち、押されて 1 件分が決まると
+ *   進みます（#241、#247）。
+ * - pager：次のページへ送るのに使えるクリック（#182 の PagerHint を作れたもの）を記録すると進みます（#247）。
  * - end：最後の段階です。これより先には進みません。
  * @typedef {object} GuideStage
  * @property {string} id
  * @property {string} text 案内の 1 文
- * @property {'button' | 'date' | 'end'} advance
- * @property {string} [label] advance が button の場合の、ボタンの文言
+ * @property {'button' | 'date' | 'text' | 'save' | 'picked' | 'pager' | 'end'} advance
+ * @property {string} [label] advance が button か picked の場合の、ボタンの文言
+ * @property {string} [waiting] advance が picked で、ページで押すのを待っている間の案内の文
  * @property {boolean} [skippable] 次の段階へ、［飛ばす］で進めるか
+ * @property {string} [skipLabel] 飛ばすボタンの文言。省略した場合は「飛ばす」です
  */
 
 /** 段階ごとに案内する目的の、段階の並びです。 */
@@ -55,8 +62,35 @@ const STAGES = {
       skippable: true,
     },
     {
+      id: 'name',
+      text: 'ファイル名にしたい文字（注文番号など）があれば、一覧の 1 件目のその文字を押してください。ない場合は［なし］を押してください。',
+      advance: 'text',
+      skippable: true,
+      skipLabel: 'なし',
+    },
+    {
+      id: 'save',
+      text: '1 件目のファイルを保存するまで操作してください（［注文詳細］→［発行する］など）。保存が始まると、次へ進みます。',
+      advance: 'save',
+    },
+    {
+      id: 'second',
+      text: '一覧のページへ戻り、［一覧のページに戻りました］を押してください。',
+      advance: 'picked',
+      label: '一覧のページに戻りました',
+      waiting:
+        '一覧の 2 件目の、1 件目で押したものと同じもの（注文番号など。なければ日付）を押してください。押してもページは移動しません。',
+    },
+    {
+      id: 'next',
+      text: '一覧に次のページがあれば、［次へ］を押してください。次のページがない場合は［次のページはない］を押してください。',
+      advance: 'pager',
+      skippable: true,
+      skipLabel: '次のページはない',
+    },
+    {
       id: 'rest',
-      text: 'ここから先は、今までどおり記録してください。1 件目のファイルを保存するまで操作してから、［繰り返しにする］を押します。',
+      text: '記録ができました。［繰り返しにする］を押し、もう一度 2 件目の同じものを押して、繰り返しにしてください。',
       advance: 'end',
     },
   ],
@@ -130,30 +164,113 @@ function isDateClick(step) {
 }
 
 /**
- * 手順を 1 つ記録した後の、案内の状態です。
+ * ファイルを保存する手順か（ダウンロードを保存するクリックか、PDF の保存）を判定します。
+ * @param {Step} step
+ */
+function isSaveStep(step) {
+  return step.type === 'savePdf' || (step.type === 'click' && step.download !== undefined);
+}
+
+/**
+ * 段階を終えた状態を返します。
  * @param {GuideState} guide
- * @param {Step[]} steps 記録した後の手順
+ * @param {number} stepCount
  * @returns {GuideState}
  */
-export function guideAfterStep(guide, steps) {
-  const stage = currentStage(guide);
+function advanced(guide, stepCount) {
   const { notice, ...rest } = guide;
   void notice;
-  if (stage?.advance !== 'date') {
-    return rest;
-  }
+  return { ...rest, done: [...guide.done, stepCount] };
+}
+
+/**
+ * 知らせを付けた状態を返します。
+ * @param {GuideState} guide
+ * @param {string} notice
+ * @returns {GuideState}
+ */
+function withNotice(guide, notice) {
+  return { ...guide, notice };
+}
+
+/**
+ * 手順を記録した後、または記録した手順が変わった後（クリックがダウンロードの保存に変わった場合など）の、
+ * 案内の状態です。ページの移動の手順では、知らせを残します。押したものの知らせが、押した直後の移動で消えない
+ * ようにするためです。
+ * @param {GuideState} guide
+ * @param {Step[]} steps 記録した後の手順
+ * @param {(unknown | null)[]} [pagerHints] steps と同じ順の、ページ送りに使う場合の指定（#182）
+ * @returns {GuideState}
+ */
+export function guideAfterStep(guide, steps, pagerHints = []) {
+  const stage = currentStage(guide);
   const step = steps.at(-1);
-  if (!step || step.type !== 'click') {
-    return rest;
+  if (!stage || !step) {
+    return guide;
   }
-  if (isDateClick(step)) {
-    return { ...rest, done: [...guide.done, steps.length] };
+  if (stage.advance === 'save') {
+    const from = stageStart(guide, guide.done.length);
+    return steps.slice(from).some(isSaveStep) ? advanced(guide, steps.length) : guide;
+  }
+  if (step.type !== 'click') {
+    return step.type === 'navigate' ? guide : clearNotice(guide);
   }
   const label = step.target.label;
-  return {
-    ...rest,
-    notice: `押した「${label}」は、日付として読めません。一覧の 1 件目の日付の文字を押してください。押した手順は残っています。不要な場合は手順の一覧から削除してください。`,
-  };
+  switch (stage.advance) {
+    case 'date':
+      return isDateClick(step)
+        ? advanced(guide, steps.length)
+        : withNotice(
+            guide,
+            `押した「${label}」は、日付として読めません。一覧の 1 件目の日付の文字を押してください。押した手順は残っています。不要な場合は手順の一覧から削除してください。`,
+          );
+    case 'text':
+      if (ACTION_TAGS.includes(step.target.tag)) {
+        return withNotice(
+          guide,
+          `押した「${label}」は、リンクかボタンのため、ファイル名にできません。ボタンではなく文字を押してください。ファイル名にしたい文字がない場合は［なし］を押してください。`,
+        );
+      }
+      return step.target.text ? advanced(guide, steps.length) : guide;
+    case 'pager':
+      return pagerHints[steps.length - 1]
+        ? advanced(guide, steps.length)
+        : withNotice(
+            guide,
+            `押した「${label}」では、次のページへ進めません。一覧の［次へ］などを押してください。次のページがない場合は［次のページはない］を押してください。`,
+          );
+    default:
+      return clearNotice(guide);
+  }
+}
+
+/**
+ * 知らせを消した状態を返します。
+ * @param {GuideState} guide
+ * @returns {GuideState}
+ */
+function clearNotice(guide) {
+  const { notice, ...rest } = guide;
+  void notice;
+  return rest;
+}
+
+/**
+ * 今の段階が、ページで 2 件目を押してもらう段階かを返します（#247）。
+ * @param {GuideState} guide
+ */
+export function waitsForPick(guide) {
+  return currentStage(guide)?.advance === 'picked';
+}
+
+/**
+ * ページで 2 件目が押され、1 件分が決まった後の、案内の状態です（#247）。
+ * @param {GuideState} guide
+ * @param {number} stepCount
+ * @returns {GuideState}
+ */
+export function guideAfterPicked(guide, stepCount) {
+  return waitsForPick(guide) ? advanced(guide, stepCount) : guide;
 }
 
 /**
@@ -208,21 +325,26 @@ export function guideAfterRemoval(guide, index) {
 /**
  * サイドパネルに表示する案内です。
  * @param {GuideState} guide
- * @returns {{ text: string, notice?: string, button?: string, canSkip: boolean, canBack: boolean, step?: { number: number, total: number } }}
+ * @param {boolean} [picking] ページで 2 件目を押すのを待っているか（記録中の状態の picking）
+ * @returns {{ text: string, notice?: string, button?: string, skip?: string, canBack: boolean, step?: { number: number, total: number } }}
  */
-export function guideView(guide) {
+export function guideView(guide, picking = false) {
   const stages = STAGES[guide.purpose];
   const stage = currentStage(guide);
   if (!stages || !stage) {
-    return { text: HINTS[guide.purpose] ?? '', canSkip: false, canBack: false };
+    return { text: HINTS[guide.purpose] ?? '', canBack: false };
   }
   const number = Math.min(guide.done.length, stages.length - 1);
+  const waiting = picking && stage.advance === 'picked';
   return {
-    text: stage.text,
+    text: waiting && stage.waiting ? stage.waiting : stage.text,
     ...(guide.notice ? { notice: guide.notice } : {}),
-    ...(stage.advance === 'button' && stage.label ? { button: stage.label } : {}),
-    canSkip: stage.skippable === true,
-    canBack: guide.done.length > 0,
+    ...((stage.advance === 'button' || stage.advance === 'picked') && stage.label && !waiting
+      ? { button: stage.label }
+      : {}),
+    ...(stage.skippable === true ? { skip: stage.skipLabel ?? '飛ばす' } : {}),
+    // 待っている間の［ひとつ戻る］は、待つのをやめます。
+    canBack: guide.done.length > 0 || waiting,
     step: { number: number + 1, total: stages.length },
   };
 }
