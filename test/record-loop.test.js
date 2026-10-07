@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  attachPager,
   candidateKey,
   dateSteps,
   defaultLoopRange,
@@ -13,6 +14,7 @@ import {
   makeLoop,
   monthParam,
   nameableSteps,
+  pagerLoops,
   pagerSpan,
   pagerSteps,
   sanitizePagerHint,
@@ -712,4 +714,103 @@ test('年月の month がある場合はそれを使い、別の種類の month 
   assert.deepEqual(monthParam([{ name: 'month', label: '月', type: 'month' }]), { name: 'month' });
   assert.equal(monthParam([{ name: 'month', label: '月', type: 'text' }]).name, 'month2');
   assert.equal(monthParam([]).add?.name, 'month');
+});
+
+// 繰り返しを作った後に、一覧へ戻って「次へ」を押した記録です（#237）。
+/** @type {Step[]} */
+const afterLoopSteps = [
+  { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+  {
+    type: 'forEach',
+    items: orderRow,
+    onMissing: 'skip',
+    steps: [
+      {
+        type: 'click',
+        target: { selectors: ['a.detail'], tag: 'a', label: '注文詳細', scope: 'item' },
+      },
+    ],
+  },
+  { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+  {
+    type: 'click',
+    target: {
+      selectors: ['button[aria-label="next"]'],
+      tag: 'button',
+      label: 'next',
+      text: '次へ',
+    },
+  },
+  { type: 'navigate', url: 'https://shop.example.com/orders?p=2', cause: 'page' },
+];
+/** @type {import('../extension/shared/record-loop.js').PagerHint[]} */
+const afterLoopPagers = [null, null, null, ['button.nav-next'], null];
+const afterLoopHints = afterLoopSteps.map(() => null);
+
+test('繰り返しの後に一覧へ戻る移動だけを挟んだ「次へ」は、その繰り返しのページ送りにできる（#237）', () => {
+  assert.deepEqual(pagerLoops(afterLoopSteps, afterLoopHints, afterLoopPagers), [
+    null,
+    null,
+    null,
+    1,
+    null,
+  ]);
+  const result = attachPager(afterLoopSteps, afterLoopHints, afterLoopPagers, 3);
+  assert.ok(result.ok);
+  assert.equal(result.loop, 1);
+  assert.deepEqual(
+    result.steps.map((step) => step.type),
+    ['navigate', 'forEach'],
+  );
+  const loop = /** @type {any} */ (result.steps[1]);
+  assert.deepEqual(loop.nextPage, { selectors: ['button.nav-next'], tag: 'button', label: 'next' });
+  assert.equal(result.hints.length, 2);
+  assert.equal(result.pagers.length, 2);
+  const flow = {
+    schemaVersion: SCHEMA_VERSION,
+    name: 'x',
+    origin: 'https://shop.example.com',
+    steps: result.steps,
+  };
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('ページ送りにできないクリック：指定を作れない、間にほかの操作がある、すでにページ送りがある、行の中（#237）', () => {
+  assert.deepEqual(pagerLoops(afterLoopSteps, afterLoopHints, [null, null, null, null, null]), [
+    null,
+    null,
+    null,
+    null,
+    null,
+  ]);
+  /** @type {Step[]} */
+  const withOther = [
+    ...afterLoopSteps.slice(0, 2),
+    { type: 'click', target: { selectors: ['#other'], tag: 'button', label: 'ほか' } },
+    ...afterLoopSteps.slice(3),
+  ];
+  assert.equal(pagerLoops(withOther, afterLoopHints, afterLoopPagers)[3], null);
+  const paged = afterLoopSteps.map((step) =>
+    step.type === 'forEach'
+      ? { ...step, nextPage: { selectors: ['a.next'], tag: 'a', label: '次へ' } }
+      : step,
+  );
+  assert.equal(pagerLoops(paged, afterLoopHints, afterLoopPagers)[3], null);
+  /** @type {RowHint[]} */
+  const inRow = [
+    null,
+    null,
+    null,
+    [
+      {
+        items: orderRow,
+        count: 3,
+        inner: { selectors: ['button'], tag: 'button', label: 'next', scope: 'item' },
+      },
+    ],
+    null,
+  ];
+  assert.equal(pagerLoops(afterLoopSteps, inRow, afterLoopPagers)[3], null);
+  const failed = attachPager(afterLoopSteps, afterLoopHints, afterLoopPagers, 2);
+  assert.equal(failed.ok, false);
 });

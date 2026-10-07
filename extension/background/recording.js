@@ -20,7 +20,12 @@ import { applyStopRuleToRecordedStep } from '../shared/stop-rules.js';
 import { getStopRule } from '../common/stop-rules-store.js';
 import { getConfirmDetection } from '../common/confirm-detection-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
-import { makeLoop, sanitizePagerHint, sanitizeRowHint } from '../shared/record-loop.js';
+import {
+  attachPager,
+  makeLoop,
+  sanitizePagerHint,
+  sanitizeRowHint,
+} from '../shared/record-loop.js';
 import { toClickDownload, toLinkDownload } from '../shared/file-link.js';
 import { DECLINED_SITES_KEY } from '../shared/site-notice.js';
 import { visibleFrameOrigins } from '../shared/frame-visibility.js';
@@ -353,6 +358,54 @@ export function makeRecordedLoop(
           ...(nextParams.length > 0 ? { params: nextParams } : {}),
           steps: result.steps,
         },
+        [LAST_FLOW_HINTS_KEY]: result.hints,
+        [LAST_FLOW_PAGERS_KEY]: result.pagers,
+      });
+    }
+    return { ok: true };
+  });
+}
+
+/**
+ * 繰り返しを作った後に記録した「次へ」のクリックを、その繰り返しのページ送りにします（#237）。
+ * 記録中の手順と、記録を停止した後の保存前の手順のどちらにも使えます。
+ * @param {unknown} index 「次へ」のクリックの番号（0 から数えます）
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function attachRecordedPager(index, count) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    const lastFlow = recording ? undefined : await getLastFlow();
+    const steps = recording?.steps ?? lastFlow?.steps;
+    if (!steps) {
+      return { ok: false, error: 'ページ送りにする手順がありません。' };
+    }
+    if (count !== steps.length) {
+      return {
+        ok: false,
+        error:
+          '手順の一覧が変わったため、ページ送りにしませんでした。一覧を確かめてから押し直してください。',
+      };
+    }
+    const hints = alignHints(steps, recording ? recording.rowHints : await getLastFlowHints());
+    const pagers = alignHints(steps, recording ? recording.pagerHints : await getLastFlowPagers());
+    const result = attachPager(steps, hints, pagers, index);
+    if (!result.ok) {
+      return result;
+    }
+    if (recording) {
+      await chrome.storage.session.set({
+        [RECORDING_KEY]: {
+          ...recording,
+          steps: result.steps,
+          rowHints: result.hints,
+          pagerHints: result.pagers,
+        },
+      });
+    } else if (lastFlow) {
+      await chrome.storage.session.set({
+        [LAST_FLOW_KEY]: { ...lastFlow, steps: result.steps },
         [LAST_FLOW_HINTS_KEY]: result.hints,
         [LAST_FLOW_PAGERS_KEY]: result.pagers,
       });
