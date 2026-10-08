@@ -1474,6 +1474,100 @@ test('保存したフロー：一覧で押したフローの画面に切り替�
   assert.equal(await editor.isHidden(), true);
 });
 
+test('保存したフローの一覧の行：［実行］で詳細を開かずに実行し、［編集］で詳細を開き、入力が要るフローは入力フォームを出す（#258）', async () => {
+  const { extensionPage: page } = browser;
+  /** @type {Record<string, Flow>} */
+  const flows = {
+    plain: {
+      schemaVersion: 18,
+      name: '一覧から実行',
+      origin: server.origin,
+      steps: [{ type: 'navigate', cause: 'user', url: `${server.origin}/form.html` }],
+    },
+    input: {
+      schemaVersion: 18,
+      name: '値を入れて実行',
+      origin: server.origin,
+      params: [{ name: 'user', label: 'ログイン ID', type: 'text' }],
+      steps: [{ type: 'navigate', cause: 'user', url: `${server.origin}/form.html?u={{user}}` }],
+    },
+    nofirst: {
+      schemaVersion: 18,
+      name: '最初のページがない',
+      origin: server.origin,
+      steps: [{ type: 'click', target: target('#submit', 'button', '送信') }],
+    },
+  };
+  await page.evaluate(
+    (flows) =>
+      chrome.storage.local.set({
+        history: [],
+        flows: Object.fromEntries(
+          Object.entries(flows).map(([id, flow]) => [
+            id,
+            { id, createdAt: '', updatedAt: '', flow },
+          ]),
+        ),
+      }),
+    flows,
+  );
+  const id = new URL(page.url()).host;
+  await page.goto(`chrome-extension://${id}/options/options.html`);
+  await page.reload();
+  const list = page.locator('#flow-list');
+  const editor = page.locator('#editor');
+  /** @param {string} name */
+  const row = (name) => list.locator('.lm-flow-row', { hasText: name });
+
+  // 最初のページがないフローは、［実行］［開く］を押せず、行の中に理由を出します。
+  await row('最初のページがない').locator('.lm-flow-reason').waitFor({ state: 'visible' });
+  assert.equal(
+    await row('最初のページがない')
+      .getByRole('button', { name: /を実行$/ })
+      .isDisabled(),
+    true,
+  );
+  assert.equal(
+    await row('最初のページがない')
+      .getByRole('button', { name: /最初のページを開く$/ })
+      .isDisabled(),
+    true,
+  );
+
+  // 値の入力が要らないフローは、一覧のまま実行します。
+  await row('一覧から実行').getByRole('button', { name: '「一覧から実行」を実行' }).click();
+  const [entry] = await waitUntil(
+    () =>
+      page.evaluate(async () => {
+        const { history } = await chrome.storage.local.get('history');
+        return Array.isArray(history) ? history : [];
+      }),
+    (history) => history.length > 0,
+    20_000,
+  );
+  assert.equal(entry.flowName, '一覧から実行');
+  assert.equal(entry.status, 'done');
+  assert.equal(await list.isVisible(), true);
+
+  // ［編集］で、そのフローの詳細を開きます。
+  await row('一覧から実行').getByRole('button', { name: '「一覧から実行」を編集' }).click();
+  await editor.waitFor({ state: 'visible' });
+  assert.match(page.url(), /#plain$/);
+  await page.locator('#back-to-list').click();
+  await list.waitFor({ state: 'visible' });
+
+  // 値の入力が要るフローは、詳細を開いて入力フォームを出します。
+  await row('値を入れて実行').getByRole('button', { name: '「値を入れて実行」を実行' }).click();
+  await page.locator('#run-form').waitFor({ state: 'visible' });
+  assert.match(page.url(), /#input$/);
+  await page.locator('#run-cancel').click();
+  await page.locator('#back-to-list').click();
+  await list.waitFor({ state: 'visible' });
+  for (const page of pagesAt('/form.html')) {
+    await page.close();
+  }
+});
+
 test('検索欄と一致方法：画面の幅が 576px 未満でも、文字の大きさと高さが幅の広い画面と同じである（#215）', async () => {
   const id = new URL(browser.extensionPage.url()).host;
   const page = await browser.context.newPage();

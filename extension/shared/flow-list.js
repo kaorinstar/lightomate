@@ -166,3 +166,23 @@ export function runStatesFrom(stored) {
     .map(([, value]) => /** @type {RunEntry} */ (value))
     .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
 }
+
+/**
+ * 管理画面でフローの［実行］と［最初のページを開く］を押せない理由です（#258）。詳細と一覧の行で同じ判定を使います。
+ * 管理画面には実行するタブがないため、最初の手順がページを開く手順でないフローは、どちらも押せません。
+ * 記録中と、同じサイトのフローを実行中は、［実行］だけを押せなくします。待てば実行できるため、busy に分けて返します。
+ * @param {{ origin: string, steps: { type: string }[] }} flow
+ * @param {{ recording: boolean, runs: RunEntry[] }} state
+ * @returns {{ noFirstPage: boolean, busy: string }} busy：記録中か実行中のため実行できない理由。なければ空の文字列
+ */
+export function runBlockers(flow, { recording, runs }) {
+  const conflict = findConflictingRun(flow.origin, runs);
+  return {
+    noFirstPage: flow.steps[0]?.type !== 'navigate',
+    busy: recording
+      ? '記録中は実行できません。'
+      : conflict
+        ? conflictMessage(conflict.origin, conflict.flowName)
+        : '',
+  };
+}
