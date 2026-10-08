@@ -1431,7 +1431,7 @@ test('値の定義の編集：名前を変えて保存すると、手順の中�
   assert.equal(await page.locator('#params-form').isHidden(), true);
 });
 
-test('保存したフロー：一覧で押したフローの画面に切り替わり、ボタンとブラウザーの［戻る］で一覧に戻る（#9）', async () => {
+test('保存したフロー：一覧の［編集］でフローの画面に切り替わり、ボタンとブラウザーの［戻る］で一覧に戻る（#9、#266）', async () => {
   const { extensionPage: page } = browser;
   /** @type {Flow} */
   const flow = {
@@ -1452,22 +1452,29 @@ test('保存したフロー：一覧で押したフローの画面に切り替�
   await page.reload();
   const list = page.locator('#flow-list');
   const editor = page.locator('#editor');
+  const edit = list.getByRole('button', { name: '「画面の切り替え」を編集' });
+
+  // フロー名を押しても、詳細は開きません（#266）。
   await list.getByText('画面の切り替え').click();
+  assert.equal(await editor.isHidden(), true);
+  assert.doesNotMatch(page.url(), /#view$/);
+
+  await edit.click();
   await editor.waitFor({ state: 'visible' });
   assert.equal(await list.isHidden(), true);
   assert.match(page.url(), /#view$/);
 
-  // ［← フローの一覧に戻る］で一覧に戻り、開いていたフローの行にフォーカスが戻ります。
+  // ［← フローの一覧に戻る］で一覧に戻り、開いていたフローの行の［編集］にフォーカスが戻ります。
   await page.locator('#back-to-list').click();
   await list.waitFor({ state: 'visible' });
   assert.equal(await editor.isHidden(), true);
   await waitUntil(
-    () => page.evaluate(() => globalThis.document.activeElement?.textContent ?? ''),
-    (text) => text.includes('画面の切り替え'),
+    () => page.evaluate(() => globalThis.document.activeElement?.getAttribute('aria-label') ?? ''),
+    (label) => label === '「画面の切り替え」を編集',
   );
 
   // ブラウザーの［戻る］でも一覧に戻ります。
-  await list.getByText('画面の切り替え').click();
+  await edit.click();
   await editor.waitFor({ state: 'visible' });
   await page.goBack();
   await list.waitFor({ state: 'visible' });
