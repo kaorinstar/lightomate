@@ -35,7 +35,10 @@ import {
   guideLoop,
   guideNext,
   guideStop,
+  START_PAGE_ADDED,
+  atStartPage,
   startGuide,
+  withStartPage,
   stopsHere,
   waitsForPick,
 } from '../shared/guide.js';
@@ -504,6 +507,46 @@ export function stepRecordingGuide(action, count) {
         .sendMessage(recording.tabId, { kind: 'recorder/pickCancel' }, { frameId: 0 })
         .catch(() => {});
       return { ok: true };
+    } else if (
+      action === 'next' &&
+      atStartPage(recording.guide) &&
+      recording.steps[0]?.type !== 'navigate'
+    ) {
+      // 最初のページを開く手順を削除していた場合は、表示中のページを開く手順を先頭に加えます（#257）。
+      const frame = await chrome.webNavigation
+        .getFrame({ tabId: recording.tabId, frameId: 0 })
+        .catch(() => null);
+      if (!frame || !isWebUrl(frame.url)) {
+        return {
+          ok: false,
+          error: 'このページは記録できません。記録できるページを開いてから押してください。',
+        };
+      }
+      const pageOrigin = new URL(frame.url).origin;
+      if (!(await chrome.permissions.contains({ origins: [`${pageOrigin}/*`] }))) {
+        return { ok: false, error: `${pageOrigin} を操作する許可がありません。` };
+      }
+      const started = withStartPage(
+        {
+          steps: recording.steps,
+          rowHints: alignHints(recording.steps, recording.rowHints),
+          pagerHints: alignHints(recording.steps, recording.pagerHints),
+          origin: recording.origin,
+          extraOrigins: recording.extraOrigins ?? [],
+          guide: recording.guide,
+        },
+        frame.url,
+      );
+      if (started) {
+        Object.assign(next, started);
+        if (started.extraOrigins.length === 0) {
+          delete next.extraOrigins;
+        }
+        next.guide = {
+          ...guideNext(started.guide, started.steps.length, 'button'),
+          notice: START_PAGE_ADDED,
+        };
+      }
     } else if (action === 'next' || action === 'skip') {
       next.guide = guideNext(
         recording.guide,
