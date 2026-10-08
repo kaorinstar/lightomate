@@ -291,7 +291,8 @@ test('購入の案内の途中で確定ボタンが押されると、最後の�
 });
 
 test('最初のページを開く手順がない場合は、表示中のページを開く手順を先頭に加え、段階と添える値をずらす（#257）', () => {
-  const guide = { purpose: /** @type {const} */ ('files'), start: 0, done: [] };
+  // 目的を選ぶ前に記録したクリックが 1 件あり、最初の「ページを開く」手順は削除した場合です。
+  const guide = { purpose: /** @type {const} */ ('files'), start: 1, done: [] };
   /** @type {Step[]} */
   const steps = [click('前の操作')];
   const state = {
@@ -311,18 +312,121 @@ test('最初のページを開く手順がない場合は、表示中のペー�
   });
   assert.deepEqual(started.steps[1], steps[0]);
   assert.deepEqual(started.rowHints, [null, null]);
-  assert.equal(started.guide.start, 1);
+  assert.equal(started.guide.start, 2);
+  assert.equal(started.removed, 0);
   assert.equal(started.origin, 'https://shop.example.com');
   assert.deepEqual(started.extraOrigins, []);
-  // 最初の手順が「ページを開く」手順の場合は、何も加えません。
+  // 記録を始めたページのまま押した場合は、何も変えません。
   assert.equal(
-    withStartPage({ ...state, steps: [navigate] }, 'https://shop.example.com/'),
+    withStartPage({ ...state, steps: [navigate] }, 'https://shop.example.com/orders'),
+    undefined,
+  );
+  // 目的を選ぶ前の手順が残っていて、その後に手順がない場合も、何も変えません。
+  assert.equal(
+    withStartPage(
+      { ...state, steps: [navigate, click('前の操作')], guide: { ...guide, start: 2 } },
+      'https://shop.example.com/x',
+    ),
     undefined,
   );
 });
 
+test('［このページから始める］を押す前の移動の手順は、表示中のページを開く手順 1 件に置き換える（#264）', () => {
+  const guide = {
+    purpose: /** @type {const} */ ('files'),
+    start: 1,
+    done: [],
+    notice: '前の知らせ',
+  };
+  /** @type {Step[]} */
+  const steps = [
+    { type: 'navigate', url: 'https://shop.example.com/', cause: 'user' },
+    click('メニュー', 'a'),
+    { type: 'navigate', url: 'https://shop.example.com/menu', cause: 'page' },
+    click('購入履歴', 'a'),
+    { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'page' },
+  ];
+  const started = withStartPage(
+    {
+      steps,
+      rowHints: steps.map(() => null),
+      pagerHints: steps.map(() => null),
+      origin: 'https://shop.example.com',
+      extraOrigins: [],
+      guide,
+    },
+    'https://shop.example.com/orders',
+  );
+  assert.ok(started);
+  assert.deepEqual(started.steps, [
+    { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'user' },
+  ]);
+  assert.deepEqual(started.rowHints, [null]);
+  assert.deepEqual(started.pagerHints, [null]);
+  assert.equal(started.removed, 5);
+  assert.deepEqual(started.guide, { purpose: 'files', start: 0, done: [] });
+});
+
+test('目的を選ぶ前に記録したクリックは残し、その後ろに表示中のページを開く手順を加える（#264）', () => {
+  const guide = { purpose: /** @type {const} */ ('files'), start: 2, done: [] };
+  /** @type {Step[]} */
+  const steps = [
+    navigate,
+    click('お知らせを閉じる', 'button'),
+    click('購入履歴', 'a'),
+    { type: 'navigate', url: 'https://shop.example.com/history', cause: 'page' },
+  ];
+  const started = withStartPage(
+    {
+      steps,
+      rowHints: ['行', null, null, null],
+      pagerHints: [null, null, null, null],
+      origin: 'https://shop.example.com',
+      extraOrigins: [],
+      guide,
+    },
+    'https://shop.example.com/history',
+  );
+  assert.ok(started);
+  assert.deepEqual(started.steps, [
+    navigate,
+    steps[1],
+    { type: 'navigate', url: 'https://shop.example.com/history', cause: 'user' },
+  ]);
+  assert.deepEqual(started.rowHints, ['行', null, null]);
+  assert.equal(started.removed, 2);
+  // 最初の段階は、加えた「ページを開く」手順から始まります。
+  assert.equal(started.guide.start, 2);
+});
+
+test('別のサイトへ移動してから押すと、移動した先のサイトを origin にし、使わない元のサイトは残さない（#264）', () => {
+  const guide = { purpose: /** @type {const} */ ('files'), start: 1, done: [] };
+  /** @type {Step[]} */
+  const steps = [
+    { type: 'navigate', url: 'https://www.example.com/', cause: 'user' },
+    click('購入履歴', 'a'),
+    { type: 'navigate', url: 'https://order.example.com/history', cause: 'page' },
+  ];
+  const started = withStartPage(
+    {
+      steps,
+      rowHints: [null, null, null],
+      pagerHints: [null, null, null],
+      origin: 'https://www.example.com',
+      extraOrigins: ['https://order.example.com'],
+      guide,
+    },
+    'https://order.example.com/history',
+  );
+  assert.ok(started);
+  assert.equal(started.origin, 'https://order.example.com');
+  assert.deepEqual(started.extraOrigins, []);
+  assert.equal(started.steps.length, 1);
+});
+
 test('加えたページのサイトが記録を始めたサイトと異なる場合は、そのサイトを origin にする（#257）', () => {
-  const guide = { purpose: /** @type {const} */ ('files'), start: 0, done: [] };
+  // 目的を選ぶ前に記録した手順だけが残っている場合です。
+  const guide = { purpose: /** @type {const} */ ('files'), start: 1, done: [] };
   // 記録を始めたサイト（ashiato）の手順を削除し、購入履歴のサイトの手順だけが残っている場合です。
   const orderStep = /** @type {Step} */ ({
     ...click('購入履歴'),
@@ -353,7 +457,7 @@ test('加えたページのサイトが記録を始めたサイトと異なる�
       pagerHints: [null, null],
       origin: 'https://ashiato.example.com',
       extraOrigins: ['https://order.example.com'],
-      guide,
+      guide: { ...guide, start: 2 },
     },
     'https://order.example.com/history',
   );
