@@ -56,7 +56,7 @@ import {
   replaceJsonName,
   withSteps,
 } from '../shared/flow.js';
-import { conflictMessage, findConflictingRun, runStatesFrom } from '../shared/flow-list.js';
+import { runBlockers, runStatesFrom } from '../shared/flow-list.js';
 import { attachCombobox } from '../shared/combobox.js';
 import { flowFileName, flowFileText, parseFlowFile, splitDuplicates } from '../shared/flow-file.js';
 import { buildFlowGroups } from '../shared/flow-groups.js';
@@ -119,6 +119,7 @@ import {
 const elements = {
   version: byId('version'),
   flows: byId('flows'),
+  flowsReason: byId('flows-reason'),
   flowCount: byId('flow-count'),
   empty: byId('empty'),
   searchArea: byId('search-area'),
@@ -1166,11 +1167,12 @@ elements.runCancel.addEventListener('click', hideRunForm);
  * 最初の手順の URL を新しいタブで開きます。手順は実行しません。
  * @param {StoredFlow} stored
  * @param {Record<string, string>} params
+ * @param {HTMLElement} [notice] 開けなかった理由を出す場所。省くと、入力フォームか詳細の見出しの下に出します
  * @returns {Promise<boolean>} 開いたか
  */
-async function openFirstPage(stored, params) {
+async function openFirstPage(stored, params, notice) {
   const result = firstPageUrl(stored.flow, params, new Date());
-  const notice = runFormState ? elements.runNotice : elements.editorNotice;
+  notice ??= runFormState ? elements.runNotice : elements.editorNotice;
   if (!result.ok) {
     showNotice(notice, result.error, 'error');
     return false;
@@ -1249,16 +1251,8 @@ function hideRunForm() {
  * @param {import('../shared/flow.js').Flow} flow
  */
 async function renderRunButtons(flow) {
-  const stored = await chrome.storage.session.get(null);
-  const conflict = findConflictingRun(flow.origin, runStatesFrom(stored));
-  const noFirstPage = flow.steps[0]?.type !== 'navigate';
-  const reason = noFirstPage
-    ? NO_FIRST_PAGE
-    : stored.recording
-      ? '記録中は実行できません。'
-      : conflict
-        ? conflictMessage(conflict.origin, conflict.flowName)
-        : '';
+  const { noFirstPage, busy } = runBlockers(flow, await readRunState());
+  const reason = noFirstPage ? NO_FIRST_PAGE : busy;
   elements.openFirst.disabled = noFirstPage;
   elements.run.disabled = Boolean(reason);
   elements.runReasonText.textContent = reason;
@@ -1269,10 +1263,20 @@ async function renderRunButtons(flow) {
   elements.runReason.classList.toggle('alert-info', !noFirstPage);
 }
 
+/**
+ * 記録と実行の状態を読み取ります。
+ * @returns {Promise<{ recording: boolean, runs: import('../shared/flow-list.js').RunEntry[] }>}
+ */
+async function readRunState() {
+  const stored = await chrome.storage.session.get(null);
+  return { recording: Boolean(stored.recording), runs: runStatesFrom(stored) };
+}
+
 // 記録と実行の状態は Service Worker が chrome.storage.session に書き込みます。
 // 実行中は手順ごとに書き込まれるため、一覧は作り直さず、ボタンの状態だけを更新します。
 chrome.storage.session.onChanged.addListener(() => {
   (async () => {
+    await renderListRunButtons();
     const stored = selectedId ? await getFlow(selectedId) : undefined;
     if (stored) {
       await renderRunButtons(stored.flow);
@@ -2810,8 +2814,19 @@ async function renderStopRules() {
  * @param {string} id
  * @param {{ history?: 'push' | 'replace' | 'none' }} [options] history：URL の履歴の扱い。
  *   一覧からフローを開くときは push にし、ブラウザーの［戻る］で一覧に戻れるようにします
+ * @returns {Promise<void>} 表示し直し終わると解決します
  */
 function select(id, { history: mode = 'replace' } = {}) {
+  return selectAndRender(id, mode);
+}
+
+/**
+ * select() の本体です。表示し直し終わるまで待てるよう、Promise を返します。
+ * @param {string} id
+ * @param {'push' | 'replace' | 'none'} mode
+ * @returns {Promise<void>}
+ */
+function selectAndRender(id, mode) {
   selectedId = id;
   const url = id ? `#${encodeURIComponent(id)}` : location.pathname;
   if (mode === 'push') {
@@ -2834,7 +2849,7 @@ function select(id, { history: mode = 'replace' } = {}) {
   if (detailTab === 'json') {
     selectDetailTab('steps');
   }
-  render().catch(console.error);
+  return render().catch(console.error);
 }
 
 /** 一覧と詳細を表示し直します。 */
@@ -2885,6 +2900,7 @@ async function render() {
     }
   }
   renderBulk();
+  await renderListRunButtons();
 
   const stored = selectedId ? await getFlow(selectedId) : undefined;
   elements.editor.hidden = !stored;
@@ -3014,9 +3030,14 @@ function paramTableRow(cells) {
   return row;
 }
 
+/** 一覧で「…」（その他の操作）を開いている行のフローの id です（#258）。開いていなければ空の文字列です。 */
+let menuOpenId = '';
+
 /**
  * フローの一覧の 1 行です。左端に選ぶためのチェックボックス、その右に詳細を開くボタンを置きます（#83）。
  * ボタンの中にはチェックボックスを置けないため、2 つに分けます。
+ * 右端には、サイドパネルの一覧の行と同じく、［編集］［実行］［開く］「…」を並べます（#258）。
+ * 詳細を開かずに実行するためです。ボタンの中にボタンは置けないため、詳細を開くボタンの外に置きます。
  * @param {StoredFlow} stored
  * @returns {HTMLDivElement}
  */
@@ -3042,22 +3063,231 @@ function flowListItem(stored) {
   detail.textContent = `手順 ${flattenSteps(stored.flow.steps).length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
   const button = listButton(stored.flow.name, detail);
   button.className = 'list-group-item-action lm-flow-open';
-  button.addEventListener('click', async () => {
-    if (stored.id !== selectedId && !(await confirmDiscardBlocks(row, '別のフローを開く'))) {
-      return;
-    }
-    select(stored.id, { history: 'push' });
+  button.addEventListener('click', () => {
+    openFromList(stored, row).catch(console.error);
   });
 
   const row = document.createElement('div');
   row.className = 'list-group-item lm-flow-row';
+  row.dataset.rowFlowId = stored.id;
   const current = stored.id === selectedId;
   row.classList.toggle('active', current);
   if (current) {
     button.setAttribute('aria-current', 'true');
   }
-  row.append(check, button);
+
+  // 行の中の知らせです。操作した行の直下に出します（docs/design-guidelines.md）。
+  const notice = document.createElement('p');
+  notice.className = 'lm-flow-extra';
+  notice.hidden = true;
+  /** @param {unknown} error */
+  const fail = (error) => showNotice(notice, String(error), 'error');
+
+  const edit = actionButton('編集', 'btn btn-sm', () => {
+    openFromList(stored, row).catch(fail);
+  });
+  edit.setAttribute('aria-label', `「${stored.flow.name}」を編集`);
+  const run = actionButton('実行', 'btn btn-sm btn-outline-primary', () => {
+    onRowRunClick(stored, row, notice).catch(fail);
+  });
+  run.dataset.rowRun = '';
+  run.setAttribute('aria-label', `「${stored.flow.name}」を実行`);
+  // 幅が狭いため、ボタンの文字は短くし、読み上げと説明には「最初のページを開く」を使います。サイドパネルと同じです。
+  const open = actionButton('開く', 'btn btn-sm', () => {
+    onRowOpenClick(stored, row, notice).catch(fail);
+  });
+  open.dataset.rowOpen = '';
+  open.title = '最初のページを開く';
+  open.setAttribute('aria-label', `「${stored.flow.name}」の最初のページを開く`);
+  const menuOpen = menuOpenId === stored.id;
+  const more = actionButton('…', 'btn btn-sm btn-ghost-secondary', () => {
+    menuOpenId = menuOpen ? '' : stored.id;
+    render().catch(console.error);
+  });
+  more.title = 'その他の操作';
+  more.setAttribute('aria-label', `「${stored.flow.name}」のその他の操作`);
+  more.setAttribute('aria-expanded', String(menuOpen));
+  const actions = document.createElement('div');
+  actions.className = 'lm-buttons lm-flow-actions';
+  actions.append(edit, run, open, more);
+
+  // 最初のページがないため押せない理由です。行ごとに異なるため、その行の中に注意（黄）として出します（#141）。
+  const reason = document.createElement('div');
+  reason.className = 'alert alert-warning lm-guide lm-flow-extra lm-flow-reason';
+  reason.hidden = true;
+  const reasonText = document.createElement('p');
+  reasonText.className = 'lm-guide-title';
+  reason.append(reasonText);
+
+  row.append(check, button, actions, reason);
+
+  if (menuOpen) {
+    // 名前の変更と削除は、入力欄と確認を持つ詳細の操作を使います。書き出しは、その場で行います。
+    const menu = document.createElement('div');
+    menu.className = 'lm-buttons lm-flow-extra';
+    menu.append(
+      actionButton('名前の変更', 'btn btn-sm', () => {
+        openFromList(stored, row)
+          .then((opened) => opened && elements.rename.click())
+          .catch(fail);
+      }),
+      actionButton('ファイルに書き出し', 'btn btn-sm', () => {
+        clearNotices();
+        downloadFlows([stored.flow]);
+      }),
+      actionButton('削除', 'btn btn-sm btn-ghost-danger', () => {
+        openFromList(stored, row)
+          .then((opened) => opened && elements.deleteFlow.click())
+          .catch(fail);
+      }),
+    );
+    row.append(menu);
+  }
+  row.append(notice);
   return row;
+}
+
+/**
+ * 一覧の行に置く操作のボタンです。
+ * @param {string} text
+ * @param {string} className
+ * @param {() => void} onClick
+ * @returns {HTMLButtonElement}
+ */
+function actionButton(text, className, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.textContent = text;
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+/**
+ * 一覧の行から、そのフローの詳細を開きます。ブロックに保存していない変更がある場合は、先に確かめます。
+ * @param {StoredFlow} stored
+ * @param {Element} anchor 確認を出す場所（押した行）
+ * @returns {Promise<boolean>} 開いたか
+ */
+async function openFromList(stored, anchor) {
+  if (stored.id !== selectedId && !(await confirmDiscardBlocks(anchor, '別のフローを開く'))) {
+    return false;
+  }
+  menuOpenId = '';
+  await select(stored.id, { history: 'push' });
+  return true;
+}
+
+/**
+ * 一覧の行の［実行］です（#258）。値の入力が要らないフローは、一覧のまま実行します。
+ * 入力が要るフローは、詳細を開いて入力フォームを出します。フォームを一覧に複製しないためです。
+ * @param {StoredFlow} stored
+ * @param {Element} row
+ * @param {HTMLElement} notice
+ */
+async function onRowRunClick(stored, row, notice) {
+  clearNotices();
+  showNotice(notice, '');
+  // 許可を求める処理は、ボタンを押した直後に呼び出す必要があります。その前に待ち時間を入れません。
+  const denied = await requestPermission(flowOrigins(stored.flow));
+  if (denied) {
+    showNotice(notice, denied, 'error');
+    return;
+  }
+  if ((stored.flow.params ?? []).length === 0 && secretStepIndexes(stored.flow).length === 0) {
+    await startRun(stored, {}, {}, notice);
+    return;
+  }
+  if (await openFromList(stored, row)) {
+    showRunForm(stored, 'run');
+  }
+}
+
+/**
+ * 一覧の行の［開く］です（#258）。最初のページの URL に入力する値があるフローは、詳細を開いて入力フォームを出します。
+ * @param {StoredFlow} stored
+ * @param {Element} row
+ * @param {HTMLElement} notice
+ */
+async function onRowOpenClick(stored, row, notice) {
+  clearNotices();
+  showNotice(notice, '');
+  if (firstPageParams(stored.flow).length === 0) {
+    await openFirstPage(stored, {}, notice);
+    return;
+  }
+  if (await openFromList(stored, row)) {
+    showRunForm(stored, 'open');
+  }
+}
+
+/**
+ * 一覧の行の［実行］［開く］を押せるかを、記録と実行の状態に合わせて更新します（#258）。
+ * 実行中は状態が手順ごとに変わるため、行は作り直さず、ボタンと理由の表示だけを更新します。
+ * 記録中と実行中の理由は多くの行で同じ文になるため、一覧の先頭に 1 回だけ示します。サイドパネルと同じです（#136）。
+ */
+async function renderListRunButtons() {
+  const state = await readRunState();
+  const flows = new Map(shownFlows.map((stored) => [stored.id, stored.flow]));
+  /** @type {Set<string>} */
+  const shared = new Set();
+  for (const item of elements.flows.querySelectorAll('[data-row-flow-id]')) {
+    const row = /** @type {HTMLElement} */ (item);
+    const flow = flows.get(row.dataset.rowFlowId ?? '');
+    if (!flow) {
+      continue;
+    }
+    const { noFirstPage, busy } = runBlockers(flow, state);
+    if (busy) {
+      shared.add(busy);
+    }
+    const run = row.querySelector('button[data-row-run]');
+    if (run instanceof HTMLButtonElement) {
+      run.disabled = noFirstPage || Boolean(busy);
+    }
+    const open = row.querySelector('button[data-row-open]');
+    if (open instanceof HTMLButtonElement) {
+      open.disabled = noFirstPage;
+    }
+    const reason = row.querySelector('.lm-flow-reason');
+    const reasonText = reason?.querySelector('.lm-guide-title');
+    if (reason instanceof HTMLElement && reasonText) {
+      reasonText.textContent = noFirstPage ? NO_FIRST_PAGE : '';
+      reason.hidden = !noFirstPage;
+    }
+  }
+  showListReasons(elements.flowsReason, [...shared]);
+}
+
+/**
+ * 一覧の先頭の案内に、実行できない理由を示します。理由がなければ案内を隠します。
+ * 理由が 1 つなら 1 文だけ、複数なら見出しと箇条書きにします（docs/design-guidelines.md の案内の規則）。
+ * @param {HTMLElement} guide 案内（class="alert alert-info lm-guide"）
+ * @param {string[]} reasons
+ */
+function showListReasons(guide, reasons) {
+  guide.hidden = reasons.length === 0;
+  if (reasons.length === 0) {
+    guide.replaceChildren();
+    return;
+  }
+  const title = document.createElement('p');
+  title.className = 'lm-guide-title';
+  if (reasons.length === 1) {
+    title.textContent = reasons[0];
+    guide.replaceChildren(title);
+    return;
+  }
+  title.textContent = '次の理由で、実行できないフローがあります。';
+  const list = document.createElement('ul');
+  list.append(
+    ...reasons.map((reason) => {
+      const item = document.createElement('li');
+      item.textContent = reason;
+      return item;
+    }),
+  );
+  guide.replaceChildren(title, list);
 }
 
 /**
