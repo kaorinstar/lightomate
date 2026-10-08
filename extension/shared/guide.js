@@ -508,3 +508,74 @@ export function guideStop(guide, steps) {
       : [...steps, /** @type {Step} */ ({ type: 'pause', note: PURCHASE_STOP_NOTE })];
   return { guide: advanced(guide, next.length), steps: next };
 }
+
+/** 最初のページを開く手順を加えたときの知らせです（#257）。 */
+export const START_PAGE_ADDED = '最初にこのページを開く手順を加えました。';
+
+/**
+ * 案内の最初の段階で［このページから始める］を押したとき、手順の最初が「ページを開く」手順でない場合に、
+ * 表示中のページを開く手順を先頭に加えます（#257）。最初の手順を誤って削除すると、開くページが決まらず、
+ * 実行できないフローになるためです。最初の手順が「ページを開く」手順の場合は、undefined を返します。
+ *
+ * 加えたページのサイトが、記録を始めたサイト（origin）と異なる場合は、加えたページのサイトを origin にします。
+ * 元のサイトで記録した手順には元のサイトを手順の origin として書き、元のサイトを使う手順がある場合だけ
+ * extraOrigins に残します。
+ * @template H, P
+ * @param {{ steps: Step[], rowHints: H[], pagerHints: P[], origin: string, extraOrigins: string[], guide: GuideState }} state
+ * @param {string} url 表示中のページの URL
+ * @returns {{ steps: Step[], rowHints: (H | null)[], pagerHints: (P | null)[], origin: string, extraOrigins: string[], guide: GuideState } | undefined}
+ */
+export function withStartPage(state, url) {
+  if (state.steps[0]?.type === 'navigate') {
+    return undefined;
+  }
+  const origin = new URL(url).origin;
+  const previous = state.origin;
+  /** @type {Step[]} */
+  const steps = state.steps.map((step) => {
+    if (!('target' in step)) {
+      return step;
+    }
+    const own = 'origin' in step && typeof step.origin === 'string' ? step.origin : previous;
+    const next = /** @type {Step & { origin?: string }} */ ({ ...step });
+    if (own === origin) {
+      delete next.origin;
+    } else {
+      next.origin = own;
+    }
+    return next;
+  });
+  /** 手順が使うサイトです。ページを開く手順の行き先と、手順の origin です。 */
+  const used = new Set(
+    steps.flatMap((step) => {
+      if (step.type === 'navigate') {
+        return [new URL(step.url).origin];
+      }
+      return 'origin' in step && typeof step.origin === 'string' ? [step.origin] : [];
+    }),
+  );
+  const extraOrigins = [...new Set([...state.extraOrigins, previous])].filter(
+    (site) => site !== origin && (site !== previous || used.has(site)),
+  );
+  return {
+    steps: [{ type: 'navigate', url, cause: 'user' }, ...steps],
+    rowHints: [null, ...state.rowHints],
+    pagerHints: [null, ...state.pagerHints],
+    origin,
+    extraOrigins,
+    guide: {
+      ...state.guide,
+      start: state.guide.start + 1,
+      done: state.guide.done.map((count) => count + 1),
+    },
+  };
+}
+
+/**
+ * 今の段階が、案内の最初の段階（［このページから始める］）かを返します（#257）。
+ * @param {GuideState} guide
+ */
+export function atStartPage(guide) {
+  const stage = currentStage(guide);
+  return guide.done.length === 0 && stage?.advance === 'button';
+}
