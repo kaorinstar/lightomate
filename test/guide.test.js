@@ -13,6 +13,7 @@ import {
   guideStop,
   guideView,
   startGuide,
+  withStartPage,
 } from '../extension/shared/guide.js';
 
 /** @typedef {import('../extension/shared/flow.js').Step} Step */
@@ -294,4 +295,76 @@ test('購入の案内の途中で確定ボタンが押されると、最後の�
   const next = guideAfterStep(guide, [navigate, pause]);
   assert.equal(currentStage(next)?.id, 'rest');
   assert.match(next.notice ?? '', /注文が確定していないか/);
+});
+
+test('最初のページを開く手順がない場合は、表示中のページを開く手順を先頭に加え、段階と添える値をずらす（#257）', () => {
+  const guide = { purpose: /** @type {const} */ ('files'), start: 0, done: [] };
+  /** @type {Step[]} */
+  const steps = [click('前の操作')];
+  const state = {
+    steps,
+    rowHints: [null],
+    pagerHints: [null],
+    origin: 'https://shop.example.com',
+    extraOrigins: [],
+    guide,
+  };
+  const started = withStartPage(state, 'https://shop.example.com/orders');
+  assert.ok(started);
+  assert.deepEqual(started.steps[0], {
+    type: 'navigate',
+    url: 'https://shop.example.com/orders',
+    cause: 'user',
+  });
+  assert.deepEqual(started.steps[1], steps[0]);
+  assert.deepEqual(started.rowHints, [null, null]);
+  assert.equal(started.guide.start, 1);
+  assert.equal(started.origin, 'https://shop.example.com');
+  assert.deepEqual(started.extraOrigins, []);
+  // 最初の手順が「ページを開く」手順の場合は、何も加えません。
+  assert.equal(
+    withStartPage({ ...state, steps: [navigate] }, 'https://shop.example.com/'),
+    undefined,
+  );
+});
+
+test('加えたページのサイトが記録を始めたサイトと異なる場合は、そのサイトを origin にする（#257）', () => {
+  const guide = { purpose: /** @type {const} */ ('files'), start: 0, done: [] };
+  // 記録を始めたサイト（ashiato）の手順を削除し、購入履歴のサイトの手順だけが残っている場合です。
+  const orderStep = /** @type {Step} */ ({
+    ...click('購入履歴'),
+    origin: 'https://order.example.com',
+  });
+  const started = withStartPage(
+    {
+      steps: [orderStep],
+      rowHints: [null],
+      pagerHints: [null],
+      origin: 'https://ashiato.example.com',
+      extraOrigins: ['https://order.example.com'],
+      guide,
+    },
+    'https://order.example.com/history',
+  );
+  assert.ok(started);
+  assert.equal(started.origin, 'https://order.example.com');
+  // 元のサイトを使う手順がないため、元のサイトは残しません。手順の origin は、新しい origin と同じため省きます。
+  assert.deepEqual(started.extraOrigins, []);
+  assert.equal('origin' in started.steps[1], false);
+
+  // 元のサイトで記録した手順が残っている場合は、その手順に元のサイトを書き、extraOrigins に残します。
+  const kept = withStartPage(
+    {
+      steps: [click('前の操作'), orderStep],
+      rowHints: [null, null],
+      pagerHints: [null, null],
+      origin: 'https://ashiato.example.com',
+      extraOrigins: ['https://order.example.com'],
+      guide,
+    },
+    'https://order.example.com/history',
+  );
+  assert.ok(kept);
+  assert.deepEqual(kept.extraOrigins, ['https://ashiato.example.com']);
+  assert.equal(/** @type {any} */ (kept.steps[1]).origin, 'https://ashiato.example.com');
 });

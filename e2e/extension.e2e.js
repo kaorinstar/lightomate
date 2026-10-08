@@ -3644,3 +3644,87 @@ test('案内付きの記録：購入の案内に従うと、確定ボタンを�
     await page.close();
   }
 });
+
+test('案内付きの記録：最初の手順を削除しても、［このページから始める］で表示中のページを開く手順を加え、実行できる（#257）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/issue-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  // 最初の「ページを開く」手順を削除します。
+  assert.deepEqual(
+    await extensionPage.evaluate(() =>
+      chrome.runtime.sendMessage({ kind: 'recording/removeStep', index: 0, count: 1 }),
+    ),
+    { ok: true },
+  );
+  const id = new URL(extensionPage.url()).host;
+  const panel = await browser.context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
+  /** @param {number} number */
+  const stage = (number) =>
+    panel.locator('#guide-step', { hasText: `7 段階中 ${number} 段階目` }).waitFor();
+  await panel.selectOption('#recording-purpose', 'files');
+  await panel.locator('#guide-next', { hasText: 'このページから始める' }).click();
+  await stage(2);
+  await panel
+    .locator('#guide-mismatch', { hasText: '最初にこのページを開く手順を加えました' })
+    .waitFor();
+  const first = await extensionPage.evaluate(async () => {
+    const { recording } = await chrome.storage.session.get('recording');
+    return /** @type {{ steps: Step[] }} */ (recording).steps[0];
+  });
+  assert.deepEqual(first, { type: 'navigate', url: listUrl, cause: 'user' });
+
+  // 以降は案内のとおりに押し、できたフローを実行します。
+  await site.click('.order:nth-child(1) .order-date');
+  await stage(3);
+  await site.click('.order:nth-child(1) .order-number');
+  await stage(4);
+  await site.click('.order:nth-child(1) a.detail');
+  await site.waitForURL(/issue-detail\.html/);
+  await site.click('#issue');
+  await stage(5);
+  await site.goBack();
+  await site.waitForURL(listUrl);
+  await panel.locator('#guide-next', { hasText: '一覧のページに戻りました' }).click();
+  await panel.locator('#guide-text', { hasText: '2 件目の' }).waitFor();
+  await site.click('.order:nth-child(2) .order-number');
+  await stage(6);
+  await panel.click('#guide-skip');
+  await stage(7);
+  await panel.locator('#guide-next', { hasText: '繰り返しを作って保存へ進む' }).click();
+  await panel.locator('#result-section').waitFor();
+  const lastFlow = await extensionPage.evaluate(async () => {
+    const { lastFlow } = await chrome.storage.session.get('lastFlow');
+    return /** @type {Flow} */ (lastFlow);
+  });
+  await panel.close();
+  await site.close();
+
+  /** @type {Flow} */
+  const flow = { ...lastFlow, name: '最初のページ', interval: { min: 1000, max: 1000 } };
+  const entry = await runFlow(extensionPage, flow, {
+    [lastFlow.params?.[0].name ?? '']: '2026-09',
+  });
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/最初のページ/')),
+    (list) => list.length >= 2,
+  );
+  assert.equal(files.length, 2);
+  for (const page of pagesAt('/issue-orders.html')) {
+    await page.close();
+  }
+});
