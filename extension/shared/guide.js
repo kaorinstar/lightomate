@@ -4,6 +4,7 @@
 
 import { parseDate } from './condition.js';
 import { ACTION_TAGS, candidateKey } from './record-loop.js';
+import { START_PAGE_ADDED, rebaseOrigin } from './start-page.js';
 
 /** @typedef {import('./flow.js').Step} Step */
 
@@ -509,8 +510,7 @@ export function guideStop(guide, steps) {
   return { guide: advanced(guide, next.length), steps: next };
 }
 
-/** 最初のページを開く手順を加えたときの知らせです（#257）。 */
-export const START_PAGE_ADDED = '最初にこのページを開く手順を加えました。';
+export { START_PAGE_ADDED };
 
 /** ［このページから始める］を押す前の移動の手順を、このページを開く手順に置き換えたときの知らせです（#264）。 */
 export const START_PAGE_REPLACED =
@@ -562,33 +562,11 @@ export function withStartPage(state, url) {
     return undefined;
   }
   const removed = state.steps.length - next.filter((entry) => entry !== head).length;
-  const origin = new URL(url).origin;
-  const previous = state.origin;
-  /** @type {Step[]} */
-  const steps = next.map(({ step }) => {
-    if (!('target' in step)) {
-      return step;
-    }
-    const own = 'origin' in step && typeof step.origin === 'string' ? step.origin : previous;
-    const changed = /** @type {Step & { origin?: string }} */ ({ ...step });
-    if (own === origin) {
-      delete changed.origin;
-    } else {
-      changed.origin = own;
-    }
-    return changed;
-  });
-  /** 手順が使うサイトです。ページを開く手順の行き先と、手順の origin です。 */
-  const used = new Set(
-    steps.flatMap((step) => {
-      if (step.type === 'navigate') {
-        return [new URL(step.url).origin];
-      }
-      return 'origin' in step && typeof step.origin === 'string' ? [step.origin] : [];
-    }),
-  );
-  const extraOrigins = [...new Set([...state.extraOrigins, previous])].filter(
-    (site) => site !== origin && (site !== previous || used.has(site)),
+  const { steps, origin, extraOrigins } = rebaseOrigin(
+    next.map((entry) => entry.step),
+    state.origin,
+    url,
+    state.extraOrigins,
   );
   const { notice, ...guide } = state.guide;
   void notice;
