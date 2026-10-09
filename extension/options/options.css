@@ -59,8 +59,8 @@ body {
 }
 
 /*
-  フローの行です（#83）。左端に選ぶためのチェックボックス、その右に詳細を開くボタンを置きます。
-  ボタンは行の残りの幅をすべて使い、押せる範囲を従来の行と同じ広さに保ちます。
+  フローの行です（#83）。左端に選ぶためのチェックボックス、その右にフロー名、右端に操作のボタンを置きます。
+  フロー名は行の残りの幅をすべて使います。
 */
 .lm-flow-row {
   display: flex;
@@ -106,18 +106,15 @@ body {
   margin: calc(var(--tblr-list-group-item-padding-y) + 0.3rem) 0 0 1rem;
 }
 
-.lm-list .lm-flow-open {
+/* フロー名と補足です。押せない文字のため、押せる行の強調表示は付けません（#266）。 */
+.lm-flow-text {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 0.25rem;
   min-width: 0;
   padding: var(--tblr-list-group-item-padding-y) 1rem var(--tblr-list-group-item-padding-y) 0.625rem;
-  border: 0;
-  background: none;
-  color: inherit;
-  text-align: start;
-}
-
-.lm-flow-row.active .lm-flow-open {
-  color: inherit;
+  overflow-wrap: anywhere;
 }
 
 /* ［すべて選択］と、選んだフローの一括操作の帯です（#83）。検索欄の下に置きます。 */

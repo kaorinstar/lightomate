@@ -819,7 +819,7 @@ backToList.addEventListener('click', async () => {
     blockEditor.markSaved();
     history.back();
   } else {
-    select('');
+    await select('');
     focusFlowRow(previous);
   }
 });
@@ -849,21 +849,23 @@ window.addEventListener('popstate', async () => {
     return;
   }
   const previous = selectedId;
-  select(id, { history: 'none' });
+  await select(id, { history: 'none' });
   if (!id) {
     focusFlowRow(previous);
   }
 });
 
 /**
- * 一覧に戻ったときに、開いていたフローの行にフォーカスを戻します。キーボードで続けて操作するためです。
+ * 一覧に戻ったときに、開いていたフローの行の［編集］にフォーカスを戻します。キーボードで続けて操作するためです。
+ * 一覧を作り直した後に呼びます。作り直す前に移すと、フォーカスした要素が消えるためです（#266）。
  * @param {string} id
  */
 function focusFlowRow(id) {
-  requestAnimationFrame(() => {
-    const input = elements.flows.querySelector(`input[data-flow-id="${CSS.escape(id)}"]`);
-    input?.closest('.lm-flow-row')?.querySelector('button')?.focus();
-  });
+  const input = elements.flows.querySelector(`input[data-flow-id="${CSS.escape(id)}"]`);
+  const edit = input?.closest('.lm-flow-row')?.querySelector('button[data-row-edit]');
+  if (edit instanceof HTMLButtonElement) {
+    edit.focus();
+  }
 }
 
 // 保存していない変更がある状態で管理画面を閉じる場合は、Chrome の確認を出します。
@@ -3034,10 +3036,9 @@ function paramTableRow(cells) {
 let menuOpenId = '';
 
 /**
- * フローの一覧の 1 行です。左端に選ぶためのチェックボックス、その右に詳細を開くボタンを置きます（#83）。
- * ボタンの中にはチェックボックスを置けないため、2 つに分けます。
+ * フローの一覧の 1 行です。左端に選ぶためのチェックボックス（#83）、その右にフロー名を置きます。
  * 右端には、サイドパネルの一覧の行と同じく、［編集］［実行］［開く］「…」を並べます（#258）。
- * 詳細を開かずに実行するためです。ボタンの中にボタンは置けないため、詳細を開くボタンの外に置きます。
+ * 詳細を開かずに実行するためです。詳細を開く操作は［編集］だけです（#266）。
  * @param {StoredFlow} stored
  * @returns {HTMLDivElement}
  */
@@ -3061,20 +3062,19 @@ function flowListItem(stored) {
   const detail = document.createElement('div');
   detail.className = 'lm-sub';
   detail.textContent = `手順 ${flattenSteps(stored.flow.steps).length} 件・更新 ${formatDateTime(stored.updatedAt)}`;
-  const button = listButton(stored.flow.name, detail);
-  button.className = 'list-group-item-action lm-flow-open';
-  button.addEventListener('click', () => {
-    openFromList(stored, row).catch(console.error);
-  });
+  // フロー名は押せない文字にします。詳細を開く操作は［編集］だけにし、押す場所を迷わないようにします（#266）。
+  const name = document.createElement('div');
+  name.className = 'lm-item-name';
+  name.textContent = stored.flow.name;
+  const text = document.createElement('div');
+  text.className = 'lm-flow-text';
+  text.append(name, detail);
 
   const row = document.createElement('div');
   row.className = 'list-group-item lm-flow-row';
   row.dataset.rowFlowId = stored.id;
   const current = stored.id === selectedId;
   row.classList.toggle('active', current);
-  if (current) {
-    button.setAttribute('aria-current', 'true');
-  }
 
   // 行の中の知らせです。操作した行の直下に出します（docs/design-guidelines.md）。
   const notice = document.createElement('p');
@@ -3087,6 +3087,10 @@ function flowListItem(stored) {
     openFromList(stored, row).catch(fail);
   });
   edit.setAttribute('aria-label', `「${stored.flow.name}」を編集`);
+  edit.dataset.rowEdit = '';
+  if (current) {
+    edit.setAttribute('aria-current', 'true');
+  }
   const run = actionButton('実行', 'btn btn-sm btn-outline-primary', () => {
     onRowRunClick(stored, row, notice).catch(fail);
   });
@@ -3119,7 +3123,7 @@ function flowListItem(stored) {
   reasonText.className = 'lm-guide-title';
   reason.append(reasonText);
 
-  row.append(check, button, actions, reason);
+  row.append(check, text, actions, reason);
 
   if (menuOpen) {
     // 名前の変更と削除は、入力欄と確認を持つ詳細の操作を使います。書き出しは、その場で行います。
