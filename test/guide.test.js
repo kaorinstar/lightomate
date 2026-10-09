@@ -8,6 +8,7 @@ import {
   guideAfterStep,
   guideAfterPicked,
   guideBack,
+  guideDropMistakes,
   guideLoop,
   guideNext,
   guideStop,
@@ -471,4 +472,101 @@ test('加えたページのサイトが記録を始めたサイトと異なる�
   assert.ok(kept);
   assert.deepEqual(kept.extraOrigins, ['https://ashiato.example.com']);
   assert.equal(/** @type {any} */ (kept.steps[1]).origin, 'https://ashiato.example.com');
+});
+
+/** 日付の段階まで進めた、ファイルの案内の状態です。手順は「ページを開く」1 件の後から日付の段階です。 */
+function atDateStage() {
+  const guide = /** @type {import('../extension/shared/guide.js').GuideState} */ (
+    startGuide('files', 1)
+  );
+  return guideNext(guide, 1, 'button');
+}
+
+test('日付の段階で押し間違えた後に日付を押すと、押し間違えたクリックを削除する（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [navigate, click('C-003')];
+  guide = guideAfterStep(guide, steps);
+  assert.deepEqual(guide.mistakes, [1]);
+  assert.match(guide.notice ?? '', /日付を押すと、いま押した手順は削除します/);
+  steps.push(click('2026/09/25(金)'));
+  guide = guideAfterStep(guide, steps);
+  assert.equal(currentStage(guide)?.id, 'name');
+  const dropped = guideDropMistakes(guide, steps);
+  assert.ok(dropped);
+  assert.deepEqual(dropped.keep, [true, false, true]);
+  assert.equal(dropped.removed, 1);
+  assert.deepEqual(dropped.guide.done, [1, 2]);
+  assert.equal(dropped.guide.mistakes, undefined);
+  assert.equal(dropped.guide.notice, '押し間違えた手順を削除しました（1 件）。');
+});
+
+test('押し間違えたリンクでページが移動し、戻ってから正しいものを押すと、その後の移動も削除する（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [navigate, click('注文詳細', 'a')];
+  guide = guideAfterStep(guide, steps);
+  steps.push({ type: 'navigate', url: 'https://shop.example.com/detail', cause: 'page' });
+  guide = guideAfterStep(guide, steps);
+  steps.push({ type: 'navigate', url: 'https://shop.example.com/orders', cause: 'page' });
+  guide = guideAfterStep(guide, steps);
+  steps.push(click('2026/09/25(金)'));
+  guide = guideAfterStep(guide, steps);
+  const dropped = guideDropMistakes(guide, steps);
+  assert.ok(dropped);
+  assert.deepEqual(dropped.keep, [true, false, false, false, true]);
+  assert.equal(dropped.removed, 3);
+  assert.deepEqual(dropped.guide.done, [1, 2]);
+});
+
+test('押し間違えた後に記録した選択の手順は残す（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [navigate, click('C-003')];
+  guide = guideAfterStep(guide, steps);
+  steps.push({
+    type: 'select',
+    target: { selectors: ['#year'], tag: 'select', label: '年' },
+    values: ['2026'],
+    labels: ['2026 年'],
+  });
+  guide = guideAfterStep(guide, steps);
+  steps.push(click('2026/09/25(金)'));
+  guide = guideAfterStep(guide, steps);
+  const dropped = guideDropMistakes(guide, steps);
+  assert.ok(dropped);
+  assert.deepEqual(dropped.keep, [true, false, true, true]);
+});
+
+test('［飛ばす］で段階を終えた場合は、押し間違えた手順を削除しない（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [navigate, click('C-003')];
+  guide = guideAfterStep(guide, steps);
+  guide = guideNext(guide, steps.length, 'skip');
+  assert.equal(currentStage(guide)?.id, 'name');
+  assert.equal(guide.mistakes, undefined);
+  assert.equal(guideDropMistakes(guide, steps), undefined);
+});
+
+test('手順の一覧から手順を削除した後も、押し間違えた手順の番号を保つ（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [
+    navigate,
+    {
+      type: 'select',
+      target: { selectors: ['#year'], tag: 'select', label: '年' },
+      values: ['2026'],
+      labels: ['2026 年'],
+    },
+    click('C-003'),
+  ];
+  guide = guideAfterStep(guide, steps);
+  assert.deepEqual(guide.mistakes, [2]);
+  // 押し間違えた手順より前の、同じ段階の手順（番号 1）を削除すると、番号が 1 つずれます。
+  guide = guideAfterRemoval(guide, 1);
+  assert.deepEqual(guide.mistakes, [1]);
+  // 押し間違えた手順そのものを削除すると、記録から消えます。
+  assert.equal(guideAfterRemoval(guide, 1).mistakes, undefined);
 });
