@@ -512,38 +512,71 @@ export function guideStop(guide, steps) {
 /** 最初のページを開く手順を加えたときの知らせです（#257）。 */
 export const START_PAGE_ADDED = '最初にこのページを開く手順を加えました。';
 
+/** ［このページから始める］を押す前の移動の手順を、このページを開く手順に置き換えたときの知らせです（#264）。 */
+export const START_PAGE_REPLACED =
+  'ここまでの移動の手順を削除し、このページを直接開く手順にしました。';
+
 /**
- * 案内の最初の段階で［このページから始める］を押したとき、手順の最初が「ページを開く」手順でない場合に、
- * 表示中のページを開く手順を先頭に加えます（#257）。最初の手順を誤って削除すると、開くページが決まらず、
- * 実行できないフローになるためです。最初の手順が「ページを開く」手順の場合は、undefined を返します。
+ * 案内の最初の段階で［このページから始める］を押したときに、手順の始まりを表示中のページにそろえます。
+ * - 目的を選んだ後に記録した手順（最初の段階で、ページを探す途中のクリックや移動）を削除し、表示中のページを
+ *   開く手順に置き換えます（#264）。目的を選ぶ前の手順が「ページを開く」手順だけの場合は、その手順も置き換えます。
+ * - 目的を選ぶ前に記録したクリックや入力は残します。その手順の最初が「ページを開く」手順でない場合は、表示中の
+ *   ページを開く手順を先頭に加えます（#257）。最初の手順を誤って削除すると、開くページが決まらず、実行できない
+ *   フローになるためです。
+ * - 変える手順がない場合（記録を始めたページのまま押した場合など）は、undefined を返します。
+ * 判定には手順の種類と URL だけを使い、ページの文字は使いません。
  *
- * 加えたページのサイトが、記録を始めたサイト（origin）と異なる場合は、加えたページのサイトを origin にします。
+ * 表示中のページのサイトが、記録を始めたサイト（origin）と異なる場合は、表示中のページのサイトを origin にします。
  * 元のサイトで記録した手順には元のサイトを手順の origin として書き、元のサイトを使う手順がある場合だけ
  * extraOrigins に残します。
  * @template H, P
  * @param {{ steps: Step[], rowHints: H[], pagerHints: P[], origin: string, extraOrigins: string[], guide: GuideState }} state
  * @param {string} url 表示中のページの URL
- * @returns {{ steps: Step[], rowHints: (H | null)[], pagerHints: (P | null)[], origin: string, extraOrigins: string[], guide: GuideState } | undefined}
+ * @returns {{ steps: Step[], rowHints: (H | null)[], pagerHints: (P | null)[], origin: string, extraOrigins: string[], guide: GuideState, removed: number } | undefined}
  */
 export function withStartPage(state, url) {
-  if (state.steps[0]?.type === 'navigate') {
+  /** @type {Step} */
+  const open = { type: 'navigate', url, cause: 'user' };
+  const start = Math.min(state.guide.start, state.steps.length);
+  const entries = state.steps.map((step, index) => ({
+    step,
+    row: state.rowHints[index] ?? null,
+    pager: state.pagerHints[index] ?? null,
+  }));
+  const after = entries.slice(start);
+  let before = entries.slice(0, start);
+  if (before.every((entry) => entry.step.type === 'navigate')) {
+    before = [];
+  }
+  const head = { step: open, row: null, pager: null };
+  /** @type {typeof entries} */
+  let next;
+  if (before.length === 0) {
+    next = [head];
+  } else if (before[0].step.type !== 'navigate') {
+    next = [head, ...before];
+  } else {
+    next = after.length > 0 ? [...before, head] : before;
+  }
+  if (JSON.stringify(next.map((entry) => entry.step)) === JSON.stringify(state.steps)) {
     return undefined;
   }
+  const removed = state.steps.length - next.filter((entry) => entry !== head).length;
   const origin = new URL(url).origin;
   const previous = state.origin;
   /** @type {Step[]} */
-  const steps = state.steps.map((step) => {
+  const steps = next.map(({ step }) => {
     if (!('target' in step)) {
       return step;
     }
     const own = 'origin' in step && typeof step.origin === 'string' ? step.origin : previous;
-    const next = /** @type {Step & { origin?: string }} */ ({ ...step });
+    const changed = /** @type {Step & { origin?: string }} */ ({ ...step });
     if (own === origin) {
-      delete next.origin;
+      delete changed.origin;
     } else {
-      next.origin = own;
+      changed.origin = own;
     }
-    return next;
+    return changed;
   });
   /** 手順が使うサイトです。ページを開く手順の行き先と、手順の origin です。 */
   const used = new Set(
@@ -557,17 +590,17 @@ export function withStartPage(state, url) {
   const extraOrigins = [...new Set([...state.extraOrigins, previous])].filter(
     (site) => site !== origin && (site !== previous || used.has(site)),
   );
+  const { notice, ...guide } = state.guide;
+  void notice;
   return {
-    steps: [{ type: 'navigate', url, cause: 'user' }, ...steps],
-    rowHints: [null, ...state.rowHints],
-    pagerHints: [null, ...state.pagerHints],
+    steps,
+    rowHints: next.map((entry) => entry.row),
+    pagerHints: next.map((entry) => entry.pager),
     origin,
     extraOrigins,
-    guide: {
-      ...state.guide,
-      start: state.guide.start + 1,
-      done: state.guide.done.map((count) => count + 1),
-    },
+    // 最後に加えた「ページを開く」手順は、最初の段階の手順です。［ひとつ戻る］で最初の段階に戻ると、この手順から後を消します。
+    guide: { ...guide, start: next.at(-1) === head ? next.length - 1 : next.length, done: [] },
+    removed,
   };
 }
 

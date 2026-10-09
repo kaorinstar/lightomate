@@ -36,6 +36,7 @@ import {
   guideNext,
   guideStop,
   START_PAGE_ADDED,
+  START_PAGE_REPLACED,
   atStartPage,
   startGuide,
   withStartPage,
@@ -507,12 +508,9 @@ export function stepRecordingGuide(action, count) {
         .sendMessage(recording.tabId, { kind: 'recorder/pickCancel' }, { frameId: 0 })
         .catch(() => {});
       return { ok: true };
-    } else if (
-      action === 'next' &&
-      atStartPage(recording.guide) &&
-      recording.steps[0]?.type !== 'navigate'
-    ) {
-      // 最初のページを開く手順を削除していた場合は、表示中のページを開く手順を先頭に加えます（#257）。
+    } else if (action === 'next' && atStartPage(recording.guide)) {
+      // ［このページから始める］で、手順の始まりを表示中のページにそろえます。ページを探す途中の移動の手順は
+      // 削除し（#264）、最初のページを開く手順を削除していた場合は加えます（#257）。
       const frame = await chrome.webNavigation
         .getFrame({ tabId: recording.tabId, frameId: 0 })
         .catch(() => null);
@@ -538,14 +536,22 @@ export function stepRecordingGuide(action, count) {
         frame.url,
       );
       if (started) {
-        Object.assign(next, started);
+        const { removed, ...rest } = started;
+        Object.assign(next, rest);
         if (started.extraOrigins.length === 0) {
           delete next.extraOrigins;
         }
+        if (removed > 0) {
+          // 削除した手順のクリックに、後から始まったダウンロードを結び付けません（#223）。
+          delete next.lastClickAt;
+          delete next.lastHref;
+        }
         next.guide = {
           ...guideNext(started.guide, started.steps.length, 'button'),
-          notice: START_PAGE_ADDED,
+          notice: removed > 0 ? START_PAGE_REPLACED : START_PAGE_ADDED,
         };
+      } else {
+        next.guide = guideNext(recording.guide, recording.steps.length, 'button');
       }
     } else if (action === 'next' || action === 'skip') {
       next.guide = guideNext(
