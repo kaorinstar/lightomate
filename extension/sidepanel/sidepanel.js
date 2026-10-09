@@ -216,6 +216,9 @@ const notices = [
  */
 let currentPage = null;
 
+/** 記録中の区画に、記録中の状態の知らせ（recording.notice、#277）として表示している文です。 */
+let shownRecordingNotice = '';
+
 /** 入力フォームを表示しているフローの id です。 */
 let formFlowId = '';
 
@@ -937,6 +940,12 @@ async function render() {
       }),
     );
     elements.recordingDiscard.disabled = running || recording.steps.length === 0;
+    // 最初のページを開く手順を加えたことを知らせます（#277）。次の操作を記録すると消えます。
+    const recordingNotice = recording.notice ?? '';
+    if (recordingNotice !== shownRecordingNotice) {
+      showNotice(elements.recordingNotice, recordingNotice);
+      shownRecordingNotice = recordingNotice;
+    }
     renderGuide(recording);
     recordingLoopForm.update(
       recording.steps,

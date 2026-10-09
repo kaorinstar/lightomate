@@ -45,6 +45,7 @@ import {
 } from '../shared/guide.js';
 import { DECLINED_SITES_KEY } from '../shared/site-notice.js';
 import { visibleFrameOrigins } from '../shared/frame-visibility.js';
+import { withOpenPage } from '../shared/start-page.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -73,6 +74,8 @@ import { visibleFrameOrigins } from '../shared/frame-visibility.js';
  * @property {number} [lastClickAt] 最後に記録した手順がクリックの場合の、記録した時刻（Date.now() の値、#223）。直後に
  *   始まったダウンロードを、そのクリックに結び付けるために使います。フロー定義には含めません
  * @property {GuideState} [guide] 案内付きの記録（#246）の、目的と今の段階。フロー定義には含めません
+ * @property {string} [notice] 記録中の区画に出す知らせ（最初のページを開く手順を加えたこと、#277）。次の操作を
+ *   記録すると消えます
  */
 
 /**
@@ -726,6 +729,37 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
     const pageUrl = inFrame ? await topFrameUrl(recording.tabId, sender.frameId) : sender.url;
     if (pageUrl === undefined) {
       return;
+    }
+    // 最初の「ページを開く」手順を削除していた場合は、操作したページを開く手順を先頭に加えます（#277）。
+    // 実行するときに開くページが決まらず、実行できないフローになるためです。
+    delete recording.notice;
+    const opened = withOpenPage(
+      {
+        steps: recording.steps,
+        rowHints: alignHints(recording.steps, recording.rowHints),
+        pagerHints: alignHints(recording.steps, recording.pagerHints),
+        origin: recording.origin,
+        extraOrigins: recording.extraOrigins ?? [],
+      },
+      pageUrl,
+    );
+    if (opened) {
+      if (recording.steps.length >= MAX_STEPS - 1) {
+        return;
+      }
+      Object.assign(recording, opened);
+      if (opened.extraOrigins.length === 0) {
+        delete recording.extraOrigins;
+      }
+      // 加えた手順の分、案内の段階の手順の番号をずらします。
+      if (recording.guide) {
+        recording.guide = {
+          ...recording.guide,
+          start: recording.guide.start + 1,
+          done: recording.guide.done.map((count) => count + 1),
+        };
+      }
+      recording.notice = START_PAGE_ADDED;
     }
     const origin = new URL(pageUrl).origin;
     const frameOrigin = new URL(sender.url).origin;
