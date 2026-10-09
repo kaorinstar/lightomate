@@ -776,6 +776,9 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
           ...recording.guide,
           start: recording.guide.start + 1,
           done: recording.guide.done.map((count) => count + 1),
+          ...(recording.guide.mistakes
+            ? { mistakes: recording.guide.mistakes.map((index) => index + 1) }
+            : {}),
         };
       }
       recording.notice = START_PAGE_ADDED;
