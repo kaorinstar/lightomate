@@ -371,7 +371,69 @@ test('［このページから始める］を押す前の移動の手順は、�
   assert.deepEqual(started.rowHints, [null]);
   assert.deepEqual(started.pagerHints, [null]);
   assert.equal(started.removed, 5);
-  assert.deepEqual(started.guide, { purpose: 'files', start: 0, done: [] });
+  // 加えた手順は、［ひとつ戻る］で消えないよう、最初の段階より前の手順にします（#275）。
+  assert.deepEqual(started.guide, { purpose: 'files', start: 1, done: [] });
+});
+
+test('［ひとつ戻る］で最初の段階に戻っても、加えた「ページを開く」手順は残る（#275）', () => {
+  const guide = { purpose: /** @type {const} */ ('files'), start: 1, done: [] };
+  /** @type {Step[]} */
+  const steps = [
+    { type: 'navigate', url: 'https://shop.example.com/', cause: 'user' },
+    { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'page' },
+  ];
+  const started = withStartPage(
+    {
+      steps,
+      rowHints: [null, null],
+      pagerHints: [null, null],
+      origin: 'https://shop.example.com',
+      extraOrigins: [],
+      guide,
+    },
+    'https://shop.example.com/orders',
+  );
+  assert.ok(started);
+  const next = guideNext(started.guide, started.steps.length, 'button');
+  const back = guideBack(next);
+  assert.ok(back);
+  assert.equal(back.keep, 1);
+  // 戻った後に別のページへ移動して押すと、移動先のページを開く手順 1 件に置き換わります。
+  /** @type {Step[]} */
+  const moved = [
+    ...started.steps,
+    { type: 'navigate', url: 'https://shop.example.com/history', cause: 'page' },
+  ];
+  const again = withStartPage(
+    {
+      steps: moved,
+      rowHints: [null, null],
+      pagerHints: [null, null],
+      origin: 'https://shop.example.com',
+      extraOrigins: [],
+      guide: back.guide,
+    },
+    'https://shop.example.com/history',
+  );
+  assert.ok(again);
+  assert.deepEqual(again.steps, [
+    { type: 'navigate', url: 'https://shop.example.com/history', cause: 'user' },
+  ]);
+  // 戻った後に同じページのまま押した場合は、何も変えません。
+  assert.equal(
+    withStartPage(
+      {
+        steps: started.steps,
+        rowHints: [null],
+        pagerHints: [null],
+        origin: 'https://shop.example.com',
+        extraOrigins: [],
+        guide: back.guide,
+      },
+      'https://shop.example.com/orders',
+    ),
+    undefined,
+  );
 });
 
 test('目的を選ぶ前に記録したクリックは残し、その後ろに表示中のページを開く手順を加える（#264）', () => {
@@ -402,8 +464,8 @@ test('目的を選ぶ前に記録したクリックは残し、その後ろに�
   ]);
   assert.deepEqual(started.rowHints, ['行', null, null]);
   assert.equal(started.removed, 2);
-  // 最初の段階は、加えた「ページを開く」手順から始まります。
-  assert.equal(started.guide.start, 2);
+  // 加えた「ページを開く」手順の後から、最初の段階が始まります（#275）。
+  assert.equal(started.guide.start, 3);
 });
 
 test('別のサイトへ移動してから押すと、移動した先のサイトを origin にし、使わない元のサイトは残さない（#264）', () => {

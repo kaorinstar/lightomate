@@ -598,8 +598,10 @@ export function withStartPage(state, url) {
     pagerHints: next.map((entry) => entry.pager),
     origin,
     extraOrigins,
-    // 最後に加えた「ページを開く」手順は、最初の段階の手順です。［ひとつ戻る］で最初の段階に戻ると、この手順から後を消します。
-    guide: { ...guide, start: next.at(-1) === head ? next.length - 1 : next.length, done: [] },
+    // 加えた「ページを開く」手順は、最初の段階より前の手順として扱います。［ひとつ戻る］で最初の段階に戻っても
+    // 残し、開くページがないフローにならないようにします（#275）。戻った後に別のページで押した場合は、
+    // 「ページを開く」手順だけの前の手順として、表示中のページを開く手順に置き換わります。
+    guide: { ...guide, start: next.length, done: [] },
     removed,
   };
 }
