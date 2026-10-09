@@ -30,6 +30,13 @@ const click = (text, tag = 'span') => ({
   target: { selectors: ['.x'], tag, label: text, text },
 });
 
+test('目的の名前に、初めて使う人に意味がわからない「今までどおり」を含めない（#263）', () => {
+  assert.equal(PURPOSES.find((purpose) => purpose.id === 'free')?.label, '自由に記録する');
+  for (const purpose of PURPOSES) {
+    assert.doesNotMatch(purpose.label, /今まで/);
+  }
+});
+
 test('6 種類の目的のうち、ファイルは段階で、自由に記録するは案内なし、ほかは 1 文で案内する（#246）', () => {
   assert.deepEqual(
     PURPOSES.map((purpose) => purpose.id),
