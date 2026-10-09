@@ -37,11 +37,12 @@ export const PURPOSES = [
  * - pager：次のページへ送るのに使えるクリック（#182 の PagerHint を作れたもの）を記録すると進みます（#247）。
  * - click：クリックを記録すると進みます（［かごに入れる］など、#249）。
  * - stop：ボタン（label）を押すと、手順の最後に一時停止を加えて進みます（購入の確定の手前で止める、#249）。
+ * - pdf：ボタン（label）を押すと、手順の最後に PDF の保存を加えて進みます（#274）。
  * - end：最後の段階です。これより先には進みません。
  * @typedef {object} GuideStage
  * @property {string} id
  * @property {string} text 案内の 1 文
- * @property {'button' | 'date' | 'text' | 'save' | 'picked' | 'pager' | 'click' | 'stop' | 'end'} advance
+ * @property {'button' | 'date' | 'text' | 'save' | 'picked' | 'pager' | 'click' | 'stop' | 'pdf' | 'end'} advance
  * @property {string} [label] advance が button か picked の場合の、ボタンの文言。end の場合は、完成のボタンの文言です（#248）
  * @property {string} [waiting] advance が picked で、ページで押すのを待っている間の案内の文
  * @property {boolean} [skippable] 次の段階へ、［飛ばす］で進めるか
@@ -134,13 +135,27 @@ STAGES.purchase = [
   },
 ];
 
+STAGES.pdf = [
+  {
+    id: 'page',
+    text: '保存したいページを開くまで操作し、［このページを PDF で保存する］を押してください。',
+    advance: 'pdf',
+    label: 'このページを PDF で保存する',
+  },
+  {
+    id: 'rest',
+    text: '完成しました。実行すると、このページを PDF で保存します。［記録を停止して保存へ進む］を押してください。',
+    advance: 'end',
+    label: '記録を停止して保存へ進む',
+  },
+];
+
 /** 購入の確定の手前で止める一時停止の、止まる理由です（#249）。 */
 export const PURCHASE_STOP_NOTE = '注文の確定は人が押してください。';
 
 /** 1 文の案内だけを出す目的の、案内の文です。 */
 /** @type {Partial<Record<Purpose, string>>} */
 const HINTS = {
-  pdf: '保存したいページを開くまでの操作を記録してください。PDF の保存の手順は、記録の後に管理画面の編集画面で「PDF を保存」を加えます。',
   form: '入力する欄に記入し、送信のボタンを押してください。毎回変わる値は、後で実行するときに入力する項目にできます。',
   routine: 'いつも行う操作を、最初から最後まで 1 回行ってください。',
 };
@@ -463,6 +478,7 @@ export function guideView(guide, picking = false) {
     ...((stage.advance === 'button' ||
       stage.advance === 'picked' ||
       stage.advance === 'stop' ||
+      stage.advance === 'pdf' ||
       stage.advance === 'end') &&
     stage.label &&
     !waiting
@@ -576,6 +592,33 @@ export function guideStop(guide, steps) {
       ? steps
       : [...steps, /** @type {Step} */ ({ type: 'pause', note: PURCHASE_STOP_NOTE })];
   return { guide: advanced(guide, next.length), steps: next };
+}
+
+/**
+ * 今の段階が、［このページを PDF で保存する］で PDF の保存を加える段階かを返します（#274）。
+ * @param {GuideState} guide
+ */
+export function savesPdfHere(guide) {
+  return currentStage(guide)?.advance === 'pdf';
+}
+
+/**
+ * ［このページを PDF で保存する］を押した後の手順と案内の状態です（#274）。手順の最後に PDF の保存（保存先は
+ * 既定）を 1 つだけ加えます。最後の手順がすでに PDF の保存の場合は、加えません。
+ * ページを開くまでの手順は、保存したいページへ行く道筋のため残します。［ひとつ戻る］で加えた PDF の保存だけを
+ * 消せるよう、最初の段階の始まりを PDF の保存の位置にします。
+ * @param {GuideState} guide
+ * @param {Step[]} steps
+ * @returns {{ guide: GuideState, steps: Step[] }}
+ */
+export function guidePdf(guide, steps) {
+  if (!savesPdfHere(guide)) {
+    return { guide, steps };
+  }
+  const added = steps.at(-1)?.type !== 'savePdf';
+  const next = added ? [...steps, /** @type {Step} */ ({ type: 'savePdf' })] : steps;
+  const at = next.length - 1;
+  return { guide: { ...clearNotice(guide), start: at, done: [at] }, steps: next };
 }
 
 export { START_PAGE_ADDED };

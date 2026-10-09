@@ -9,6 +9,7 @@ import {
   guideAfterPicked,
   guideBack,
   guideDropMistakes,
+  guidePdf,
   guideLoop,
   guideNext,
   guideStop,
@@ -49,7 +50,7 @@ test('6 種類の目的のうち、ファイルは段階で、自由に記録す
   assert.ok(files);
   assert.equal(currentStage(files)?.id, 'list');
   assert.deepEqual(guideView(files).step, { number: 1, total: 7 });
-  for (const purpose of ['pdf', 'form', 'routine']) {
+  for (const purpose of ['form', 'routine']) {
     const guide = startGuide(purpose, 1);
     assert.ok(guide);
     const view = guideView(guide);
@@ -631,4 +632,43 @@ test('手順の一覧から手順を削除した後も、押し間違えた手�
   assert.deepEqual(guide.mistakes, [1]);
   // 押し間違えた手順そのものを削除すると、記録から消えます。
   assert.equal(guideAfterRemoval(guide, 1).mistakes, undefined);
+});
+
+test('「ページを PDF で保存する」は 2 段階で、ボタンで手順の最後に PDF の保存を 1 件加える（#274）', () => {
+  const guide = /** @type {import('../extension/shared/guide.js').GuideState} */ (
+    startGuide('pdf', 1)
+  );
+  const view = guideView(guide);
+  assert.deepEqual(view.step, { number: 1, total: 2 });
+  assert.equal(view.button, 'このページを PDF で保存する');
+  assert.equal(view.canBack, false);
+
+  // ページを開くまでの手順は残し、最後に PDF の保存を加えます。
+  /** @type {Step[]} */
+  const steps = [
+    navigate,
+    click('マイページ', 'a'),
+    { type: 'navigate', url: 'https://shop.example.com/mypage', cause: 'page' },
+  ];
+  const saved = guidePdf(guide, steps);
+  assert.deepEqual(saved.steps, [...steps, { type: 'savePdf' }]);
+  assert.equal(currentStage(saved.guide)?.id, 'rest');
+  assert.equal(guideView(saved.guide).button, '記録を停止して保存へ進む');
+  assert.equal(guideView(saved.guide).finish, true);
+
+  // 最後の手順がすでに PDF の保存の場合は、加えません。
+  assert.equal(guidePdf(guide, saved.steps).steps.length, saved.steps.length);
+
+  // ［ひとつ戻る］で 1 段階目に戻ると、加えた PDF の保存だけを消します。
+  const back = guideBack(saved.guide);
+  assert.ok(back);
+  assert.equal(back.keep, steps.length);
+  assert.equal(currentStage(back.guide)?.id, 'page');
+});
+
+test('「ページを PDF で保存する」の段階でない場合は、PDF の保存を加えない（#274）', () => {
+  const guide = /** @type {import('../extension/shared/guide.js').GuideState} */ (
+    startGuide('files', 1)
+  );
+  assert.deepEqual(guidePdf(guide, [navigate]).steps, [navigate]);
 });
