@@ -3707,13 +3707,67 @@ test('案内付きの記録：［このページから始める］を押す前�
   await panel.locator('#guide-mismatch', { hasText: 'ここまでの移動の手順を削除し' }).waitFor();
   assert.deepEqual(await recordingSteps(), [{ type: 'navigate', url: listUrl, cause: 'user' }]);
 
-  // ［ひとつ戻る］で最初の段階に戻ると、加えた手順も消え、もう一度押すと加わります。
+  // ［ひとつ戻る］で最初の段階に戻っても、加えた手順は残ります（#275）。
   await panel.click('#guide-back');
   await panel.locator('#guide-step', { hasText: '7 段階中 1 段階目' }).waitFor();
-  assert.deepEqual(await recordingSteps(), []);
+  assert.deepEqual(await recordingSteps(), [{ type: 'navigate', url: listUrl, cause: 'user' }]);
+
+  // 戻った後に別のページへ移動して押すと、移動先のページを開く手順 1 件に置き換わります。
+  await site.goto(portalUrl);
+  await waitUntil(
+    recordingSteps,
+    (steps) => steps.at(-1)?.type === 'navigate' && steps.length === 2,
+  );
   await panel.locator('#guide-next', { hasText: 'このページから始める' }).click();
   await panel.locator('#guide-step', { hasText: '7 段階中 2 段階目' }).waitFor();
-  assert.deepEqual(await recordingSteps(), [{ type: 'navigate', url: listUrl, cause: 'user' }]);
+  assert.deepEqual(await recordingSteps(), [{ type: 'navigate', url: portalUrl, cause: 'user' }]);
+
+  await panel.close();
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.equal(stopped.ok, true);
+  await site.close();
+});
+
+test('最初の「ページを開く」手順を削除した後に操作すると、表示中のページを開く手順を先頭に加える（#277）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const listUrl = `${server.origin}/issue-orders.html`;
+  await site.goto(listUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, listUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  assert.deepEqual(
+    await extensionPage.evaluate(() =>
+      chrome.runtime.sendMessage({ kind: 'recording/removeStep', index: 0, count: 1 }),
+    ),
+    { ok: true },
+  );
+  const id = new URL(extensionPage.url()).host;
+  const panel = await browser.context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
+
+  // 「自由に記録する」のまま、ページの文字を押します。
+  await site.click('.order:nth-child(1) .order-date');
+  await panel
+    .locator('#recording-notice', { hasText: '最初にこのページを開く手順を加えました' })
+    .waitFor();
+  const steps = await extensionPage.evaluate(async () => {
+    const { recording } = await chrome.storage.session.get('recording');
+    return /** @type {{ steps: Step[] }} */ (recording).steps;
+  });
+  assert.equal(steps.length, 2);
+  assert.deepEqual(steps[0], { type: 'navigate', url: listUrl, cause: 'user' });
+  assert.equal(steps[1].type, 'click');
 
   await panel.close();
   const stopped = await extensionPage.evaluate(() =>
