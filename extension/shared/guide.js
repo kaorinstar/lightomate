@@ -4,6 +4,7 @@
 
 import { parseDate } from './condition.js';
 import { ACTION_TAGS, candidateKey } from './record-loop.js';
+import { START_PAGE_ADDED, rebaseOrigin } from './start-page.js';
 
 /** @typedef {import('./flow.js').Step} Step */
 
@@ -166,6 +167,8 @@ const HINTS = {
  * @property {number} start 目的を選んだ時点の手順の数です。最初の段階は、この番号の手順から始まります
  * @property {number[]} done 終えた段階ごとの、終えた時点の手順の数です。done の長さが今の段階の番号です
  * @property {string} [notice] 押したものが合わないときの知らせです。次の手順を記録すると消えます
+ * @property {number[]} [mistakes] 今の段階で、押したものが合わないと知らせたクリックの手順の番号です（#276）。
+ *   正しいものを押して段階を終えたときに、これらの手順を削除します（guideDropMistakes）
  */
 
 /**
@@ -237,13 +240,25 @@ function advanced(guide, stepCount) {
 }
 
 /**
- * 知らせを付けた状態を返します。
+ * 押したものが合わないと知らせ、その手順を押し間違えた手順として覚えた状態を返します（#276）。
  * @param {GuideState} guide
  * @param {string} notice
+ * @param {number} index 押し間違えた手順の番号
  * @returns {GuideState}
  */
-function withNotice(guide, notice) {
-  return { ...guide, notice };
+function withMistake(guide, notice, index) {
+  return { ...guide, notice, mistakes: [...(guide.mistakes ?? []), index] };
+}
+
+/**
+ * 押し間違えた手順の記録を消した状態を返します。
+ * @param {GuideState} guide
+ * @returns {GuideState}
+ */
+function withoutMistakes(guide) {
+  const { mistakes, ...rest } = guide;
+  void mistakes;
+  return rest;
 }
 
 /**
@@ -284,15 +299,17 @@ export function guideAfterStep(guide, steps, pagerHints = []) {
     case 'date':
       return isDateClick(step)
         ? advanced(guide, steps.length)
-        : withNotice(
+        : withMistake(
             guide,
-            `押した「${label}」は、日付として読めません。一覧の 1 件目の日付の文字を押してください。押した手順は残っています。不要な場合は手順の一覧から削除してください。`,
+            `押した「${label}」は、日付として読めません。一覧の 1 件目の日付の文字を押してください。日付を押すと、いま押した手順は削除します。`,
+            steps.length - 1,
           );
     case 'text':
       if (ACTION_TAGS.includes(step.target.tag)) {
-        return withNotice(
+        return withMistake(
           guide,
-          `押した「${label}」は、リンクかボタンのため、ファイル名にできません。ボタンではなく文字を押してください。ファイル名にしたい文字がない場合は［なし］を押してください。`,
+          `押した「${label}」は、リンクかボタンのため、ファイル名にできません。ボタンではなく文字を押してください。文字を押すと、いま押した手順は削除します。ファイル名にしたい文字がない場合は［なし］を押してください。`,
+          steps.length - 1,
         );
       }
       return step.target.text ? advanced(guide, steps.length) : guide;
@@ -301,9 +318,10 @@ export function guideAfterStep(guide, steps, pagerHints = []) {
     case 'pager':
       return pagerHints[steps.length - 1]
         ? advanced(guide, steps.length)
-        : withNotice(
+        : withMistake(
             guide,
-            `押した「${label}」では、次のページへ進めません。一覧の［次へ］などを押してください。次のページがない場合は［次のページはない］を押してください。`,
+            `押した「${label}」では、次のページへ進めません。一覧の［次へ］などを押してください。［次へ］を押すと、いま押した手順は削除します。次のページがない場合は［次のページはない］を押してください。`,
+            steps.length - 1,
           );
     default:
       return clearNotice(guide);
@@ -354,7 +372,8 @@ export function guideNext(guide, stepCount, by) {
   if (by === 'button' ? stage.advance !== 'button' : stage.skippable !== true) {
     return guide;
   }
-  const { notice, ...rest } = guide;
+  // ［飛ばす］で段階を終えた場合は、押し間違えた手順を削除しません（#276）。正しいものを押していないためです。
+  const { notice, ...rest } = withoutMistakes(guide);
   void notice;
   return { ...rest, done: [...guide.done, stepCount] };
 }
@@ -369,7 +388,7 @@ export function guideBack(guide) {
     return undefined;
   }
   const previous = guide.done.length - 1;
-  const { notice, ...rest } = guide;
+  const { notice, ...rest } = withoutMistakes(guide);
   void notice;
   return {
     guide: { ...rest, done: guide.done.slice(0, previous) },
@@ -385,7 +404,57 @@ export function guideBack(guide) {
  */
 export function guideAfterRemoval(guide, index) {
   const done = guide.done.filter((count) => count <= index);
-  return { ...guide, start: Math.min(guide.start, index), done };
+  const next = withoutMistakes(guide);
+  // 押し間違えた手順の番号は、削除した手順の分をずらします（#276）。
+  const mistakes = (guide.mistakes ?? [])
+    .filter((mistake) => mistake !== index)
+    .map((mistake) => (mistake > index ? mistake - 1 : mistake));
+  return {
+    ...next,
+    start: Math.min(guide.start, index),
+    done,
+    ...(mistakes.length > 0 && done.length === guide.done.length ? { mistakes } : {}),
+  };
+}
+
+/**
+ * 正しいものを押して段階を終えた直後に、その段階で押し間違えた手順を削除します（#276）。
+ * 削除するのは、押し間違えたクリックと、それより後に記録した「ページを開く」手順（押し間違えたリンクでページが
+ * 移動し、戻った場合の移動）です。入力と選択は、利用者が意図した操作の場合があるため残します。
+ * 段階を終えた直後でない場合と、押し間違えた手順がない場合は、undefined を返します。
+ * @param {GuideState} guide 段階を終えた後の状態
+ * @param {Step[]} steps
+ * @returns {{ guide: GuideState, keep: boolean[], removed: number } | undefined}
+ */
+export function guideDropMistakes(guide, steps) {
+  const mistakes = guide.mistakes ?? [];
+  if (mistakes.length === 0 || guide.done.length === 0 || guide.done.at(-1) !== steps.length) {
+    return undefined;
+  }
+  const from = stageStart(guide, guide.done.length - 1);
+  const rest = withoutMistakes(guide);
+  // 終えた段階の中の、段階を終えた手順（最後の手順）より前の手順だけを対象にします。
+  const inStage = mistakes.filter((index) => index >= from && index < steps.length - 1);
+  if (inStage.length === 0) {
+    return { guide: rest, keep: steps.map(() => true), removed: 0 };
+  }
+  const first = Math.min(...inStage);
+  const keep = steps.map(
+    (step, index) =>
+      index < from ||
+      index === steps.length - 1 ||
+      !(inStage.includes(index) || (index > first && step.type === 'navigate')),
+  );
+  const removed = keep.filter((kept) => !kept).length;
+  return {
+    guide: {
+      ...rest,
+      done: [...guide.done.slice(0, -1), steps.length - removed],
+      notice: `押し間違えた手順を削除しました（${removed} 件）。`,
+    },
+    keep,
+    removed,
+  };
 }
 
 /**
@@ -552,8 +621,7 @@ export function guidePdf(guide, steps) {
   return { guide: { ...clearNotice(guide), start: at, done: [at] }, steps: next };
 }
 
-/** 最初のページを開く手順を加えたときの知らせです（#257）。 */
-export const START_PAGE_ADDED = '最初にこのページを開く手順を加えました。';
+export { START_PAGE_ADDED };
 
 /** ［このページから始める］を押す前の移動の手順を、このページを開く手順に置き換えたときの知らせです（#264）。 */
 export const START_PAGE_REPLACED =
@@ -605,33 +673,11 @@ export function withStartPage(state, url) {
     return undefined;
   }
   const removed = state.steps.length - next.filter((entry) => entry !== head).length;
-  const origin = new URL(url).origin;
-  const previous = state.origin;
-  /** @type {Step[]} */
-  const steps = next.map(({ step }) => {
-    if (!('target' in step)) {
-      return step;
-    }
-    const own = 'origin' in step && typeof step.origin === 'string' ? step.origin : previous;
-    const changed = /** @type {Step & { origin?: string }} */ ({ ...step });
-    if (own === origin) {
-      delete changed.origin;
-    } else {
-      changed.origin = own;
-    }
-    return changed;
-  });
-  /** 手順が使うサイトです。ページを開く手順の行き先と、手順の origin です。 */
-  const used = new Set(
-    steps.flatMap((step) => {
-      if (step.type === 'navigate') {
-        return [new URL(step.url).origin];
-      }
-      return 'origin' in step && typeof step.origin === 'string' ? [step.origin] : [];
-    }),
-  );
-  const extraOrigins = [...new Set([...state.extraOrigins, previous])].filter(
-    (site) => site !== origin && (site !== previous || used.has(site)),
+  const { steps, origin, extraOrigins } = rebaseOrigin(
+    next.map((entry) => entry.step),
+    state.origin,
+    url,
+    state.extraOrigins,
   );
   const { notice, ...guide } = state.guide;
   void notice;
@@ -641,8 +687,10 @@ export function withStartPage(state, url) {
     pagerHints: next.map((entry) => entry.pager),
     origin,
     extraOrigins,
-    // 最後に加えた「ページを開く」手順は、最初の段階の手順です。［ひとつ戻る］で最初の段階に戻ると、この手順から後を消します。
-    guide: { ...guide, start: next.at(-1) === head ? next.length - 1 : next.length, done: [] },
+    // 加えた「ページを開く」手順は、最初の段階より前の手順として扱います。［ひとつ戻る］で最初の段階に戻っても
+    // 残し、開くページがないフローにならないようにします（#275）。戻った後に別のページで押した場合は、
+    // 「ページを開く」手順だけの前の手順として、表示中のページを開く手順に置き換わります。
+    guide: { ...guide, start: next.length, done: [] },
     removed,
   };
 }

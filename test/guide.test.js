@@ -8,6 +8,7 @@ import {
   guideAfterStep,
   guideAfterPicked,
   guideBack,
+  guideDropMistakes,
   guidePdf,
   guideLoop,
   guideNext,
@@ -372,7 +373,69 @@ test('［このページから始める］を押す前の移動の手順は、�
   assert.deepEqual(started.rowHints, [null]);
   assert.deepEqual(started.pagerHints, [null]);
   assert.equal(started.removed, 5);
-  assert.deepEqual(started.guide, { purpose: 'files', start: 0, done: [] });
+  // 加えた手順は、［ひとつ戻る］で消えないよう、最初の段階より前の手順にします（#275）。
+  assert.deepEqual(started.guide, { purpose: 'files', start: 1, done: [] });
+});
+
+test('［ひとつ戻る］で最初の段階に戻っても、加えた「ページを開く」手順は残る（#275）', () => {
+  const guide = { purpose: /** @type {const} */ ('files'), start: 1, done: [] };
+  /** @type {Step[]} */
+  const steps = [
+    { type: 'navigate', url: 'https://shop.example.com/', cause: 'user' },
+    { type: 'navigate', url: 'https://shop.example.com/orders', cause: 'page' },
+  ];
+  const started = withStartPage(
+    {
+      steps,
+      rowHints: [null, null],
+      pagerHints: [null, null],
+      origin: 'https://shop.example.com',
+      extraOrigins: [],
+      guide,
+    },
+    'https://shop.example.com/orders',
+  );
+  assert.ok(started);
+  const next = guideNext(started.guide, started.steps.length, 'button');
+  const back = guideBack(next);
+  assert.ok(back);
+  assert.equal(back.keep, 1);
+  // 戻った後に別のページへ移動して押すと、移動先のページを開く手順 1 件に置き換わります。
+  /** @type {Step[]} */
+  const moved = [
+    ...started.steps,
+    { type: 'navigate', url: 'https://shop.example.com/history', cause: 'page' },
+  ];
+  const again = withStartPage(
+    {
+      steps: moved,
+      rowHints: [null, null],
+      pagerHints: [null, null],
+      origin: 'https://shop.example.com',
+      extraOrigins: [],
+      guide: back.guide,
+    },
+    'https://shop.example.com/history',
+  );
+  assert.ok(again);
+  assert.deepEqual(again.steps, [
+    { type: 'navigate', url: 'https://shop.example.com/history', cause: 'user' },
+  ]);
+  // 戻った後に同じページのまま押した場合は、何も変えません。
+  assert.equal(
+    withStartPage(
+      {
+        steps: started.steps,
+        rowHints: [null],
+        pagerHints: [null],
+        origin: 'https://shop.example.com',
+        extraOrigins: [],
+        guide: back.guide,
+      },
+      'https://shop.example.com/orders',
+    ),
+    undefined,
+  );
 });
 
 test('目的を選ぶ前に記録したクリックは残し、その後ろに表示中のページを開く手順を加える（#264）', () => {
@@ -403,8 +466,8 @@ test('目的を選ぶ前に記録したクリックは残し、その後ろに�
   ]);
   assert.deepEqual(started.rowHints, ['行', null, null]);
   assert.equal(started.removed, 2);
-  // 最初の段階は、加えた「ページを開く」手順から始まります。
-  assert.equal(started.guide.start, 2);
+  // 加えた「ページを開く」手順の後から、最初の段階が始まります（#275）。
+  assert.equal(started.guide.start, 3);
 });
 
 test('別のサイトへ移動してから押すと、移動した先のサイトを origin にし、使わない元のサイトは残さない（#264）', () => {
@@ -472,6 +535,103 @@ test('加えたページのサイトが記録を始めたサイトと異なる�
   assert.ok(kept);
   assert.deepEqual(kept.extraOrigins, ['https://ashiato.example.com']);
   assert.equal(/** @type {any} */ (kept.steps[1]).origin, 'https://ashiato.example.com');
+});
+
+/** 日付の段階まで進めた、ファイルの案内の状態です。手順は「ページを開く」1 件の後から日付の段階です。 */
+function atDateStage() {
+  const guide = /** @type {import('../extension/shared/guide.js').GuideState} */ (
+    startGuide('files', 1)
+  );
+  return guideNext(guide, 1, 'button');
+}
+
+test('日付の段階で押し間違えた後に日付を押すと、押し間違えたクリックを削除する（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [navigate, click('C-003')];
+  guide = guideAfterStep(guide, steps);
+  assert.deepEqual(guide.mistakes, [1]);
+  assert.match(guide.notice ?? '', /日付を押すと、いま押した手順は削除します/);
+  steps.push(click('2026/09/25(金)'));
+  guide = guideAfterStep(guide, steps);
+  assert.equal(currentStage(guide)?.id, 'name');
+  const dropped = guideDropMistakes(guide, steps);
+  assert.ok(dropped);
+  assert.deepEqual(dropped.keep, [true, false, true]);
+  assert.equal(dropped.removed, 1);
+  assert.deepEqual(dropped.guide.done, [1, 2]);
+  assert.equal(dropped.guide.mistakes, undefined);
+  assert.equal(dropped.guide.notice, '押し間違えた手順を削除しました（1 件）。');
+});
+
+test('押し間違えたリンクでページが移動し、戻ってから正しいものを押すと、その後の移動も削除する（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [navigate, click('注文詳細', 'a')];
+  guide = guideAfterStep(guide, steps);
+  steps.push({ type: 'navigate', url: 'https://shop.example.com/detail', cause: 'page' });
+  guide = guideAfterStep(guide, steps);
+  steps.push({ type: 'navigate', url: 'https://shop.example.com/orders', cause: 'page' });
+  guide = guideAfterStep(guide, steps);
+  steps.push(click('2026/09/25(金)'));
+  guide = guideAfterStep(guide, steps);
+  const dropped = guideDropMistakes(guide, steps);
+  assert.ok(dropped);
+  assert.deepEqual(dropped.keep, [true, false, false, false, true]);
+  assert.equal(dropped.removed, 3);
+  assert.deepEqual(dropped.guide.done, [1, 2]);
+});
+
+test('押し間違えた後に記録した選択の手順は残す（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [navigate, click('C-003')];
+  guide = guideAfterStep(guide, steps);
+  steps.push({
+    type: 'select',
+    target: { selectors: ['#year'], tag: 'select', label: '年' },
+    values: ['2026'],
+    labels: ['2026 年'],
+  });
+  guide = guideAfterStep(guide, steps);
+  steps.push(click('2026/09/25(金)'));
+  guide = guideAfterStep(guide, steps);
+  const dropped = guideDropMistakes(guide, steps);
+  assert.ok(dropped);
+  assert.deepEqual(dropped.keep, [true, false, true, true]);
+});
+
+test('［飛ばす］で段階を終えた場合は、押し間違えた手順を削除しない（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [navigate, click('C-003')];
+  guide = guideAfterStep(guide, steps);
+  guide = guideNext(guide, steps.length, 'skip');
+  assert.equal(currentStage(guide)?.id, 'name');
+  assert.equal(guide.mistakes, undefined);
+  assert.equal(guideDropMistakes(guide, steps), undefined);
+});
+
+test('手順の一覧から手順を削除した後も、押し間違えた手順の番号を保つ（#276）', () => {
+  let guide = atDateStage();
+  /** @type {Step[]} */
+  const steps = [
+    navigate,
+    {
+      type: 'select',
+      target: { selectors: ['#year'], tag: 'select', label: '年' },
+      values: ['2026'],
+      labels: ['2026 年'],
+    },
+    click('C-003'),
+  ];
+  guide = guideAfterStep(guide, steps);
+  assert.deepEqual(guide.mistakes, [2]);
+  // 押し間違えた手順より前の、同じ段階の手順（番号 1）を削除すると、番号が 1 つずれます。
+  guide = guideAfterRemoval(guide, 1);
+  assert.deepEqual(guide.mistakes, [1]);
+  // 押し間違えた手順そのものを削除すると、記録から消えます。
+  assert.equal(guideAfterRemoval(guide, 1).mistakes, undefined);
 });
 
 test('「ページを PDF で保存する」は 2 段階で、ボタンで手順の最後に PDF の保存を 1 件加える（#274）', () => {
