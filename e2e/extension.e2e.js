@@ -3709,6 +3709,76 @@ test('案内付きの記録：［このページから始める］を押す前�
   await site.close();
 });
 
+test('案内付きの記録：「ページを PDF で保存する」の案内に従うと、移動先のページを PDF で保存するフローができる（#274）', async () => {
+  const { extensionPage } = browser;
+  const site = await browser.context.newPage();
+  const portalUrl = `${server.origin}/portal.html`;
+  const listUrl = `${server.origin}/issue-orders.html`;
+  await site.goto(portalUrl);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, portalUrl);
+  assert.deepEqual(
+    await extensionPage.evaluate(
+      (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+      tabId,
+    ),
+    { ok: true },
+  );
+  const id = new URL(extensionPage.url()).host;
+  const panel = await browser.context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
+  /** @param {number} number */
+  const stage = (number) =>
+    panel.locator('#guide-step', { hasText: `2 段階中 ${number} 段階目` }).waitFor();
+
+  await panel.selectOption('#recording-purpose', 'pdf');
+  await stage(1);
+  // 保存したいページへ移動してから押します。移動の手順は残ります。
+  await site.click('#to-orders');
+  await site.waitForURL(listUrl);
+  await waitUntil(
+    () =>
+      extensionPage.evaluate(async () => {
+        const { recording } = await chrome.storage.session.get('recording');
+        return /** @type {{ steps: Step[] }} */ (recording).steps;
+      }),
+    (steps) => {
+      const last = steps.at(-1);
+      return last?.type === 'navigate' && last.url === listUrl;
+    },
+  );
+  await panel.locator('#guide-next', { hasText: 'このページを PDF で保存する' }).click();
+  await stage(2);
+  await panel.locator('#guide-next', { hasText: '記録を停止して保存へ進む' }).click();
+  await panel.locator('#result-section').waitFor();
+  const lastFlow = await extensionPage.evaluate(async () => {
+    const { lastFlow } = await chrome.storage.session.get('lastFlow');
+    return /** @type {Flow} */ (lastFlow);
+  });
+  assert.deepEqual(
+    lastFlow.steps.map((step) => step.type),
+    ['navigate', 'click', 'navigate', 'savePdf'],
+  );
+  await panel.close();
+  await site.close();
+
+  // 実行すると、移動先のページを PDF で保存します。
+  const entry = await runFlow(extensionPage, { ...lastFlow, name: 'PDF の案内' });
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/PDF の案内/')),
+    (list) => list.length >= 1,
+  );
+  assert.equal(files.length, 1);
+  assert.match(files[0], /\.pdf$/);
+  for (const page of [...pagesAt('/portal.html'), ...pagesAt('/issue-orders.html')]) {
+    await page.close();
+  }
+});
+
 test('案内付きの記録：最初の手順を削除しても、［このページから始める］で表示中のページを開く手順を加え、実行できる（#257）', async () => {
   const { extensionPage } = browser;
   const site = await browser.context.newPage();

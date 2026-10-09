@@ -41,6 +41,8 @@ import {
   startGuide,
   withStartPage,
   stopsHere,
+  savesPdfHere,
+  guidePdf,
   waitsForPick,
 } from '../shared/guide.js';
 import { DECLINED_SITES_KEY } from '../shared/site-notice.js';
@@ -482,7 +484,25 @@ export function stepRecordingGuide(action, count) {
     }
     /** @type {Recording} */
     const next = { ...recording };
-    if (action === 'next' && stopsHere(recording.guide)) {
+    if (action === 'next' && savesPdfHere(recording.guide)) {
+      // ［このページを PDF で保存する］で、手順の最後に PDF の保存を加えます（#274）。
+      const frame = await chrome.webNavigation
+        .getFrame({ tabId: recording.tabId, frameId: 0 })
+        .catch(() => null);
+      if (!frame || !isWebUrl(frame.url)) {
+        return {
+          ok: false,
+          error: 'このページは PDF で保存できません。保存したいページを開いてから押してください。',
+        };
+      }
+      const saved = guidePdf(recording.guide, recording.steps);
+      next.guide = saved.guide;
+      next.steps = saved.steps;
+      next.rowHints = saved.steps.map((_, index) => recording.rowHints?.[index] ?? null);
+      next.pagerHints = saved.steps.map((_, index) => recording.pagerHints?.[index] ?? null);
+      delete next.lastClickAt;
+      delete next.lastHref;
+    } else if (action === 'next' && stopsHere(recording.guide)) {
       // ［ここで止める］で、購入の確定の手前で止まる一時停止を加えます（#249）。
       const stopped = guideStop(recording.guide, recording.steps);
       next.guide = stopped.guide;
