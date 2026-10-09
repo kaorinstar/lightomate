@@ -3465,12 +3465,26 @@ test('案内付きの記録：目的を選ぶと案内が出て、日付以外�
   assert.match(await mismatch.innerText(), /「C-003」は、日付として読めません/);
   assert.equal(await panel.locator('#guide-step').innerText(), '7 段階中 2 段階目');
 
-  // 日付を押すと、次の段階へ進みます。
+  // 日付を押すと、次の段階へ進みます。押し間違えた手順は削除し、その旨を知らせます（#276）。
   await site.click('.order-row:nth-child(1) .order-date');
   await panel.locator('#guide-step', { hasText: '7 段階中 3 段階目' }).waitFor();
-  assert.equal(await mismatch.isVisible(), false);
+  await panel
+    .locator('#guide-mismatch', { hasText: '押し間違えた手順を削除しました（1 件）' })
+    .waitFor();
+  const kept = await extensionPage.evaluate(async () => {
+    const { recording } = await chrome.storage.session.get('recording');
+    return /** @type {{ steps: Step[] }} */ (recording).steps;
+  });
+  assert.deepEqual(
+    kept.map((step) => step.type),
+    ['navigate', 'click'],
+  );
+  assert.equal(
+    /** @type {any} */ (kept[1]).target.text,
+    await site.locator('.order-row:nth-child(1) .order-date').innerText(),
+  );
 
-  // ［ひとつ戻る］で日付の段階に戻り、その段階で記録した 2 件の手順を消します。
+  // ［ひとつ戻る］で日付の段階に戻り、その段階で記録した日付の手順を消します。
   await panel.click('#guide-back');
   await panel.locator('#guide-step', { hasText: '7 段階中 2 段階目' }).waitFor();
   const steps = await extensionPage.evaluate(async () => {

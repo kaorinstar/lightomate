@@ -31,6 +31,7 @@ import {
   guideAfterPicked,
   guideAfterRemoval,
   guideAfterStep,
+  guideDropMistakes,
   guideBack,
   guideLoop,
   guideNext,
@@ -629,9 +630,27 @@ export async function finishRecordingGuide(count) {
  * @param {Recording} recording 変更する記録中の状態
  */
 function refreshGuide(recording) {
-  if (recording.guide) {
-    recording.guide = guideAfterStep(recording.guide, recording.steps, recording.pagerHints);
+  if (!recording.guide) {
+    return;
   }
+  recording.guide = guideAfterStep(recording.guide, recording.steps, recording.pagerHints);
+  // 正しいものを押して段階を終えた場合は、その段階で押し間違えた手順を削除します（#276）。
+  const dropped = guideDropMistakes(recording.guide, recording.steps);
+  if (!dropped) {
+    return;
+  }
+  if (dropped.removed > 0) {
+    const rowHints = alignHints(recording.steps, recording.rowHints);
+    const pagerHints = alignHints(recording.steps, recording.pagerHints);
+    recording.steps = recording.steps.filter((_, index) => dropped.keep[index]);
+    recording.rowHints = /** @type {RowHint[]} */ (
+      rowHints.filter((_, index) => dropped.keep[index])
+    );
+    recording.pagerHints = /** @type {PagerHint[]} */ (
+      pagerHints.filter((_, index) => dropped.keep[index])
+    );
+  }
+  recording.guide = dropped.guide;
 }
 
 /**
@@ -757,6 +776,9 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
           ...recording.guide,
           start: recording.guide.start + 1,
           done: recording.guide.done.map((count) => count + 1),
+          ...(recording.guide.mistakes
+            ? { mistakes: recording.guide.mistakes.map((index) => index + 1) }
+            : {}),
         };
       }
       recording.notice = START_PAGE_ADDED;
@@ -857,9 +879,7 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
       }
       recording.steps.push(recorded);
       // 案内付きの記録（#246）では、記録した手順で次の段階へ進むかを決めます。
-      if (recording.guide) {
-        recording.guide = guideAfterStep(recording.guide, recording.steps, recording.pagerHints);
-      }
+      refreshGuide(recording);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
     }
     if (notice !== undefined) {
