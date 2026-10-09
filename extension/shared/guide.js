@@ -17,7 +17,7 @@ import { ACTION_TAGS, candidateKey } from './record-loop.js';
  * @type {{ id: Purpose, label: string }[]}
  */
 export const PURPOSES = [
-  { id: 'free', label: '自由に記録する（今までどおり）' },
+  { id: 'free', label: '自由に記録する' },
   { id: 'files', label: 'ファイルをまとめて保存する（領収書・請求書など）' },
   { id: 'pdf', label: 'ページを PDF で保存する' },
   { id: 'purchase', label: '商品を購入する（確定の手前で止める）' },
