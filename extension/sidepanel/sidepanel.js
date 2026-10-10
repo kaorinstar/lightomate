@@ -47,8 +47,8 @@ import { DECLINED_SITES_KEY, siteNotice, siteNoticeText } from '../shared/site-n
 import { createLoopForm } from './loop-form.js';
 import { pagerLoops } from '../shared/record-loop.js';
 import {
-  DATE_DEFAULT_CHOICES,
   DATE_PARTS,
+  dateDefaultOptions,
   DATE_PART_LABELS,
   paramTarget,
   valueParamNote,
@@ -601,14 +601,18 @@ let valueParamForm = null;
 /**
  * 手順を実行するたびに変える値にするボタンと、日付の場合は既定の日付を選ぶ欄を作ります（#286）。
  * 入力（文字）は、押すとすぐに変えます。選ぶものがないためです。
+ * 既定の日付の選択肢には具体的な日付を添え、この欄に当てはめる値を下に示します。最初は、記録した値と一致する
+ * 選択肢を選んでおきます。
+ * @param {import('../shared/flow.js').Step[]} steps 表示している手順
+ * @param {Param[]} params 今のパラメータ
  * @param {number} index 手順の番号（0 から数えます）
- * @param {number} count 表示している手順の件数
  * @param {import('../shared/record-param.js').ParamTarget} target
  * @param {boolean} locked 変更できない状態（フローの実行中）か
  * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
  * @returns {HTMLElement[]}
  */
-function valueParamControls(index, count, target, locked, errorNotice) {
+function valueParamControls(steps, params, index, target, locked, errorNotice) {
+  const count = steps.length;
   const open = valueParamForm?.index === index && valueParamForm.count === count;
   const toggle = button('実行するたびに変える値にする', 'btn btn-sm d-block mt-1', () => {
     if (target.kind === 'text') {
@@ -629,6 +633,23 @@ function valueParamControls(index, count, target, locked, errorNotice) {
   const form = document.createElement('div');
   form.className = 'lm-value-param mt-1';
   const id = `value-param-${index}`;
+
+  /** @type {HTMLSelectElement | null} */
+  let partSelect = null;
+  if (target.part === null) {
+    const partLabel = document.createElement('label');
+    partLabel.className = 'form-label mb-1';
+    partLabel.htmlFor = `${id}-part`;
+    partLabel.textContent = 'この欄で選ぶもの';
+    partSelect = document.createElement('select');
+    partSelect.className = 'form-select form-select-sm mb-2';
+    partSelect.id = `${id}-part`;
+    for (const part of DATE_PARTS) {
+      partSelect.add(new Option(DATE_PART_LABELS[part], part));
+    }
+    form.append(partLabel, partSelect);
+  }
+
   const defaultLabel = document.createElement('label');
   defaultLabel.className = 'form-label mb-1';
   defaultLabel.htmlFor = `${id}-default`;
@@ -636,26 +657,37 @@ function valueParamControls(index, count, target, locked, errorNotice) {
   const defaultSelect = document.createElement('select');
   defaultSelect.className = 'form-select form-select-sm';
   defaultSelect.id = `${id}-default`;
-  for (const [value, label] of DATE_DEFAULT_CHOICES) {
-    defaultSelect.add(new Option(label, value));
-  }
-  form.append(defaultLabel, defaultSelect);
-
-  /** @type {HTMLSelectElement | null} */
-  let partSelect = null;
-  if (target.part === null) {
-    const partLabel = document.createElement('label');
-    partLabel.className = 'form-label mt-2 mb-1';
-    partLabel.htmlFor = `${id}-part`;
-    partLabel.textContent = 'この欄で選ぶもの';
-    partSelect = document.createElement('select');
-    partSelect.className = 'form-select form-select-sm';
-    partSelect.id = `${id}-part`;
-    for (const part of DATE_PARTS) {
-      partSelect.add(new Option(DATE_PART_LABELS[part], part));
-    }
-    form.append(partLabel, partSelect);
-  }
+  const preview = document.createElement('small');
+  preview.className = 'd-block lm-sub mt-1';
+  preview.id = `${id}-preview`;
+  defaultSelect.setAttribute('aria-describedby', preview.id);
+  const now = new Date();
+  /** @type {import('../shared/record-param.js').DateDefaultOption[]} */
+  let options = [];
+  // 日付の選択肢と当てはめる値は、年・月・日のどれかで変わるため、部分を選び直すたびに作り直します。
+  const fillOptions = () => {
+    const part = /** @type {import('../shared/record-param.js').DatePart} */ (
+      target.part ?? partSelect?.value ?? 'month'
+    );
+    options = dateDefaultOptions(steps, params, index, part, now);
+    defaultSelect.replaceChildren(
+      ...options.map((option) => new Option(option.label, option.value, false, option.selected)),
+    );
+  };
+  const updatePreview = () => {
+    const option = options.find((item) => item.value === defaultSelect.value);
+    preview.textContent = option
+      ? `今日実行すると、この欄は「${option.fieldValue}」になります。`
+      : '';
+  };
+  fillOptions();
+  updatePreview();
+  defaultSelect.addEventListener('change', updatePreview);
+  partSelect?.addEventListener('change', () => {
+    fillOptions();
+    updatePreview();
+  });
+  form.append(defaultLabel, defaultSelect, preview);
 
   const buttons = document.createElement('div');
   buttons.className = 'lm-buttons mt-2';
@@ -1235,7 +1267,16 @@ function stepItems(steps, locked, errorNotice, recorded = {}) {
     // 選択と入力の手順には、実行するたびに変える値にするボタンを置きます（#286）。
     const valueTarget = paramTarget(step);
     if (valueTarget) {
-      item.append(...valueParamControls(index, steps.length, valueTarget, locked, errorNotice));
+      item.append(
+        ...valueParamControls(
+          steps,
+          recorded.params ?? [],
+          index,
+          valueTarget,
+          locked,
+          errorNotice,
+        ),
+      );
     }
     // 繰り返しにした手順（#167）は、内側の手順を字下げして続けます。削除は繰り返しの単位で行います。
     if (step.type === 'forEach') {

@@ -7,7 +7,7 @@
 // もらう」側か、記録した値との食い違いで選択を求める側に寄せます（CLAUDE.md）。
 
 import { flattenSteps } from './control-flow.js';
-import { findReferences } from './params.js';
+import { defaultValue as resolveDefault, findReferences } from './params.js';
 
 /** @typedef {import('./flow.js').Step} Step */
 /** @typedef {import('./params.js').Param} Param */
@@ -221,6 +221,86 @@ function referencePart(part, value) {
     return short ? 'month' : 'mm';
   }
   return short ? 'day' : 'dd';
+}
+
+/** 参照の部分ごとの、日付の部分です。 */
+const PART_OF_REFERENCE = /** @type {Record<string, DatePart>} */ ({
+  year: 'year',
+  month: 'month',
+  mm: 'month',
+  day: 'day',
+  dd: 'day',
+});
+
+/**
+ * 既定の日付の選ぶ欄に出す選択肢です。
+ * @typedef {object} DateDefaultOption
+ * @property {string} value 既定値（@first-of-previous-month など）
+ * @property {string} label 画面に出す名前。実行した日の具体的な日付を添えます（例：前月末日（9 月 30 日））
+ * @property {string} fieldValue 実行した日がその日の場合に、この欄に当てはめる値（例：30）
+ * @property {boolean} selected 最初に選んでおく選択肢か
+ */
+
+/**
+ * 既定の日付の選択肢を、具体的な日付と、この欄に当てはめる値とともに返します（#286）。
+ * 最初に選んでおく選択肢は、記録した値と当てはめる値が一致するものです。日付全体の名前（前月 1 日など）だけでは、
+ * 月や日の欄に何が入るかがわからず、記録した値とも食い違うためです。一致するものが複数ある場合（月の 09 は
+ * 前月 1 日にも前月末日にも当てはまります）は、次の順に選びます。
+ * 1. その日付をすでに作っていて、この部分（月など）をまだ使っていないもの（開始の月の次の、開始の日）
+ * 2. まだ作っていない日付（開始の月・日の次の、終了の月）
+ * 3. この部分をすでに使っている日付
+ * 一致するものがない場合は、先頭の選択肢を選んでおきます。
+ * @param {Step[]} steps
+ * @param {Param[]} params
+ * @param {number} index 対象の手順の番号
+ * @param {DatePart} part 日付の部分
+ * @param {Date} now 実行した日として計算に使う日時
+ * @returns {DateDefaultOption[]}
+ */
+export function dateDefaultOptions(steps, params, index, part, now) {
+  const step = steps[index];
+  const recorded = step?.type === 'select' ? numericValue(step) : null;
+  const reference = referencePart(part, recorded ?? '00');
+  const used = findReferences(JSON.stringify(steps));
+  const options = DATE_DEFAULT_CHOICES.map(([value, name]) => {
+    const [year, month, day] = resolveDefault(
+      { name: 'x', label: 'x', type: 'date', default: value },
+      now,
+    ).split('-');
+    const shown =
+      part === 'year'
+        ? `${year} 年 ${Number(month)} 月 ${Number(day)} 日`
+        : `${Number(month)} 月 ${Number(day)} 日`;
+    const fieldValue = {
+      year,
+      mm: month,
+      month: String(Number(month)),
+      dd: day,
+      day: String(Number(day)),
+    }[reference];
+    const existing = params.find((param) => param.type === 'date' && param.default === value);
+    let rank = 3;
+    if (recorded === null || Number(fieldValue) !== Number(recorded)) {
+      rank = 4;
+    } else if (!existing) {
+      rank = 2;
+    } else if (
+      !used.some(
+        (item) => item.name === existing.name && item.part && PART_OF_REFERENCE[item.part] === part,
+      )
+    ) {
+      rank = 1;
+    }
+    return { value, label: `${name}（${shown}）`, fieldValue: String(fieldValue), rank };
+  });
+  const best = Math.min(...options.map((option) => option.rank));
+  const chosen = best === 4 ? options[0] : options.find((option) => option.rank === best);
+  return options.map(({ value, label, fieldValue }) => ({
+    value,
+    label,
+    fieldValue,
+    selected: value === chosen?.value,
+  }));
 }
 
 /**

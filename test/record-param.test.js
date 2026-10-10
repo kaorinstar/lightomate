@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  dateDefaultOptions,
   makeRecordedParam,
   paramTarget,
   referencedParams,
@@ -264,4 +265,55 @@ test('実行するときに入力する値にした手順に、どの値かの�
 test('参照を含む選択の手順は、記録時の表示文字列ではなく値を示す', () => {
   assert.equal(describeStep(select('月', '{{date1.mm}}', '09')), '選択：月 ← {{date1.mm}}');
   assert.equal(describeStep(select('月', '09')), '選択：月 ← 09');
+});
+
+test('既定の日付の選択肢に具体的な日付と当てはめる値を添え、記録した値と一致するものを選んでおく', () => {
+  // 2026 年 10 月 10 日に、期間 9 月 1 日〜9 月 30 日を記録した場合です。
+  const now = new Date(2026, 9, 10);
+  /** @type {Step[]} */
+  let steps = [select('月', '09'), select('日', '01'), select('月', '09'), select('日', '30')];
+  /** @type {Param[]} */
+  let params = [];
+  /** @type {string[]} */
+  const chosen = [];
+  for (const [index, part] of /** @type {const} */ (['month', 'day', 'month', 'day']).entries()) {
+    const options = dateDefaultOptions(steps, params, index, part, now);
+    const selected = options.find((option) => option.selected);
+    assert.ok(selected);
+    chosen.push(`${selected.label}→${selected.fieldValue}`);
+    const result = ok(makeRecordedParam(steps, params, index, { defaultValue: selected.value }));
+    steps = result.steps;
+    params = result.params;
+  }
+  assert.deepEqual(chosen, [
+    '前月 1 日（9 月 1 日）→09',
+    '前月 1 日（9 月 1 日）→01',
+    '前月末日（9 月 30 日）→09',
+    '前月末日（9 月 30 日）→30',
+  ]);
+  assert.deepEqual(
+    steps.map((step) => step.type === 'select' && step.values[0]),
+    ['{{date1.mm}}', '{{date1.dd}}', '{{date2.mm}}', '{{date2.dd}}'],
+  );
+});
+
+test('記録した値と一致する既定の日付がない場合は、先頭を選んでおき、当てはめる値を示す', () => {
+  const now = new Date(2026, 9, 10);
+  const options = dateDefaultOptions([select('日', '15')], [], 0, 'day', now);
+  assert.deepEqual(
+    options.map((option) => [option.label, option.fieldValue, option.selected]),
+    [
+      ['前月 1 日（9 月 1 日）', '01', true],
+      ['前月末日（9 月 30 日）', '30', false],
+      ['今月 1 日（10 月 1 日）', '01', false],
+      ['今日（10 月 10 日）', '10', false],
+    ],
+  );
+});
+
+test('1 桁で記録した月には、先頭に 0 を付けない値を示す', () => {
+  const now = new Date(2026, 9, 10);
+  const options = dateDefaultOptions([select('月', '9')], [], 0, 'month', now);
+  assert.equal(options[0].fieldValue, '9');
+  assert.equal(options[0].selected, true);
 });
