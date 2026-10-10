@@ -3318,6 +3318,48 @@ test('ボタンで始まるダウンロード：記録すると保存の手順�
   }
 });
 
+test('新しいタブを開いてダウンロードさせるボタンも、利用者の操作として押して保存し、開いたタブを閉じる（#284）', async () => {
+  const { extensionPage } = browser;
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 19,
+    name: '別タブ',
+    origin: server.origin,
+    steps: [
+      { type: 'navigate', cause: 'user', url: `${server.origin}/popup-issue.html` },
+      {
+        type: 'click',
+        target: { selectors: ['#issue'], tag: 'button', label: '発行する', text: '発行する' },
+        download: { path: 'Lightomate/別タブ/popup', onConflict: 'overwrite' },
+      },
+      // ほかの要素が重なったボタンは、今までどおりページのスクリプトで押します。
+      {
+        type: 'click',
+        target: {
+          selectors: ['#covered'],
+          tag: 'button',
+          label: '重なった発行する',
+          text: '重なった発行する',
+        },
+        download: { path: 'Lightomate/別タブ/covered', onConflict: 'overwrite' },
+      },
+    ],
+  };
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const files = await waitUntil(
+    async () =>
+      listFiles(browser.downloadDir).filter((file) => file.startsWith('Lightomate/別タブ/')),
+    (list) => list.length >= 2,
+  );
+  assert.deepEqual(files, ['Lightomate/別タブ/covered.pdf', 'Lightomate/別タブ/popup.pdf']);
+  // ダウンロードのために開いたタブは閉じます。
+  assert.equal(pagesAt('/popup-receipt.html').length, 0);
+  for (const page of pagesAt('/popup-issue.html')) {
+    await page.close();
+  }
+});
+
 test('ページ送り：繰り返しにした後に押した「次へ」を、手順の一覧からその繰り返しのページ送りにできる（#237）', async () => {
   const { extensionPage } = browser;
   const site = await browser.context.newPage();

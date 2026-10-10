@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>領収書の発行</title>
+    <style>
+      #cover {
+        position: fixed;
+        left: 0;
+        right: 0;
+        top: 120px;
+        height: 60px;
+        background: rgba(255, 255, 255, 0.5);
+      }
+      #covered {
+        position: fixed;
+        top: 140px;
+        left: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>領収書の発行</h1>
+    <button type="button" id="issue">発行する</button>
+    <button type="button" id="covered">重なった発行する</button>
+    <div id="cover"></div>
+    <script src="popup-issue.js"></script>
+  </body>
+</html>

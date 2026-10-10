@@ -1520,6 +1520,11 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             step.type === 'click' && step.download
               ? watchDownload(runId, step.download, pathValues)
               : undefined;
+          // ダウンロードのために開いた新しいタブ（#284）も、クリックの前から数えます。
+          const popups =
+            step.type === 'click' && step.download && step.download.from !== 'link'
+              ? watchPopups(tabId)
+              : undefined;
           // 行の中の要素が見つからない行を飛ばす繰り返し（#174）の中では、やり直さず、見つからない場合は
           // その行の残りの手順を行わずに次の行へ進みます。ページ全体で探す要素は対象にしません。
           const skipDepth =
@@ -1535,6 +1540,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           } catch (error) {
             opened?.cancel();
             downloading?.cancel();
+            popups?.cancel();
             if (skipDepth !== -1 && error instanceof ElementNotFound) {
               skippedRows.push({
                 stepNumber: currentNumber() + 1,
@@ -1570,8 +1576,24 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
               throw error;
             }
           }
+          // ページが押す位置を返した場合は、利用者の操作として押します（#284）。
+          const point = done.response.point;
+          if (downloading && isPoint(point)) {
+            try {
+              await pressAsUser(runId, tabId, point);
+            } catch (error) {
+              downloading.cancel();
+              popups?.cancel();
+              throw error;
+            }
+          }
           if (downloading) {
-            const file = await downloading.wait(runId);
+            let file;
+            try {
+              file = await downloading.wait(runId);
+            } finally {
+              await popups?.close();
+            }
             savedFiles.get(runId)?.push(file);
           }
           // 一致するリンクをすべて保存する指定（#185）では、2 件目以降を、名前に _2、_3 … を付けて保存します。
@@ -1789,6 +1811,95 @@ function watchDownload(runId, download, values) {
         return await waitForDownload(runId, target, 'ファイル');
       } finally {
         cancel();
+      }
+    },
+  };
+}
+
+/**
+ * 押す位置かを判定します。
+ * @param {unknown} value
+ * @returns {value is { x: number, y: number }}
+ */
+function isPoint(value) {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Number.isFinite(/** @type {{ x?: unknown }} */ (value).x) &&
+    Number.isFinite(/** @type {{ y?: unknown }} */ (value).y)
+  );
+}
+
+/**
+ * ページの要素を、chrome.debugger の Input.dispatchMouseEvent で、利用者の操作として押します（#284）。
+ * element.click() は利用者の操作として扱われないため、ページが新しいタブを開いてファイルを渡す場合
+ * （楽天市場の領収書の［発行する］など）に、Chrome のポップアップのブロックで止められます。
+ * ダイアログへの応答（#88）のために接続している chrome.debugger を使います。接続していない場合と、押せなかった
+ * 場合は、ページのスクリプトで押します（runner/clickPending）。
+ * @param {string} runId
+ * @param {number} tabId
+ * @param {{ x: number, y: number }} point 表示領域の中の位置（CSS ピクセル）
+ */
+async function pressAsUser(runId, tabId, point) {
+  const watch = dialogWatches.get(runId);
+  if (watch && watch.tabId === tabId && !watch.suspended && watch.detached === undefined) {
+    try {
+      // Input.dispatchMouseEvent の位置は、ページの拡大率を掛けた値です。
+      const zoom = await chrome.tabs.getZoom(tabId).catch(() => 1);
+      const x = point.x * zoom;
+      const y = point.y * zoom;
+      const target = { tabId };
+      await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x,
+        y,
+      });
+      for (const type of ['mousePressed', 'mouseReleased']) {
+        await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type,
+          x,
+          y,
+          button: 'left',
+          buttons: type === 'mousePressed' ? 1 : 0,
+          clickCount: 1,
+        });
+      }
+      return;
+    } catch {
+      // ページのスクリプトで押します。
+    }
+  }
+  const response = await chrome.tabs
+    .sendMessage(tabId, { kind: 'runner/clickPending' }, { frameId: 0 })
+    .catch((error) => ({ ok: false, error: String(error) }));
+  if (!response?.ok) {
+    throw new Error(`要素を押せませんでした（${response?.error ?? '応答がありません'}）。`);
+  }
+}
+
+/**
+ * クリックで開いた新しいタブを数えます（#284）。ダウンロードの後に閉じます。ファイルを渡すために開いたタブは、
+ * 多くの場合、ダウンロードが始まるとサイトが閉じますが、閉じない場合に残さないためです。
+ * @param {number} tabId クリックするタブ
+ * @returns {{ cancel: () => void, close: () => Promise<void> }}
+ */
+function watchPopups(tabId) {
+  /** @type {number[]} */
+  const opened = [];
+  /** @param {chrome.tabs.Tab} tab */
+  const onCreated = (tab) => {
+    if (tab.openerTabId === tabId && tab.id !== undefined) {
+      opened.push(tab.id);
+    }
+  };
+  chrome.tabs.onCreated.addListener(onCreated);
+  const cancel = () => chrome.tabs.onCreated.removeListener(onCreated);
+  return {
+    cancel,
+    async close() {
+      cancel();
+      for (const id of opened) {
+        await chrome.tabs.remove(id).catch(() => {});
       }
     },
   };
