@@ -12,6 +12,8 @@ import {
   cancelPickSecond,
   finishRecordingGuide,
   makeRecordedLoop,
+  makeRecordedValueParam,
+  revertRecordedValueParam,
   onCommitted,
   onDOMContentLoaded,
   onDownloadCreated,
@@ -144,6 +146,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.dateStep,
         message.stopAtOlder,
       ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
+      return true;
+
+    case 'recording/makeParam':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      makeRecordedValueParam(message.index, message.count, message.value, message.part).then(
+        sendResponse,
+        (error) => sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/revertParam':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      revertRecordedValueParam(message.index, message.count).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
       return true;
 
     case 'recording/guide':
