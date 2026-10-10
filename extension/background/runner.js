@@ -3039,6 +3039,7 @@ async function waitForLoad(runId, tabId, isExpected, description, onOtherPage) {
 /**
  * 同じページかを判定します。クエリ文字列（? 以降）とページ内の位置（# 以降）は比べません。
  * セッションの識別子など、実行のたびに変わる値が含まれることがあるためです。
+ * パスの末尾の「/」の有無も比べません。サイトが末尾の「/」を外した URL に移動させることがあるためです（#282）。
  * @param {string} a
  * @param {string} b
  * @returns {boolean}
@@ -3047,10 +3048,18 @@ export function samePage(a, b) {
   try {
     const left = new URL(a);
     const right = new URL(b);
-    return left.origin === right.origin && left.pathname === right.pathname;
+    return left.origin === right.origin && trimSlash(left.pathname) === trimSlash(right.pathname);
   } catch {
     return false;
   }
+}
+
+/**
+ * パスの末尾の「/」を取り除きます。ルート（/）はそのままです。
+ * @param {string} pathname
+ */
+function trimSlash(pathname) {
+  return pathname.length > 1 ? pathname.replace(/\/+$/, '') || '/' : pathname;
 }
 
 /**
