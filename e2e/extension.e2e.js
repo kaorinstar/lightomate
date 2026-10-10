@@ -362,6 +362,83 @@ test('選択肢のパラメータ：当てはめた値で選び、一致しな�
   }
 });
 
+test('日付のパラメータ：前月 1 日〜前月末日を月・日の選択肢に当てはめて照会し、ダウンロードする（#219）', async () => {
+  const { extensionPage } = browser;
+  /**
+   * @param {string} name
+   * @param {string} value
+   * @returns {Step}
+   */
+  const select = (name, value) => ({
+    type: 'select',
+    target: target(`select[name="${name}"]`, 'select', name),
+    values: [value],
+    labels: ['01'],
+  });
+  /** @type {Flow} */
+  const flow = {
+    schemaVersion: 19,
+    name: '入出金明細',
+    origin: server.origin,
+    params: [
+      { name: 'from', label: '開始日', type: 'date', default: '@first-of-previous-month' },
+      { name: 'to', label: '終了日', type: 'date', default: '@end-of-previous-month' },
+    ],
+    steps: [
+      { type: 'navigate', url: `${server.origin}/bank-period.html`, cause: 'user' },
+      select('BLB0090', '{{from.mm}}'),
+      select('BLB0100', '{{from.dd}}'),
+      select('BLB0110', '{{to.mm}}'),
+      select('BLB0120', '{{to.dd}}'),
+      { type: 'click', target: { ...target('#inquiry', 'button', '照会する'), text: '照会する' } },
+      { type: 'navigate', url: `${server.origin}/bank-result.html`, cause: 'page' },
+      {
+        type: 'click',
+        target: {
+          ...target('button[name="BSM0120"]', 'button', '通帳形式ダウンロード'),
+          text: '通帳形式ダウンロード',
+        },
+      },
+      { type: 'wait', ms: 1000 },
+    ],
+  };
+  // 既定値（入力しない場合）は、実行した日の前月 1 日〜前月末日です。
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const last = new Date(now.getFullYear(), now.getMonth(), 0);
+  /** @param {Date} date */
+  const compact = (date) =>
+    `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const [result] = pagesAt('/bank-result.html');
+  assert.ok(result, '照会の結果のページが開いていません。');
+  const expected = `meisai_${compact(first)}_${compact(last)}.csv`;
+  await waitUntil(
+    async () => listFiles(browser.downloadDir),
+    (files) => files.some((file) => file.endsWith(expected)),
+  );
+  await result.close();
+
+  // 9 月 31 日のように存在しない日付は入力できないため、終了日は 9 月 30 日になります。
+  const september = await runFlow(extensionPage, flow, { from: '2026-09-01', to: '2026-09-30' });
+  assert.equal(september.status, 'done', september.reason ?? '');
+  const [again] = pagesAt('/bank-result.html');
+  assert.match((await again.locator('#period').textContent()) ?? '', /09月01日 ～ \d{4}年09月30日/);
+  await again.close();
+  for (const opened of pagesAt('/bank-period.html')) {
+    await opened.close();
+  }
+  // ほかのテストはダウンロード先のファイルの一覧を確かめるため、このテストで保存したファイルを消します。
+  await waitUntil(
+    async () => listFiles(browser.downloadDir).filter((file) => file.startsWith('meisai_')),
+    (files) => files.length >= 2,
+  );
+  for (const file of listFiles(browser.downloadDir).filter((name) => name.startsWith('meisai_'))) {
+    fs.rmSync(path.join(browser.downloadDir, file));
+  }
+});
+
 test('翻訳の案内：翻訳で変わらない指定（id）の要素が見つからない場合は、翻訳をやめる案内を付けない（#206）', async () => {
   const { extensionPage } = browser;
   /**
