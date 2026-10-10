@@ -10,6 +10,7 @@ import {
   flowsToShow,
   isActiveRun,
   pageOrigin,
+  runBlockers,
   runStatesFrom,
   uniqueName,
 } from '../extension/shared/flow-list.js';
@@ -220,4 +221,42 @@ test('if と forEach の内側の移動の手順のサイトも、フローに�
     ),
   });
   assert.deepEqual([...sites], ['https://www.example.com', 'https://login.example.com']);
+});
+
+test('runBlockers：最初の手順がページを開く手順でないフローは、noFirstPage を true にする（#258）', () => {
+  const state = { recording: false, runs: [] };
+  assert.equal(
+    runBlockers({ origin: shop, steps: [{ type: 'navigate' }] }, state).noFirstPage,
+    false,
+  );
+  assert.equal(runBlockers({ origin: shop, steps: [{ type: 'click' }] }, state).noFirstPage, true);
+  assert.equal(runBlockers({ origin: shop, steps: [] }, state).noFirstPage, true);
+});
+
+test('runBlockers：記録中と、同じサイトのフローを実行中は、busy に理由を返す（#258）', () => {
+  const flow = { origin: shop, steps: [{ type: 'navigate' }] };
+  const running = {
+    flowName: '注文',
+    origin: shop,
+    status: 'running',
+    startedAt: '2026-01-01T00:00:00Z',
+  };
+  assert.deepEqual(runBlockers(flow, { recording: false, runs: [] }), {
+    noFirstPage: false,
+    busy: '',
+  });
+  assert.equal(runBlockers(flow, { recording: true, runs: [] }).busy, '記録中は実行できません。');
+  assert.equal(
+    runBlockers(flow, { recording: false, runs: [running] }).busy,
+    conflictMessage(shop, '注文'),
+  );
+  // ほかのサイトの実行と、終わった実行は妨げません。
+  assert.equal(
+    runBlockers(flow, { recording: false, runs: [{ ...running, origin: www }] }).busy,
+    '',
+  );
+  assert.equal(
+    runBlockers(flow, { recording: false, runs: [{ ...running, status: 'done' }] }).busy,
+    '',
+  );
 });

@@ -47,7 +47,7 @@
     "alarms",
     "notifications"
   ],
-  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "host_permissions": ["https://*/*", "http://*/*"],
   "content_security_policy": {
     "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
   }

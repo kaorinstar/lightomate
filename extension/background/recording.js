@@ -20,13 +20,41 @@ import { applyStopRuleToRecordedStep } from '../shared/stop-rules.js';
 import { getStopRule } from '../common/stop-rules-store.js';
 import { getConfirmDetection } from '../common/confirm-detection-store.js';
 import { CONTROL_STEP_TYPES } from '../shared/control-flow.js';
-import { makeLoop, sanitizePagerHint, sanitizeRowHint } from '../shared/record-loop.js';
-import { toLinkDownload } from '../shared/file-link.js';
+import {
+  attachPager,
+  makeLoop,
+  sanitizePagerHint,
+  sanitizeRowHint,
+} from '../shared/record-loop.js';
+import { toClickDownload, toLinkDownload } from '../shared/file-link.js';
+import {
+  guideAfterPicked,
+  guideAfterRemoval,
+  guideAfterStep,
+  guideDropMistakes,
+  guideBack,
+  guideLoop,
+  guideNext,
+  guideStop,
+  START_PAGE_ADDED,
+  START_PAGE_REPLACED,
+  atStartPage,
+  startGuide,
+  withStartPage,
+  stopsHere,
+  savesPdfHere,
+  guidePdf,
+  waitsForPick,
+} from '../shared/guide.js';
+import { DECLINED_SITES_KEY } from '../shared/site-notice.js';
+import { visibleFrameOrigins } from '../shared/frame-visibility.js';
+import { withOpenPage } from '../shared/start-page.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
 /** @typedef {import('../shared/record-loop.js').RowHint} RowHint */
 /** @typedef {import('../shared/record-loop.js').PagerHint} PagerHint */
+/** @typedef {import('../shared/guide.js').GuideState} GuideState */
 
 /**
  * 記録中の状態です。
@@ -42,8 +70,15 @@ import { toLinkDownload } from '../shared/file-link.js';
  *   フロー定義には含めません
  * @property {import('../shared/params.js').Param[]} [params] 繰り返しにするときに加えたパラメータ（対象の月の
  *   条件の年月、#183）。記録を停止すると、フローの params になります
+ * @property {boolean} [picking] 2 件目の同じものを押してもらうのを待っているか（#241）。サイドパネルが、待っている間の
+ *   表示と、押された後に繰り返しの欄を開くために使います
  * @property {string} [lastHref] 最後に記録した手順がリンクのクリックの場合の、そのリンク先（#185）。直後にファイルへ
  *   移動したときに、同じ種類のリンクを探す指定を作るために使います。フロー定義には含めません
+ * @property {number} [lastClickAt] 最後に記録した手順がクリックの場合の、記録した時刻（Date.now() の値、#223）。直後に
+ *   始まったダウンロードを、そのクリックに結び付けるために使います。フロー定義には含めません
+ * @property {GuideState} [guide] 案内付きの記録（#246）の、目的と今の段階。フロー定義には含めません
+ * @property {string} [notice] 記録中の区画に出す知らせ（最初のページを開く手順を加えたこと、#277）。次の操作を
+ *   記録すると消えます
  */
 
 /**
@@ -53,7 +88,7 @@ import { toLinkDownload } from '../shared/file-link.js';
  * @property {string} origin 表示中のページのオリジン
  * @property {boolean} allowed そのサイトを操作する許可があり、記録しているか
  * @property {string[]} [blockedFrames] 表示中のページに埋め込まれた iframe のうち、操作の許可がないため記録して
- *   いない iframe のサイト（#20）。サイドパネルが［このサイトを許可して記録］を表示するために使います
+ *   いない、画面に見える iframe のサイト（#20、#230）。サイドパネルが上部の知らせを出すために使います
  */
 
 const RECORDING_KEY = 'recording';
@@ -138,7 +173,12 @@ export function startRecording(tabId) {
       pagerHints: [null],
     };
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
-    await chrome.storage.session.remove([LAST_FLOW_KEY, LAST_FLOW_HINTS_KEY, LAST_FLOW_PAGERS_KEY]);
+    await chrome.storage.session.remove([
+      LAST_FLOW_KEY,
+      LAST_FLOW_HINTS_KEY,
+      LAST_FLOW_PAGERS_KEY,
+      DECLINED_SITES_KEY,
+    ]);
     await attach(recording);
     return { ok: true };
   });
@@ -156,7 +196,7 @@ export function stopRecording() {
       return { ok: false, error: '記録していません。' };
     }
     if (recording.steps.length === 0) {
-      await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
+      await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY, DECLINED_SITES_KEY]);
       await detach(recording.tabId);
       return { ok: true, flow: null, errors: [] };
     }
@@ -175,7 +215,7 @@ export function stopRecording() {
       [LAST_FLOW_HINTS_KEY]: alignHints(recording.steps, recording.rowHints),
       [LAST_FLOW_PAGERS_KEY]: alignHints(recording.steps, recording.pagerHints),
     });
-    await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY]);
+    await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY, DECLINED_SITES_KEY]);
     await detach(recording.tabId);
     return { ok: true, flow: orderFlow(flow), errors: validateFlow(flow) };
   });
@@ -205,9 +245,15 @@ export function removeRecordedStep(index, count) {
       const pagerHints = /** @type {PagerHint[]} */ (
         withoutStep(alignHints(recording.steps, recording.pagerHints), index, count)
       );
-      await chrome.storage.session.set({
-        [RECORDING_KEY]: { ...recording, steps, rowHints, pagerHints },
-      });
+      /** @type {Recording} */
+      const next = { ...recording, steps, rowHints, pagerHints };
+      // 手順を削除した後の最後の手順は、控えた時刻のクリックとは限らないため、ダウンロードを結び付けません（#223）。
+      delete next.lastClickAt;
+      // 削除した手順を使って終えた案内の段階は、終えていないことにします（#246）。
+      if (next.guide && typeof index === 'number') {
+        next.guide = guideAfterRemoval(next.guide, index);
+      }
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
       return { ok: true };
     }
 
@@ -256,6 +302,7 @@ export function resetRecording() {
       LAST_FLOW_HINTS_KEY,
       LAST_FLOW_PAGERS_KEY,
       RECORDING_PAGE_KEY,
+      DECLINED_SITES_KEY,
     ]);
     if (recording) {
       await detach(recording.tabId);
@@ -323,15 +370,19 @@ export function makeRecordedLoop(
     }
     const nextParams = result.param ? [...params, result.param] : params;
     if (recording) {
-      await chrome.storage.session.set({
-        [RECORDING_KEY]: {
-          ...recording,
-          steps: result.steps,
-          rowHints: result.hints,
-          pagerHints: result.pagers,
-          ...(nextParams.length > 0 ? { params: nextParams } : {}),
-        },
-      });
+      /** @type {Recording} */
+      const next = {
+        ...recording,
+        steps: result.steps,
+        rowHints: result.hints,
+        pagerHints: result.pagers,
+        ...(nextParams.length > 0 ? { params: nextParams } : {}),
+      };
+      // 繰り返しに変えた後は、最後の手順が控えた時刻のクリックとは限らないため、ダウンロードを結び付けません（#223）。
+      delete next.lastClickAt;
+      // 繰り返しにした後は手順の番号が変わるため、案内（#246）を終えます。
+      delete next.guide;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
     } else if (lastFlow) {
       await chrome.storage.session.set({
         [LAST_FLOW_KEY]: {
@@ -345,6 +396,281 @@ export function makeRecordedLoop(
     }
     return { ok: true };
   });
+}
+
+/**
+ * 繰り返しを作った後に記録した「次へ」のクリックを、その繰り返しのページ送りにします（#237）。
+ * 記録中の手順と、記録を停止した後の保存前の手順のどちらにも使えます。
+ * @param {unknown} index 「次へ」のクリックの番号（0 から数えます）
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function attachRecordedPager(index, count) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    const lastFlow = recording ? undefined : await getLastFlow();
+    const steps = recording?.steps ?? lastFlow?.steps;
+    if (!steps) {
+      return { ok: false, error: 'ページ送りにする手順がありません。' };
+    }
+    if (count !== steps.length) {
+      return {
+        ok: false,
+        error:
+          '手順の一覧が変わったため、ページ送りにしませんでした。一覧を確かめてから押し直してください。',
+      };
+    }
+    const hints = alignHints(steps, recording ? recording.rowHints : await getLastFlowHints());
+    const pagers = alignHints(steps, recording ? recording.pagerHints : await getLastFlowPagers());
+    const result = attachPager(steps, hints, pagers, index);
+    if (!result.ok) {
+      return result;
+    }
+    if (recording) {
+      await chrome.storage.session.set({
+        [RECORDING_KEY]: {
+          ...recording,
+          steps: result.steps,
+          rowHints: result.hints,
+          pagerHints: result.pagers,
+        },
+      });
+    } else if (lastFlow) {
+      await chrome.storage.session.set({
+        [LAST_FLOW_KEY]: { ...lastFlow, steps: result.steps },
+        [LAST_FLOW_HINTS_KEY]: result.hints,
+        [LAST_FLOW_PAGERS_KEY]: result.pagers,
+      });
+    }
+    return { ok: true };
+  });
+}
+
+/**
+ * 記録の目的を選びます（#246）。「自由に記録する」を選ぶと、案内を終えます。
+ * @param {unknown} purpose
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function setRecordingGuide(purpose) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (!recording) {
+      return { ok: false, error: '記録中ではありません。' };
+    }
+    const guide = startGuide(purpose, recording.steps.length);
+    /** @type {Recording} */
+    const next = { ...recording };
+    if (guide) {
+      next.guide = guide;
+    } else {
+      delete next.guide;
+    }
+    await chrome.storage.session.set({ [RECORDING_KEY]: next });
+    return { ok: true };
+  });
+}
+
+/**
+ * 案内の段階を、サイドパネルのボタンで進める・飛ばす・戻ります（#246）。
+ * 戻る場合は、前の段階の始まりより後に記録した手順を削除します。
+ * @param {unknown} action next（［このページから始める］など）、skip（［飛ばす］）、back（［ひとつ戻る］）
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function stepRecordingGuide(action, count) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (!recording?.guide) {
+      return { ok: false, error: '案内付きの記録ではありません。' };
+    }
+    if (count !== recording.steps.length) {
+      return { ok: false, error: STALE_STEPS_ERROR };
+    }
+    /** @type {Recording} */
+    const next = { ...recording };
+    if (action === 'next' && savesPdfHere(recording.guide)) {
+      // ［このページを PDF で保存する］で、手順の最後に PDF の保存を加えます（#274）。
+      const frame = await chrome.webNavigation
+        .getFrame({ tabId: recording.tabId, frameId: 0 })
+        .catch(() => null);
+      if (!frame || !isWebUrl(frame.url)) {
+        return {
+          ok: false,
+          error: 'このページは PDF で保存できません。保存したいページを開いてから押してください。',
+        };
+      }
+      const saved = guidePdf(recording.guide, recording.steps);
+      next.guide = saved.guide;
+      next.steps = saved.steps;
+      next.rowHints = saved.steps.map((_, index) => recording.rowHints?.[index] ?? null);
+      next.pagerHints = saved.steps.map((_, index) => recording.pagerHints?.[index] ?? null);
+      delete next.lastClickAt;
+      delete next.lastHref;
+    } else if (action === 'next' && stopsHere(recording.guide)) {
+      // ［ここで止める］で、購入の確定の手前で止まる一時停止を加えます（#249）。
+      const stopped = guideStop(recording.guide, recording.steps);
+      next.guide = stopped.guide;
+      next.steps = stopped.steps;
+      next.rowHints = stopped.steps.map((_, index) => recording.rowHints?.[index] ?? null);
+      next.pagerHints = stopped.steps.map((_, index) => recording.pagerHints?.[index] ?? null);
+      delete next.lastClickAt;
+      delete next.lastHref;
+    } else if (action === 'next' && waitsForPick(recording.guide)) {
+      // 一覧のページへ戻った後に、2 件目の同じものを押してもらうのを待ち始めます（#247）。
+      if (pickCandidates(recording.steps).length === 0) {
+        return { ok: false, error: '1 件目の操作を記録してから押してください。' };
+      }
+      next.picking = true;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
+      await sendPickSecond(next);
+      return { ok: true };
+    } else if (action === 'back' && recording.picking && waitsForPick(recording.guide)) {
+      // 待っている間の［ひとつ戻る］は、待つのをやめます。
+      delete next.picking;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
+      await chrome.tabs
+        .sendMessage(recording.tabId, { kind: 'recorder/pickCancel' }, { frameId: 0 })
+        .catch(() => {});
+      return { ok: true };
+    } else if (action === 'next' && atStartPage(recording.guide)) {
+      // ［このページから始める］で、手順の始まりを表示中のページにそろえます。ページを探す途中の移動の手順は
+      // 削除し（#264）、最初のページを開く手順を削除していた場合は加えます（#257）。
+      const frame = await chrome.webNavigation
+        .getFrame({ tabId: recording.tabId, frameId: 0 })
+        .catch(() => null);
+      if (!frame || !isWebUrl(frame.url)) {
+        return {
+          ok: false,
+          error: 'このページは記録できません。記録できるページを開いてから押してください。',
+        };
+      }
+      const pageOrigin = new URL(frame.url).origin;
+      if (!(await chrome.permissions.contains({ origins: [`${pageOrigin}/*`] }))) {
+        return { ok: false, error: `${pageOrigin} を操作する許可がありません。` };
+      }
+      const started = withStartPage(
+        {
+          steps: recording.steps,
+          rowHints: alignHints(recording.steps, recording.rowHints),
+          pagerHints: alignHints(recording.steps, recording.pagerHints),
+          origin: recording.origin,
+          extraOrigins: recording.extraOrigins ?? [],
+          guide: recording.guide,
+        },
+        frame.url,
+      );
+      if (started) {
+        const { removed, ...rest } = started;
+        Object.assign(next, rest);
+        if (started.extraOrigins.length === 0) {
+          delete next.extraOrigins;
+        }
+        if (removed > 0) {
+          // 削除した手順のクリックに、後から始まったダウンロードを結び付けません（#223）。
+          delete next.lastClickAt;
+          delete next.lastHref;
+        }
+        next.guide = {
+          ...guideNext(started.guide, started.steps.length, 'button'),
+          notice: removed > 0 ? START_PAGE_REPLACED : START_PAGE_ADDED,
+        };
+      } else {
+        next.guide = guideNext(recording.guide, recording.steps.length, 'button');
+      }
+    } else if (action === 'next' || action === 'skip') {
+      next.guide = guideNext(
+        recording.guide,
+        recording.steps.length,
+        action === 'next' ? 'button' : 'skip',
+      );
+    } else if (action === 'back') {
+      const back = guideBack(recording.guide);
+      if (!back) {
+        return { ok: false, error: '最初の段階のため、戻れません。' };
+      }
+      next.guide = back.guide;
+      next.steps = recording.steps.slice(0, back.keep);
+      next.rowHints = alignHints(recording.steps, recording.rowHints).slice(0, back.keep);
+      next.pagerHints = alignHints(recording.steps, recording.pagerHints).slice(0, back.keep);
+      delete next.lastClickAt;
+      delete next.lastHref;
+    } else {
+      return { ok: false, error: '案内の操作が正しくありません。' };
+    }
+    await chrome.storage.session.set({ [RECORDING_KEY]: next });
+    return { ok: true };
+  });
+}
+
+/**
+ * 「ファイルをまとめて保存する」の案内を最後まで終えた記録から、繰り返し・ファイル名・対象の月・ページ送りを
+ * 設定し、記録を停止します（#248）。利用者が［繰り返しにする］の欄で印を付けなくても、保存して実行できるように
+ * するためです。
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true, flow: Flow | null, errors: string[] } | { ok: false, error: string }>}
+ */
+export async function finishRecordingGuide(count) {
+  const recording = await getRecording();
+  if (!recording?.guide) {
+    return { ok: false, error: '案内付きの記録ではありません。' };
+  }
+  // 購入の案内（#249）は、繰り返しを作らずに記録を停止します。
+  if (recording.guide.purpose !== 'files') {
+    return stopRecording();
+  }
+  const result = guideLoop(
+    recording.guide,
+    recording.steps,
+    alignHints(recording.steps, recording.rowHints),
+  );
+  if (!result.ok) {
+    return result;
+  }
+  const { from, to, key, names, nextPage, dateStep } = result.loop;
+  const looped = await makeRecordedLoop(
+    from,
+    to,
+    key,
+    count,
+    names,
+    false,
+    nextPage,
+    dateStep,
+    // 一覧は新しい順として、対象の月より古い行に達したら終えます（#183 の既定と同じです）。
+    dateStep !== undefined ? true : undefined,
+  );
+  if (!looped.ok) {
+    return looped;
+  }
+  return stopRecording();
+}
+
+/**
+ * 記録した手順が変わった後に、案内付きの記録（#246、#247）の段階を確かめ直します。
+ * @param {Recording} recording 変更する記録中の状態
+ */
+function refreshGuide(recording) {
+  if (!recording.guide) {
+    return;
+  }
+  recording.guide = guideAfterStep(recording.guide, recording.steps, recording.pagerHints);
+  // 正しいものを押して段階を終えた場合は、その段階で押し間違えた手順を削除します（#276）。
+  const dropped = guideDropMistakes(recording.guide, recording.steps);
+  if (!dropped) {
+    return;
+  }
+  if (dropped.removed > 0) {
+    const rowHints = alignHints(recording.steps, recording.rowHints);
+    const pagerHints = alignHints(recording.steps, recording.pagerHints);
+    recording.steps = recording.steps.filter((_, index) => dropped.keep[index]);
+    recording.rowHints = /** @type {RowHint[]} */ (
+      rowHints.filter((_, index) => dropped.keep[index])
+    );
+    recording.pagerHints = /** @type {PagerHint[]} */ (
+      pagerHints.filter((_, index) => dropped.keep[index])
+    );
+  }
+  recording.guide = dropped.guide;
 }
 
 /**
@@ -443,6 +769,40 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
     if (pageUrl === undefined) {
       return;
     }
+    // 最初の「ページを開く」手順を削除していた場合は、操作したページを開く手順を先頭に加えます（#277）。
+    // 実行するときに開くページが決まらず、実行できないフローになるためです。
+    delete recording.notice;
+    const opened = withOpenPage(
+      {
+        steps: recording.steps,
+        rowHints: alignHints(recording.steps, recording.rowHints),
+        pagerHints: alignHints(recording.steps, recording.pagerHints),
+        origin: recording.origin,
+        extraOrigins: recording.extraOrigins ?? [],
+      },
+      pageUrl,
+    );
+    if (opened) {
+      if (recording.steps.length >= MAX_STEPS - 1) {
+        return;
+      }
+      Object.assign(recording, opened);
+      if (opened.extraOrigins.length === 0) {
+        delete recording.extraOrigins;
+      }
+      // 加えた手順の分、案内の段階の手順の番号をずらします。
+      if (recording.guide) {
+        recording.guide = {
+          ...recording.guide,
+          start: recording.guide.start + 1,
+          done: recording.guide.done.map((count) => count + 1),
+          ...(recording.guide.mistakes
+            ? { mistakes: recording.guide.mistakes.map((index) => index + 1) }
+            : {}),
+        };
+      }
+      recording.notice = START_PAGE_ADDED;
+    }
     const origin = new URL(pageUrl).origin;
     const frameOrigin = new URL(sender.url).origin;
     const extraOrigins = recording.extraOrigins ?? [];
@@ -531,7 +891,15 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
       } else {
         delete recording.lastHref;
       }
+      // クリックの時刻は、直後に始まったダウンロードを結び付けるために控えます（#223）。
+      if (recorded.type === 'click') {
+        recording.lastClickAt = Date.now();
+      } else {
+        delete recording.lastClickAt;
+      }
       recording.steps.push(recorded);
+      // 案内付きの記録（#246）では、記録した手順で次の段階へ進むかを決めます。
+      refreshGuide(recording);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
     }
     if (notice !== undefined) {
@@ -566,14 +934,45 @@ export function onCommitted(details) {
       recording.lastHref,
     );
     delete recording.lastHref;
+    delete recording.lastClickAt;
     if (converted) {
       recording.steps[recording.steps.length - 1] = converted;
+      refreshGuide(recording);
       await chrome.storage.session.set({ [RECORDING_KEY]: recording });
       return;
     }
     recording.rowHints = [...alignHints(recording.steps, recording.rowHints), null];
     recording.pagerHints = [...alignHints(recording.steps, recording.pagerHints), null];
     recording.steps.push({ type: 'navigate', url: details.url, cause });
+    refreshGuide(recording);
+    await chrome.storage.session.set({ [RECORDING_KEY]: recording });
+  });
+}
+
+/**
+ * 記録中にダウンロードが始まったときに、直前に記録したクリックで始まったものであれば、そのクリックを
+ * ダウンロードを保存する指定に変えます（#223）。実行するときは、クリックで始まったファイルを、指定の保存先に
+ * 保存します。記録中のダウンロードそのものは止めず、Chrome の通常のダウンロードのままにします。
+ * @param {chrome.downloads.DownloadItem} item
+ * @returns {Promise<void>}
+ */
+export function onDownloadCreated(item) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    const previous = recording?.steps.at(-1);
+    if (!recording || recording.lastClickAt === undefined || !previous) {
+      return;
+    }
+    const site = ('origin' in previous ? previous.origin : undefined) ?? recording.origin;
+    const converted = toClickDownload(previous, item, site, Date.now() - recording.lastClickAt);
+    if (!converted) {
+      return;
+    }
+    // 1 回のクリックで複数のファイルが始まった場合も、変えるのは 1 回だけです。
+    delete recording.lastClickAt;
+    recording.steps[recording.steps.length - 1] = converted;
+    // ダウンロードの保存に変わったクリックで、案内の「保存」の段階を終えます（#247）。
+    refreshGuide(recording);
     await chrome.storage.session.set({ [RECORDING_KEY]: recording });
   });
 }
@@ -623,11 +1022,9 @@ export async function onTabRemoved(tabId) {
  * @param {Recording} recording
  */
 async function attach(recording) {
-  await chrome.action.setBadgeText({ tabId: recording.tabId, text: 'REC' });
-  await chrome.action.setBadgeBackgroundColor({ tabId: recording.tabId, color: '#d93025' });
-
   const frame = await chrome.webNavigation.getFrame({ tabId: recording.tabId, frameId: 0 });
   if (!frame || !isWebUrl(frame.url)) {
+    await setRecordingBadge(recording.tabId, true);
     await chrome.storage.session.remove(RECORDING_PAGE_KEY);
     return;
   }
@@ -635,6 +1032,7 @@ async function attach(recording) {
   const allowed =
     origin === recording.origin ||
     (await chrome.permissions.contains({ origins: [`${origin}/*`] }));
+  await setRecordingBadge(recording.tabId, allowed);
   /** @type {RecordingPage} */
   const page = { origin, allowed };
   await chrome.storage.session.set({ [RECORDING_PAGE_KEY]: page });
@@ -642,7 +1040,147 @@ async function attach(recording) {
     return;
   }
   await injectRecorder(recording.tabId, 0, origin);
+  // 2 件目を押してもらうのを待っている間にページを移動した場合（詳細のページから一覧へ戻った場合など）は、
+  // 読み込み直したスクリプトにも待つよう伝えます（#241）。
+  if (recording.picking) {
+    await sendPickSecond(recording);
+  }
   await attachFrames(recording, page);
+}
+
+/**
+ * 1 件目で記録した手順のうち、ページで要素を探せる手順の番号と指定を返します（#241）。iframe と Shadow DOM の中の
+ * 要素と、すでに繰り返しの中にある手順は、最上位のページから指定だけでは探せないため除きます。
+ * @param {Step[]} steps
+ * @returns {{ index: number, selectors: string[] }[]}
+ */
+function pickCandidates(steps) {
+  return steps.flatMap((step, index) =>
+    PAGE_STEP_TYPES.includes(step.type) &&
+    'target' in step &&
+    step.target.frame === undefined &&
+    step.target.shadow === undefined &&
+    step.target.scope === undefined
+      ? [{ index, selectors: [...step.target.selectors] }]
+      : [],
+  );
+}
+
+/**
+ * 記録中のタブのページに、2 件目の同じものを押してもらうのを待つよう伝えます（#241）。
+ * @param {Recording} recording
+ * @returns {Promise<boolean>} 伝えられたか
+ */
+async function sendPickSecond(recording) {
+  return chrome.tabs
+    .sendMessage(
+      recording.tabId,
+      { kind: 'recorder/pickSecond', candidates: pickCandidates(recording.steps) },
+      { frameId: 0 },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+}
+
+/**
+ * 繰り返しにする前に、2 件目の同じものを押してもらうのを待ち始めます（#241）。押された 2 か所から 1 件分を決め
+ * （onSecondPicked）、利用者に件数や枠を選ばせないためです。
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function startPickSecond() {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (!recording) {
+      return {
+        ok: false,
+        error: '記録中に行ってください。記録を始め直し、1 件目の操作を記録してください。',
+      };
+    }
+    if (pickCandidates(recording.steps).length === 0) {
+      return { ok: false, error: '1 件目の操作を記録してから押してください。' };
+    }
+    await chrome.storage.session.set({ [RECORDING_KEY]: { ...recording, picking: true } });
+    await sendPickSecond(recording);
+    return { ok: true };
+  });
+}
+
+/**
+ * 2 件目の同じものを押してもらうのをやめます（#241）。
+ * @returns {Promise<{ ok: true }>}
+ */
+export function cancelPickSecond() {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (recording?.picking) {
+      /** @type {Recording} */
+      const next = { ...recording };
+      delete next.picking;
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
+      await chrome.tabs
+        .sendMessage(recording.tabId, { kind: 'recorder/pickCancel' }, { frameId: 0 })
+        .catch(() => {});
+    }
+    return { ok: true };
+  });
+}
+
+/**
+ * ページで 2 件目が押され、1 件分の行が決まったときに、手順に添える行の候補を、その行だけにします（#241）。
+ * 行の中の手順には、その行の候補を 1 つだけ添え、ほかの手順の候補は除きます。繰り返しの欄が、この行で範囲と
+ * 「1 件の中」の手順を決めるためです。送信元が記録中のタブの最上位のページであることを確かめます。
+ * @param {unknown} result content/picker-rows.js の rowsFromExamples の値
+ * @param {chrome.runtime.MessageSender} sender
+ * @returns {Promise<void>}
+ */
+export function onSecondPicked(result, sender) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    if (
+      !recording?.picking ||
+      sender.tab?.id !== recording.tabId ||
+      sender.frameId !== 0 ||
+      typeof result !== 'object' ||
+      result === null
+    ) {
+      return;
+    }
+    const { items, count, inners } = /** @type {Record<string, any>} */ (result);
+    if (typeof inners !== 'object' || inners === null) {
+      return;
+    }
+    /** @type {RowHint[]} */
+    const rowHints = recording.steps.map((_, index) =>
+      Object.hasOwn(inners, String(index))
+        ? sanitizeRowHint([{ items, count, inner: inners[String(index)] }])
+        : null,
+    );
+    if (!rowHints.some((hint) => hint !== null)) {
+      return;
+    }
+    /** @type {Recording} */
+    const next = { ...recording, rowHints };
+    delete next.picking;
+    // 案内付きの記録では、2 件目の段階を終えます（#247）。
+    if (next.guide) {
+      next.guide = guideAfterPicked(next.guide, next.steps.length);
+    }
+    await chrome.storage.session.set({ [RECORDING_KEY]: next });
+  });
+}
+
+/**
+ * 記録中であることを、ツールバーのアイコンに表示します。許可がないサイトのページでは、記録が止まっていることを
+ * 「許可」（黄）で示します（#209）。利用者はサイトの画面に集中しているため、画面の近くで変化に気づけるようにします。
+ * @param {number} tabId
+ * @param {boolean} allowed 表示中のページで記録しているか
+ */
+async function setRecordingBadge(tabId, allowed) {
+  await chrome.action.setBadgeText({ tabId, text: allowed ? 'REC' : '許可' });
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: allowed ? '#d93025' : '#f59f00' });
+  await chrome.action.setBadgeTextColor({ tabId, color: allowed ? '#ffffff' : '#1d273b' });
 }
 
 /**
@@ -677,7 +1215,8 @@ async function injectRecorder(tabId, frameId, origin) {
 
 /**
  * 記録中のタブの、最上位のページに直接埋め込まれた iframe のうち、操作の許可があるサイトのものに、記録用の
- * スクリプトを読み込みます（#20）。許可がないサイトの iframe には読み込まず、そのサイトをサイドパネルに知らせます。
+ * スクリプトを読み込みます（#20）。許可がないサイトの iframe には読み込まず、そのうち画面に見える iframe のサイトを
+ * サイドパネルに知らせ、ツールバーのアイコンを「許可」にします（#230）。広告や計測のための見えない iframe は知らせません。
  * 2 段以上の埋め込み（iframe の中の iframe）は対象にしません。
  * @param {Recording} recording
  * @param {RecordingPage} page 最上位のページの表示の状態。許可がない iframe のサイトを加えて保存し直します
@@ -701,18 +1240,72 @@ async function attachFrames(recording, page) {
       blocked.add(origin);
     }
   }
+  if (blocked.size > 0) {
+    const visible = await visibleFrames(recording.tabId);
+    // 大きさを測れなかった場合は、知らせを出す側に寄せます。決済の枠を知らせずに見落とすことを避けるためです。
+    if (visible) {
+      for (const origin of [...blocked]) {
+        if (!visible.has(origin)) {
+          blocked.delete(origin);
+        }
+      }
+    }
+  }
   const stored = await chrome.storage.session.get(RECORDING_PAGE_KEY);
   const current = /** @type {RecordingPage | undefined} */ (stored[RECORDING_PAGE_KEY]);
   // 最上位のページを移動した後に、移動の前のページの iframe の結果で上書きしないためです。
   if (current && current.origin !== page.origin) {
     return;
   }
+  await setRecordingBadge(recording.tabId, page.allowed && blocked.size === 0);
   /** @type {RecordingPage} */
   const next = { origin: page.origin, allowed: page.allowed };
   if (blocked.size > 0) {
     next.blockedFrames = [...blocked].sort();
   }
   await chrome.storage.session.set({ [RECORDING_PAGE_KEY]: next });
+}
+
+/**
+ * 最上位のページの記録用のスクリプトに枠の大きさを測らせ、画面に見える枠のサイトを返します（#230）。
+ * 測れなかった場合（スクリプトがまだない場合など）は null です。
+ * @param {number} tabId
+ * @returns {Promise<Set<string> | null>}
+ */
+async function visibleFrames(tabId) {
+  try {
+    const measures = await chrome.tabs.sendMessage(
+      tabId,
+      { kind: 'recorder/frameSizes' },
+      { frameId: 0 },
+    );
+    return Array.isArray(measures) ? visibleFrameOrigins(measures) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 最上位のページの枠の大きさが変わったときに、許可がない枠の知らせを判定し直します（#230）。
+ * 最初は隠れていて、操作の後に表示される決済の枠を取りこぼさないためです。
+ * 送信元が記録中のタブの最上位のページで、そのページで記録している場合だけ受け付けます。
+ * @param {chrome.runtime.MessageSender} sender
+ * @returns {Promise<void>}
+ */
+export async function onFramesChanged(sender) {
+  const recording = await getRecording();
+  if (!recording || sender.tab?.id !== recording.tabId || sender.frameId !== 0) {
+    return;
+  }
+  const stored = await chrome.storage.session.get(RECORDING_PAGE_KEY);
+  const page = /** @type {RecordingPage | undefined} */ (stored[RECORDING_PAGE_KEY]);
+  if (!page?.allowed || !sender.url || !isWebUrl(sender.url)) {
+    return;
+  }
+  if (new URL(sender.url).origin !== page.origin) {
+    return;
+  }
+  await attachFrames(recording, page);
 }
 
 /**

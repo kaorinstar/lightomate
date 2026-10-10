@@ -59,13 +59,45 @@ body {
 }
 
 /*
-  フローの行です（#83）。左端に選ぶためのチェックボックス、その右に詳細を開くボタンを置きます。
-  ボタンは行の残りの幅をすべて使い、押せる範囲を従来の行と同じ広さに保ちます。
+  フローの行です（#83）。左端に選ぶためのチェックボックス、その右にフロー名、右端に操作のボタンを置きます。
+  フロー名は行の残りの幅をすべて使います。
 */
 .lm-flow-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   padding: 0;
+}
+
+/*
+  行の右端の［編集］［実行］［開く］「…」です（#258）。サイドパネルの一覧の行と同じ並びです。
+  幅が足りない場合は、名前の下の行に回り込みます。
+*/
+.lm-flow-actions {
+  flex: none;
+  align-items: center;
+  margin-left: auto;
+  padding: var(--tblr-list-group-item-padding-y) 1rem;
+}
+
+/* 行の下に置く、その他の操作、押せない理由、知らせです。チェックボックスの右から、行の幅いっぱいに置きます。 */
+.lm-flow-extra {
+  flex-basis: 100%;
+  margin: 0 1rem var(--tblr-list-group-item-padding-y) 2.625rem;
+}
+
+.lm-flow-extra[hidden] {
+  display: none;
+}
+
+.lm-flow-reason {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+/* 一覧の先頭の、実行できない理由の案内です。サイドパネルと同じ余白です（#136）。 */
+.lm-list-guide {
+  margin: 0.75rem 1rem;
 }
 
 /* 行の上下の余白は、ほかの一覧の行と同じ値（base.css の --tblr-list-group-item-padding-y）にそろえます。 */
@@ -74,18 +106,15 @@ body {
   margin: calc(var(--tblr-list-group-item-padding-y) + 0.3rem) 0 0 1rem;
 }
 
-.lm-list .lm-flow-open {
+/* フロー名と補足です。押せない文字のため、押せる行の強調表示は付けません（#266）。 */
+.lm-flow-text {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 0.25rem;
   min-width: 0;
   padding: var(--tblr-list-group-item-padding-y) 1rem var(--tblr-list-group-item-padding-y) 0.625rem;
-  border: 0;
-  background: none;
-  color: inherit;
-  text-align: start;
-}
-
-.lm-flow-row.active .lm-flow-open {
-  color: inherit;
+  overflow-wrap: anywhere;
 }
 
 /* ［すべて選択］と、選んだフローの一括操作の帯です（#83）。検索欄の下に置きます。 */

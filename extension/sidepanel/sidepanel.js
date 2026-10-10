@@ -42,8 +42,11 @@ import {
   runStatusTone,
 } from '../shared/describe.js';
 import { flattenSteps, stepAt } from '../shared/control-flow.js';
-import { flowOrigins, orderFlow } from '../shared/flow.js';
+import { MAX_EXTRA_ORIGINS, flowOrigins, orderFlow } from '../shared/flow.js';
+import { DECLINED_SITES_KEY, siteNotice, siteNoticeText } from '../shared/site-notice.js';
 import { createLoopForm } from './loop-form.js';
+import { pagerLoops } from '../shared/record-loop.js';
+import { PURPOSES, guideView } from '../shared/guide.js';
 import {
   RUN_KEY_PREFIX,
   conflictMessage,
@@ -116,9 +119,25 @@ const elements = {
   recordingSection: byId('recording-section'),
   recordingOrigin: byId('recording-origin'),
   recordingSite: byId('recording-site'),
-  recordingSiteText: byId('recording-site-text'),
-  recordingAllow: /** @type {HTMLButtonElement} */ (byId('recording-allow')),
-  recordingAllowNotice: byId('recording-allow-notice'),
+  recordingPurpose: /** @type {HTMLSelectElement} */ (byId('recording-purpose')),
+  guideBox: byId('guide-box'),
+  guideStep: byId('guide-step'),
+  guideText: byId('guide-text'),
+  guideMismatch: byId('guide-mismatch'),
+  guideNext: /** @type {HTMLButtonElement} */ (byId('guide-next')),
+  guideSkip: /** @type {HTMLButtonElement} */ (byId('guide-skip')),
+  guideBack: /** @type {HTMLButtonElement} */ (byId('guide-back')),
+  guideNotice: byId('guide-notice'),
+  siteNotice: byId('site-notice'),
+  siteNoticeFull: byId('site-notice-full'),
+  siteNoticeTitle: byId('site-notice-title'),
+  siteNoticeBody: byId('site-notice-body'),
+  siteNoticeAllow: /** @type {HTMLButtonElement} */ (byId('site-notice-allow')),
+  siteNoticeSkip: /** @type {HTMLButtonElement} */ (byId('site-notice-skip')),
+  siteNoticeNotice: byId('site-notice-notice'),
+  siteNoticeCollapsed: byId('site-notice-collapsed'),
+  siteNoticeCollapsedText: byId('site-notice-collapsed-text'),
+  siteNoticeExpand: /** @type {HTMLButtonElement} */ (byId('site-notice-expand')),
   recordingNotice: byId('recording-notice'),
   stepCount: byId('step-count'),
   steps: byId('steps'),
@@ -168,6 +187,7 @@ const recordingLoopForm = createLoopForm({
   container: elements.recordingLoopForm,
   list: elements.steps,
   toast: elements.toast,
+  pick: true,
 });
 const resultLoopForm = createLoopForm({
   open: elements.resultLoop,
@@ -181,7 +201,8 @@ const notices = [
   elements.formNotice,
   elements.recordingNotice,
   elements.recordingDiscardNotice,
-  elements.recordingAllowNotice,
+  elements.guideNotice,
+  elements.siteNoticeNotice,
   elements.resultNotice,
   elements.saveNotice,
   elements.jsonNotice,
@@ -194,6 +215,9 @@ const notices = [
  * @type {{ tabId: number, origin: string | null } | null}
  */
 let currentPage = null;
+
+/** 記録中の区画に、記録中の状態の知らせ（recording.notice、#277）として表示している文です。 */
+let shownRecordingNotice = '';
 
 /** 入力フォームを表示しているフローの id です。 */
 let formFlowId = '';
@@ -308,27 +332,54 @@ elements.start.addEventListener('click', async () => {
   }
 });
 
-// 記録中に、許可がないサイトへ移動したときのボタンです（#41）。許可を得てから、そのページでも記録を続けます。
+// 記録中に、許可がないサイトへ移動したときと、許可がない画面に見える枠があるときの、サイドパネルの最上部の知らせの
+// ボタンです（#209、#230）。
+// ［このサイトを許可して記録を続ける］で許可を得てから、そのページでも記録を続けます。
 // Chrome は利用者の操作を起点にしか許可を求められないため、ボタンで求めます。
-elements.recordingAllow.addEventListener('click', async () => {
+elements.siteNoticeAllow.addEventListener('click', async () => {
   clearNotices();
-  const origin = elements.recordingAllow.dataset.origin ?? '';
+  const origin = elements.siteNotice.dataset.origin ?? '';
   if (!origin) {
     return;
   }
+  // 許可を求める処理は、ボタンを押した直後に呼び出す必要があります。この前に待ち時間を入れないでください。
   const denied = await requestPermission(origin);
   if (denied) {
-    showNotice(elements.recordingAllowNotice, denied, 'error');
+    showNotice(elements.siteNoticeNotice, denied, 'error');
     return;
   }
   const response = await chrome.runtime.sendMessage({ kind: 'recording/allowOrigin', origin });
   if (!response?.ok) {
     showNotice(
-      elements.recordingAllowNotice,
+      elements.siteNoticeNotice,
       response?.error ?? 'このサイトでは記録できません。',
       'error',
     );
   }
+});
+
+// ［このサイトは記録しない］では、同じ記録の間、そのサイトの知らせを 1 行に畳みます。サイドパネルを開き直しても
+// 畳んだままにするため、chrome.storage.session に保存します。記録を始める・止めるときに Service Worker が消します。
+elements.siteNoticeSkip.addEventListener('click', async () => {
+  clearNotices();
+  const origin = elements.siteNotice.dataset.origin ?? '';
+  if (!origin) {
+    return;
+  }
+  const stored = await chrome.storage.session.get(DECLINED_SITES_KEY);
+  const declined = /** @type {string[]} */ (stored[DECLINED_SITES_KEY] ?? []);
+  await chrome.storage.session.set({ [DECLINED_SITES_KEY]: [...new Set([...declined, origin])] });
+});
+
+// 畳んだ知らせの［許可する］です。説明とボタンを開き直します。
+elements.siteNoticeExpand.addEventListener('click', async () => {
+  clearNotices();
+  const origin = elements.siteNotice.dataset.origin ?? '';
+  const stored = await chrome.storage.session.get(DECLINED_SITES_KEY);
+  const declined = /** @type {string[]} */ (stored[DECLINED_SITES_KEY] ?? []);
+  await chrome.storage.session.set({
+    [DECLINED_SITES_KEY]: declined.filter((site) => site !== origin),
+  });
 });
 
 elements.stop.addEventListener('click', async () => {
@@ -338,6 +389,14 @@ elements.stop.addEventListener('click', async () => {
     showNotice(elements.recordingNotice, response?.error ?? '記録を停止できません。', 'error');
     return;
   }
+  showStopped(response);
+});
+
+/**
+ * 記録を停止した後に、保存の区画の入力欄と、記録した内容の誤りを表示します。
+ * @param {{ flow: Flow | null, errors: string[] }} response
+ */
+function showStopped(response) {
   if (!response.flow) {
     // 手順をすべて削除していた場合は、保存するものがないため、記録を破棄しています。
     showToast(elements.toast, '記録した手順がないため、記録を破棄しました。', { kind: 'info' });
@@ -352,7 +411,7 @@ elements.stop.addEventListener('click', async () => {
       'error',
     );
   }
-});
+}
 
 elements.saveFlow.addEventListener('click', async () => {
   clearNotices();
@@ -407,6 +466,94 @@ elements.recordingDiscard.addEventListener('click', async () => {
   );
 });
 
+// ---- 案内付きの記録（#246） ----
+
+for (const purpose of PURPOSES) {
+  elements.recordingPurpose.append(new Option(purpose.label, purpose.id));
+}
+
+/**
+ * 記録の目的と、今の段階の案内を表示します。
+ * @param {Recording} recording
+ */
+function renderGuide(recording) {
+  const guide = recording.guide;
+  // 選んでいる間に表示し直しても、選ぶ欄の値を戻さないよう、フォーカスがある間は値を変えません。
+  if (document.activeElement !== elements.recordingPurpose) {
+    elements.recordingPurpose.value = guide?.purpose ?? 'free';
+  }
+  elements.guideBox.hidden = !guide;
+  if (!guide) {
+    return;
+  }
+  const view = guideView(guide, recording.picking === true);
+  elements.guideStep.hidden = !view.step;
+  elements.guideStep.textContent = view.step
+    ? `${view.step.total} 段階中 ${view.step.number} 段階目`
+    : '';
+  elements.guideText.textContent = view.text;
+  elements.guideMismatch.hidden = !view.notice;
+  elements.guideMismatch.textContent = view.notice ? `⚠ ${view.notice}` : '';
+  elements.guideNext.hidden = !view.button;
+  elements.guideNext.textContent = view.button ?? '';
+  elements.guideNext.dataset.finish = view.finish ? 'true' : 'false';
+  elements.guideSkip.hidden = !view.skip;
+  elements.guideSkip.textContent = view.skip ?? '';
+  elements.guideBack.hidden = !view.canBack;
+}
+
+elements.recordingPurpose.addEventListener('change', async () => {
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'recording/guide',
+    purpose: elements.recordingPurpose.value,
+  });
+  if (!response?.ok) {
+    showNotice(elements.guideNotice, response?.error ?? '目的を選べません。', 'error');
+    await render();
+  }
+});
+
+/**
+ * 案内の段階を進める・飛ばす・戻ります。
+ * @param {'next' | 'skip' | 'back'} action
+ */
+async function stepGuide(action) {
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'recording/guideStep',
+    action,
+    count: Number(elements.stepCount.textContent),
+  });
+  if (!response?.ok) {
+    showNotice(elements.guideNotice, response?.error ?? '案内を進められません。', 'error');
+    await render();
+  }
+}
+
+elements.guideNext.addEventListener('click', async () => {
+  if (elements.guideNext.dataset.finish !== 'true') {
+    await stepGuide('next');
+    return;
+  }
+  // 案内の最後で、繰り返しを作って記録を停止します（#248）。
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'recording/guideFinish',
+    count: Number(elements.stepCount.textContent),
+  });
+  if (!response?.ok) {
+    showNotice(elements.guideNotice, response?.error ?? '繰り返しを作れません。', 'error');
+    await render();
+    return;
+  }
+  showStopped(response);
+  showToast(elements.toast, '完成しました。名前を付けて保存してください。');
+  elements.flowName.focus();
+});
+elements.guideSkip.addEventListener('click', () => stepGuide('skip'));
+elements.guideBack.addEventListener('click', () => stepGuide('back'));
+
 /**
  * 記録した手順を破棄します。記録中の場合は、記録を停止してから破棄します。
  * 破棄すると区画が閉じるため、成功の知らせは画面の上部のトーストに出します。
@@ -435,6 +582,27 @@ async function removeStep(index, count, errorNotice) {
     showNotice(errorNotice, response?.error ?? '手順を削除できません。', 'error');
     await render();
   }
+}
+
+/**
+ * 繰り返しを作った後に記録した「次へ」のクリックを、その繰り返しのページ送りにします（#237）。
+ * @param {number} index 「次へ」のクリックの番号（0 から数えます）
+ * @param {number} count 表示している手順の件数
+ * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
+ */
+async function attachStepPager(index, count, errorNotice) {
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'recording/attachPager',
+    index,
+    count,
+  });
+  if (!response?.ok) {
+    showNotice(errorNotice, response?.error ?? 'ページ送りにできません。', 'error');
+    await render();
+    return;
+  }
+  showToast(elements.toast, '次のページの注文も、最後のページまで続けて処理するようにしました。');
 }
 
 elements.flowName.addEventListener('input', () => {
@@ -683,36 +851,57 @@ async function refreshCurrentPage() {
 }
 
 /**
- * 記録中のタブが、記録を始めたサイト以外のページを表示しているときの知らせです（#41）。
- * 許可があるサイトでは、確認を出さずに記録していることを知らせます。許可がないサイトでは、
- * 記録していないことと［このサイトを許可して記録］を表示します。
+ * 記録中のタブが、記録を始めたサイト以外の、許可があるサイトのページを表示しているときに、確認を出さずに
+ * 記録していることを知らせます（#41）。許可がないサイトと、許可がない画面に見える枠の知らせは、サイドパネルの
+ * 最上部に出します（#209、#230、renderSiteNotice）。
  * @param {Recording} recording
  * @param {RecordingPage | undefined} page
  */
 function renderRecordingSite(recording, page) {
-  const other = page && page.origin !== recording.origin ? page : undefined;
-  // 表示中のページに埋め込まれた iframe のうち、許可がないサイトのものです（#20）。最上位のページで記録している
-  // 場合だけ知らせます。1 件ずつ許可を求めます。
-  const blockedFrame = page?.allowed ? page.blockedFrames?.[0] : undefined;
-  const blockedSite = other && !other.allowed ? other.origin : blockedFrame;
-  elements.recordingSite.hidden = !other && blockedFrame === undefined;
-  elements.recordingAllow.hidden = blockedSite === undefined;
-  elements.recordingAllow.dataset.origin = blockedSite ?? '';
-  /** @type {string[]} */
-  const lines = [];
-  if (other) {
-    lines.push(
-      other.allowed
-        ? `${other.origin} でも記録しています。`
-        : `${other.origin} は許可していないため、記録していません。このサイトでの操作も記録する場合は、アドレスバーのサイト名が利用しているサービスのものか確かめてから、下のボタンを押してください。`,
-    );
+  const other = page && page.origin !== recording.origin && page.allowed ? page : undefined;
+  elements.recordingSite.hidden = !other;
+  elements.recordingSite.textContent = other ? `${other.origin} でも記録しています。` : '';
+}
+
+/**
+ * 記録中に、許可がないサイトへ移動したときと、表示中のページに許可がない画面に見える枠（iframe）があるときの
+ * 知らせを、サイドパネルの最上部に表示します（#209、#230）。どちらも同じ見せ方にし、文言だけ変えます。
+ * 知らせが要らない場合は隠します。［このサイトは記録しない］を選んだサイトでは、1 行に畳みます。
+ * @param {Recording | undefined} recording
+ * @param {RecordingPage | undefined} page
+ * @param {string[]} declined 同じ記録の間に、記録しないと選んだサイト
+ */
+function renderSiteNotice(recording, page, declined) {
+  const notice = recording
+    ? siteNotice({
+        recordingOrigin: recording.origin,
+        page,
+        extraOrigins: recording.extraOrigins ?? [],
+        declined,
+        maxExtraOrigins: MAX_EXTRA_ORIGINS,
+      })
+    : null;
+  const wasHidden = elements.siteNotice.hidden;
+  const previous = elements.siteNotice.dataset.origin;
+  elements.siteNotice.hidden = !notice;
+  elements.siteNotice.dataset.origin = notice?.origin ?? '';
+  if (!notice) {
+    return;
   }
-  if (blockedFrame !== undefined && blockedSite === blockedFrame) {
-    lines.push(
-      `このページの枠（iframe）の中に表示されている ${blockedFrame} は許可していないため、枠の中の操作を記録していません。枠の中の操作も記録する場合は、決済などで利用しているサービスのサイトか確かめてから、下のボタンを押してください。`,
-    );
+  const text = siteNoticeText(notice, MAX_EXTRA_ORIGINS);
+  elements.siteNoticeFull.hidden = notice.mode !== 'full';
+  elements.siteNoticeCollapsed.hidden = notice.mode !== 'collapsed';
+  elements.siteNoticeTitle.textContent = text.title;
+  elements.siteNoticeBody.textContent = text.body;
+  elements.siteNoticeCollapsedText.textContent = text.collapsed;
+  elements.siteNoticeAllow.hidden = notice.limitReached;
+  if (previous !== notice.origin) {
+    showNotice(elements.siteNoticeNotice, '');
   }
-  elements.recordingSiteText.textContent = lines.join('');
+  // 新しく出したときは、知らせが見えるよう画面の先頭へ戻します。
+  if (wasHidden || previous !== notice.origin) {
+    window.scrollTo({ top: 0 });
+  }
 }
 
 /** 記録と実行の状態に合わせて、画面を表示し直します。 */
@@ -734,16 +923,37 @@ async function render() {
     Boolean(recording) ||
     Boolean(findConflictingRun(currentPage.origin, runs));
 
+  renderSiteNotice(
+    recording,
+    /** @type {RecordingPage | undefined} */ (stored.recordingPage),
+    /** @type {string[]} */ (stored[DECLINED_SITES_KEY] ?? []),
+  );
   elements.recordingSection.hidden = !recording;
   if (recording) {
     elements.recordingOrigin.textContent = `記録するページ：${[recording.origin, ...(recording.extraOrigins ?? [])].join('、')}`;
     renderRecordingSite(recording, /** @type {RecordingPage | undefined} */ (stored.recordingPage));
     elements.stepCount.textContent = String(recording.steps.length);
     elements.steps.replaceChildren(
-      ...stepItems(recording.steps, running, elements.recordingNotice),
+      ...stepItems(recording.steps, running, elements.recordingNotice, {
+        hints: recording.rowHints,
+        pagers: recording.pagerHints,
+      }),
     );
     elements.recordingDiscard.disabled = running || recording.steps.length === 0;
-    recordingLoopForm.update(recording.steps, recording.rowHints, running, recording.pagerHints);
+    // 最初のページを開く手順を加えたことを知らせます（#277）。次の操作を記録すると消えます。
+    const recordingNotice = recording.notice ?? '';
+    if (recordingNotice !== shownRecordingNotice) {
+      showNotice(elements.recordingNotice, recordingNotice);
+      shownRecordingNotice = recordingNotice;
+    }
+    renderGuide(recording);
+    recordingLoopForm.update(
+      recording.steps,
+      recording.rowHints,
+      running,
+      recording.pagerHints,
+      recording.picking === true,
+    );
     // 最後に記録した手順が見えるよう、一覧の末尾まで移動します。
     elements.steps.scrollTop = elements.steps.scrollHeight;
   }
@@ -758,7 +968,10 @@ async function render() {
   elements.result.value = lastFlow ? JSON.stringify(orderFlow(lastFlow), null, 2) : '';
   elements.resultStepCount.textContent = String(lastFlow?.steps.length ?? 0);
   elements.resultSteps.replaceChildren(
-    ...stepItems(lastFlow?.steps ?? [], running, elements.saveNotice),
+    ...stepItems(lastFlow?.steps ?? [], running, elements.saveNotice, {
+      hints: /** @type {RowHint[] | undefined} */ (stored.lastFlowRowHints),
+      pagers: /** @type {PagerHint[] | undefined} */ (stored.lastFlowPagerHints),
+    }),
   );
   elements.discard.disabled = running || !lastFlow?.steps.length;
   resultLoopForm.update(
@@ -849,12 +1062,20 @@ function showListReasons(guide, reasons) {
 
 /**
  * 手順の一覧の項目を作ります。各行の右端に、その手順を削除する「×」を置きます。
+ * 繰り返しを作った後に記録した「次へ」のクリックには、その繰り返しのページ送りにするボタンを置きます（#237）。
  * @param {import('../shared/flow.js').Step[]} steps
  * @param {boolean} locked 削除できない状態（フローの実行中）か
  * @param {HTMLElement} errorNotice 削除できなかったときに知らせを出す場所
+ * @param {{ hints?: (RowHint | null)[], pagers?: (PagerHint | null)[] }} [recorded] 手順に添えた、一覧の行の候補と
+ *   ページ送りに使う場合の指定
  * @returns {HTMLLIElement[]}
  */
-function stepItems(steps, locked, errorNotice) {
+function stepItems(steps, locked, errorNotice, recorded = {}) {
+  const loops = pagerLoops(
+    steps,
+    steps.map((_, index) => recorded.hints?.[index] ?? null),
+    steps.map((_, index) => recorded.pagers?.[index] ?? null),
+  );
   return steps.map((step, index) => {
     const item = document.createElement('li');
     const text = document.createElement('span');
@@ -869,6 +1090,20 @@ function stepItems(steps, locked, errorNotice) {
     remove.disabled = locked;
     // 「×」は float で右端に寄せるため、説明より先に置きます。
     item.append(remove, text);
+    // ボタンの文言には手順の番号を使いません。利用者には、どの手順を指すかがわからないためです。
+    if (loops[index] !== null) {
+      const attach = button(
+        'この「次へ」で、次のページの注文も続けて処理する',
+        'btn btn-sm d-block mt-1',
+        () => {
+          attachStepPager(index, steps.length, errorNotice).catch((error) =>
+            showNotice(errorNotice, String(error), 'error'),
+          );
+        },
+      );
+      attach.disabled = locked;
+      item.append(attach);
+    }
     // 繰り返しにした手順（#167）は、内側の手順を字下げして続けます。削除は繰り返しの単位で行います。
     if (step.type === 'forEach') {
       const inner = document.createElement('ol');

@@ -8,13 +8,22 @@
 import {
   addStep,
   allowRecordingOrigin,
+  attachRecordedPager,
+  cancelPickSecond,
+  finishRecordingGuide,
   makeRecordedLoop,
   onCommitted,
   onDOMContentLoaded,
+  onDownloadCreated,
+  onFramesChanged,
+  onSecondPicked,
   onTabRemoved,
   removeRecordedStep,
   resetRecording,
+  setRecordingGuide,
+  startPickSecond,
   startRecording,
+  stepRecordingGuide,
   stopRecording,
 } from './recording.js';
 import { removeHistory } from '../common/history-store.js';
@@ -37,6 +46,7 @@ import {
 } from './runner.js';
 import { registerScheduleEvents } from './scheduler.js';
 import { onPickerCommitted, onPickerResult, onPickerTabRemoved, startPicker } from './picker.js';
+import { openWatchedPage } from './watch-notify.js';
 
 // ツールバーのアイコンを押したときに、ポップアップではなくサイドパネルを開きます。
 // ポップアップはページをクリックした時点で閉じるため、記録中に開いたままにできないためです。
@@ -54,6 +64,11 @@ markInterruptedBatches().catch((error) =>
 );
 // 定期実行（#22）の予約をやり直し、取りこぼした予約を実行します。
 registerScheduleEvents();
+
+// 値の変化の通知（#251）を押されたときに、値を読み取ったページを開きます。
+chrome.notifications.onClicked.addListener((id) => {
+  openWatchedPage(id).catch((error) => console.error('通知のページを開けませんでした。', error));
+});
 
 // 緊急停止のキー（#18）です。既定は Alt+Shift+Q で、chrome://extensions/shortcuts で変えられます。
 // サイドパネルを開いていなくても、実行中と一時停止中のすべての実行を停止します。
@@ -130,6 +145,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.stopAtOlder,
       ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
       return true;
+
+    case 'recording/guide':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      setRecordingGuide(message.purpose).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/guideFinish':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      finishRecordingGuide(message.count).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/guideStep':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      stepRecordingGuide(message.action, message.count).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/attachPager':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      attachRecordedPager(message.index, message.count).then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/pickSecond':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      startPickSecond().then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/pickCancel':
+      if (!fromExtensionPage) {
+        return false;
+      }
+      cancelPickSecond().then(sendResponse, (error) =>
+        sendResponse({ ok: false, error: String(error) }),
+      );
+      return true;
+
+    case 'recording/secondPicked':
+      onSecondPicked(message.result, sender).catch((error) =>
+        console.error('2 件目の指定を受け取れませんでした。', error),
+      );
+      return false;
 
     case 'recording/reset':
       if (!fromExtensionPage) {
@@ -251,6 +326,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       );
       return false;
 
+    // 最上位のページの枠の大きさが変わったときの知らせです（#230）。
+    case 'recording/framesChanged':
+      onFramesChanged(sender).catch((error) =>
+        console.error('枠の知らせを判定し直せませんでした。', error),
+      );
+      return false;
+
     case 'recording/step':
       addStep(
         message.step,
@@ -279,6 +361,12 @@ chrome.webNavigation.onCommitted.addListener((details) => {
 chrome.webNavigation.onDOMContentLoaded.addListener((details) => {
   onDOMContentLoaded(details).catch((error) =>
     console.error('記録用のスクリプトを読み込めませんでした。', error),
+  );
+});
+
+chrome.downloads.onCreated.addListener((item) => {
+  onDownloadCreated(item).catch((error) =>
+    console.error('ダウンロードを記録できませんでした。', error),
   );
 });
 

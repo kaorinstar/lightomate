@@ -83,6 +83,8 @@ import { conditionKind, describeCondition, evaluateCondition } from '../shared/c
 import { describeStepForPage, pageStepText } from '../shared/describe.js';
 import { decideDialog } from '../shared/dialog.js';
 import { isRedirectAfterLoad, observeRedirect, skippedRedirectNote } from '../shared/redirect.js';
+import { WATCH_RECHECK_MS } from '../shared/watch-value.js';
+import { checkWatchedValue } from './watch-notify.js';
 
 /** @typedef {import('../shared/flow.js').Flow} Flow */
 /** @typedef {import('../shared/flow.js').Step} Step */
@@ -268,7 +270,8 @@ const savedFiles = new Map();
  * 実行ごとの、原因を調べるための情報です（#198）。成功以外で終わったときに、伏せた変数の値と
  * フローの指紋を実行履歴に記録します。values は実行中に読み取った値を加えていくオブジェクトです。
  * secrets は値を記録していない欄に入力した値で、変数の値の中に同じ文字があれば伏せるために使います。
- * @type {Map<string, { flow: Flow, values: Record<string, string>, secrets: string[], flowHash: string }>}
+ * flowId は、値の変化を知らせる読み取り（#251）で、前回の値をフローごとに覚えるために使います。
+ * @type {Map<string, { flow: Flow, flowId: string, values: Record<string, string>, secrets: string[], flowHash: string }>}
  */
 const runDetails = new Map();
 
@@ -817,6 +820,7 @@ export async function startRun(flowId, paramInput, secretInput, options = {}) {
   savedFiles.set(runId, []);
   runDetails.set(runId, {
     flow,
+    flowId,
     values: pathValues,
     secrets: Object.values(secretInput),
     flowHash,
@@ -1516,6 +1520,11 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             step.type === 'click' && step.download
               ? watchDownload(runId, step.download, pathValues)
               : undefined;
+          // ダウンロードのために開いた新しいタブ（#284）も、クリックの前から数えます。
+          const popups =
+            step.type === 'click' && step.download && step.download.from !== 'link'
+              ? watchPopups(tabId)
+              : undefined;
           // 行の中の要素が見つからない行を飛ばす繰り返し（#174）の中では、やり直さず、見つからない場合は
           // その行の残りの手順を行わずに次の行へ進みます。ページ全体で探す要素は対象にしません。
           const skipDepth =
@@ -1531,6 +1540,7 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
           } catch (error) {
             opened?.cancel();
             downloading?.cancel();
+            popups?.cancel();
             if (skipDepth !== -1 && error instanceof ElementNotFound) {
               skippedRows.push({
                 stepNumber: currentNumber() + 1,
@@ -1566,8 +1576,24 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
               throw error;
             }
           }
+          // ページが押す位置を返した場合は、利用者の操作として押します（#284）。
+          const point = done.response.point;
+          if (downloading && isPoint(point)) {
+            try {
+              await pressAsUser(runId, tabId, point);
+            } catch (error) {
+              downloading.cancel();
+              popups?.cancel();
+              throw error;
+            }
+          }
           if (downloading) {
-            const file = await downloading.wait(runId);
+            let file;
+            try {
+              file = await downloading.wait(runId);
+            } finally {
+              await popups?.close();
+            }
             savedFiles.get(runId)?.push(file);
           }
           // 一致するリンクをすべて保存する指定（#185）では、2 件目以降を、名前に _2、_3 … を付けて保存します。
@@ -1609,6 +1635,31 @@ async function runSteps(flow, steps, tabId, runId, pathValues) {
             pathValues[step.name] = text.slice(0, EXTRACT_MAX_LENGTH);
             // 読み取った値は個人情報を含む場合があるため、実行履歴の理由には残しません。
             redactions.get(runId)?.push(pathValues[step.name]);
+            const flowId = runDetails.get(runId)?.flowId;
+            if (step.notifyOnChange === true && flowId !== undefined) {
+              // 前回の実行から値が変わったときに知らせます（#251）。翻訳で文字が置き換わる途中の値で知らせない
+              // よう、変わったと判定したら、待ってから同じ要素を読み直します。
+              await checkWatchedValue({
+                flowId,
+                name: step.name,
+                label: step.target.label,
+                first: pathValues[step.name],
+                reread: async () => {
+                  await waitWithStopCheck(runId, WATCH_RECHECK_MS);
+                  const again = await withRetry(runId, flow, () =>
+                    runInPage(runId, flow, tabId, step, expectedUrl, scope),
+                  );
+                  const reread = typeof again.response.text === 'string' ? again.response.text : '';
+                  redactions.get(runId)?.push(reread.slice(0, EXTRACT_MAX_LENGTH));
+                  return reread.slice(0, EXTRACT_MAX_LENGTH);
+                },
+                pageUrl: () =>
+                  chrome.tabs.get(tabId).then(
+                    (tab) => tab.url,
+                    () => undefined,
+                  ),
+              });
+            }
           }
         }
       } catch (error) {
@@ -1760,6 +1811,95 @@ function watchDownload(runId, download, values) {
         return await waitForDownload(runId, target, 'ファイル');
       } finally {
         cancel();
+      }
+    },
+  };
+}
+
+/**
+ * 押す位置かを判定します。
+ * @param {unknown} value
+ * @returns {value is { x: number, y: number }}
+ */
+function isPoint(value) {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Number.isFinite(/** @type {{ x?: unknown }} */ (value).x) &&
+    Number.isFinite(/** @type {{ y?: unknown }} */ (value).y)
+  );
+}
+
+/**
+ * ページの要素を、chrome.debugger の Input.dispatchMouseEvent で、利用者の操作として押します（#284）。
+ * element.click() は利用者の操作として扱われないため、ページが新しいタブを開いてファイルを渡す場合
+ * （楽天市場の領収書の［発行する］など）に、Chrome のポップアップのブロックで止められます。
+ * ダイアログへの応答（#88）のために接続している chrome.debugger を使います。接続していない場合と、押せなかった
+ * 場合は、ページのスクリプトで押します（runner/clickPending）。
+ * @param {string} runId
+ * @param {number} tabId
+ * @param {{ x: number, y: number }} point 表示領域の中の位置（CSS ピクセル）
+ */
+async function pressAsUser(runId, tabId, point) {
+  const watch = dialogWatches.get(runId);
+  if (watch && watch.tabId === tabId && !watch.suspended && watch.detached === undefined) {
+    try {
+      // Input.dispatchMouseEvent の位置は、ページの拡大率を掛けた値です。
+      const zoom = await chrome.tabs.getZoom(tabId).catch(() => 1);
+      const x = point.x * zoom;
+      const y = point.y * zoom;
+      const target = { tabId };
+      await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x,
+        y,
+      });
+      for (const type of ['mousePressed', 'mouseReleased']) {
+        await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type,
+          x,
+          y,
+          button: 'left',
+          buttons: type === 'mousePressed' ? 1 : 0,
+          clickCount: 1,
+        });
+      }
+      return;
+    } catch {
+      // ページのスクリプトで押します。
+    }
+  }
+  const response = await chrome.tabs
+    .sendMessage(tabId, { kind: 'runner/clickPending' }, { frameId: 0 })
+    .catch((error) => ({ ok: false, error: String(error) }));
+  if (!response?.ok) {
+    throw new Error(`要素を押せませんでした（${response?.error ?? '応答がありません'}）。`);
+  }
+}
+
+/**
+ * クリックで開いた新しいタブを数えます（#284）。ダウンロードの後に閉じます。ファイルを渡すために開いたタブは、
+ * 多くの場合、ダウンロードが始まるとサイトが閉じますが、閉じない場合に残さないためです。
+ * @param {number} tabId クリックするタブ
+ * @returns {{ cancel: () => void, close: () => Promise<void> }}
+ */
+function watchPopups(tabId) {
+  /** @type {number[]} */
+  const opened = [];
+  /** @param {chrome.tabs.Tab} tab */
+  const onCreated = (tab) => {
+    if (tab.openerTabId === tabId && tab.id !== undefined) {
+      opened.push(tab.id);
+    }
+  };
+  chrome.tabs.onCreated.addListener(onCreated);
+  const cancel = () => chrome.tabs.onCreated.removeListener(onCreated);
+  return {
+    cancel,
+    async close() {
+      cancel();
+      for (const id of opened) {
+        await chrome.tabs.remove(id).catch(() => {});
       }
     },
   };
@@ -3010,6 +3150,7 @@ async function waitForLoad(runId, tabId, isExpected, description, onOtherPage) {
 /**
  * 同じページかを判定します。クエリ文字列（? 以降）とページ内の位置（# 以降）は比べません。
  * セッションの識別子など、実行のたびに変わる値が含まれることがあるためです。
+ * パスの末尾の「/」の有無も比べません。サイトが末尾の「/」を外した URL に移動させることがあるためです（#282）。
  * @param {string} a
  * @param {string} b
  * @returns {boolean}
@@ -3018,10 +3159,18 @@ export function samePage(a, b) {
   try {
     const left = new URL(a);
     const right = new URL(b);
-    return left.origin === right.origin && left.pathname === right.pathname;
+    return left.origin === right.origin && trimSlash(left.pathname) === trimSlash(right.pathname);
   } catch {
     return false;
   }
+}
+
+/**
+ * パスの末尾の「/」を取り除きます。ルート（/）はそのままです。
+ * @param {string} pathname
+ */
+function trimSlash(pathname) {
+  return pathname.length > 1 ? pathname.replace(/\/+$/, '') || '/' : pathname;
 }
 
 /**

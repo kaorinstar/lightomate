@@ -91,6 +91,16 @@ test('同じページかは、クエリ文字列とページ内の位置を除�
   assert.ok(!samePage('https://a.example/p', 'https://a.example/q'));
   assert.ok(!samePage('https://a.example/p', 'https://b.example/p'));
   assert.ok(!samePage('', 'https://a.example/p'));
+  // 末尾の「/」の有無だけが違う URL は、同じページです（#282）。
+  assert.ok(
+    samePage(
+      'https://a.example/purchase-history/order-list?l-id=x',
+      'https://a.example/purchase-history/order-list/?l-id=x',
+    ),
+  );
+  assert.ok(samePage('https://a.example/', 'https://a.example'));
+  assert.ok(!samePage('https://a.example/order-list/', 'https://a.example/order'));
+  assert.ok(!samePage('https://a.example/a/', 'https://a.example/'));
 });
 
 test('続けて記録されたページの移動は、最後の移動の手順までまとめる', () => {

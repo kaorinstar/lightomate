@@ -61,6 +61,13 @@
   let inspected = null;
 
   /**
+   * ダウンロードを保存するクリックで、Service Worker が利用者の操作として押す要素です（#284）。Service Worker が
+   * 利用者の操作として押せなかった場合に、runner/clickPending でこの要素を element.click() で押します。
+   * @type {Element | null}
+   */
+  let pendingClick = null;
+
+  /**
    * Service Worker からの依頼を受け取ります。
    * @param {any} message
    * @param {chrome.runtime.MessageSender} sender
@@ -106,6 +113,18 @@
       // 1 つの手順を受け取りの数だけ行うためです（#82）。
       chrome.runtime.onMessage.removeListener(onMessage);
       scope[installedKey] = false;
+      return false;
+    }
+    // 利用者の操作として押せなかった場合に、代わりにこのスクリプトで押します（#284）。
+    if (message?.kind === 'runner/clickPending') {
+      const element = pendingClick;
+      pendingClick = null;
+      if (!element?.isConnected) {
+        sendResponse({ ok: false, error: '押す要素が、ページから消えました。' });
+        return false;
+      }
+      sendResponse({ ok: true });
+      setTimeout(() => clickElement(element), 0);
       return false;
     }
     if (message?.kind === 'runner/authSignals') {
@@ -374,12 +393,45 @@
   }
 
   /**
+   * 要素をクリックします。
+   * @param {Element} element
+   */
+  function clickElement(element) {
+    if (element instanceof HTMLElement) {
+      element.click();
+    } else {
+      element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }
+  }
+
+  /**
+   * 要素を利用者の操作として押す位置（表示領域の中の、要素の中央）を返します（#284）。表示領域の外にある場合と、
+   * その位置にほかの要素（固定表示の見出しなど）が重なっている場合は、別の要素を押してしまうため undefined です。
+   * @param {Element} element
+   * @returns {{ x: number, y: number } | undefined}
+   */
+  function clickPoint(element) {
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return undefined;
+    }
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) {
+      return undefined;
+    }
+    const root = element.getRootNode();
+    const hit = (root instanceof ShadowRoot ? root : document).elementFromPoint(x, y);
+    return hit && (hit === element || element.contains(hit)) ? { x, y } : undefined;
+  }
+
+  /**
    * 手順を 1 つ実行します。
    * @param {{ type: string, target: { selectors: string[], tag: string, text?: string, scope?: string, shadow?: string[] }, value?: string, values?: string[], labels?: string[], download?: { from?: string, all?: boolean } }} step
    *   値の中のパラメータは、Service Worker で置き換え済みです。
    * @param {unknown} scope 繰り返しで処理中の行の指定（#6）
    * @param {number} timeoutMs 要素を待つ上限（ミリ秒）
-   * @returns {Promise<{ ok: true, text?: string, href?: string, hrefs?: string[] } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
+   * @returns {Promise<{ ok: true, text?: string, href?: string, hrefs?: string[], point?: { x: number, y: number } } | { ok: false, error: string, notFound?: true, translated?: boolean }>}
    */
   async function runStep(step, scope, timeoutMs) {
     /** @type {Element} */
@@ -432,15 +484,19 @@
           }
           return { ok: true, href: link.href };
         }
+        // ダウンロードを保存するクリック（#284）は、押す位置を返し、Service Worker が利用者の操作として押します。
+        // element.click() は利用者の操作として扱われず、ページが新しいタブを開いてファイルを渡す場合に、Chrome の
+        // ポップアップのブロックで止められるためです。最上位のページの、ほかの要素が重なっていない要素に限ります。
+        if (step.download !== undefined && window === window.top) {
+          const point = clickPoint(element);
+          if (point) {
+            pendingClick = element;
+            return { ok: true, point };
+          }
+        }
         // クリックでページを移動すると、このスクリプトは応答する前に失われます。
         // そのため、先に応答してからクリックします。
-        setTimeout(() => {
-          if (element instanceof HTMLElement) {
-            element.click();
-          } else {
-            element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-          }
-        }, 0);
+        setTimeout(() => clickElement(element), 0);
         return { ok: true };
 
       case 'input':

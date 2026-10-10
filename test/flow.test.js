@@ -1357,6 +1357,40 @@ test('iframe の中の要素の指定（target.frame）は、版 18 以上のフ
   ]);
 });
 
+test('値の変化を知らせる指定（extract の notifyOnChange）は、版 19 以上の、繰り返しの外側でだけ検証を通る（#251）', () => {
+  const extract = {
+    type: 'extract',
+    target: { selectors: ['#stock'], tag: 'span', label: '在庫' },
+    name: 'stock',
+    notifyOnChange: true,
+  };
+  assert.deepEqual(validateStep(extract), []);
+  assert.deepEqual(validateStep({ ...extract, notifyOnChange: false }), [
+    'notifyOnChange は true だけを書けます。',
+  ]);
+  const at = `steps[${validFlow.steps.length}]`;
+  const flow = { ...validFlow, steps: [...validFlow.steps, extract] };
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 19 }), []);
+  assert.deepEqual(validateFlow({ ...flow, schemaVersion: 18 }), [
+    `${at}: notifyOnChange は、schemaVersion が 19 以上のフローでだけ使えます。`,
+  ]);
+  const looped = {
+    ...validFlow,
+    steps: [
+      ...validFlow.steps,
+      {
+        type: 'while',
+        condition: { exists: true, target: extract.target },
+        limit: 3,
+        steps: [extract],
+      },
+    ],
+  };
+  assert.deepEqual(validateFlow(looped), [
+    `${at}.steps[0]: notifyOnChange は、繰り返し（forEach、while）の外側の extract にだけ書けます。`,
+  ]);
+});
+
 test('target.frame.url は、http・https の URL で、? と # を含まないものだけを受け付ける（#20）', () => {
   const error =
     'target.frame.url が、https:// または http:// で始まり、? と # を含まない URL ではありません。';

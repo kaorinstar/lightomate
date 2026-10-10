@@ -6,7 +6,7 @@
 // Service Worker から停止の連絡を受けると終了します。
 // 記録した手順は Service Worker へ送り、ここでは保存しません。
 
-/* global buildTarget, elementKeys, elementTexts, isPageTranslated, matchStopSelector, pagerSelectors, rowCandidates, shadowRootOf, showNotice, showStatusOverlay */
+/* global buildTarget, elementKeys, elementTexts, isPageTranslated, matchStopSelector, pagerSelectors, rowCandidates, rowsFromExamples, shadowRootOf, showNotice, showStatusOverlay */
 
 (() => {
   /** 同じページに 2 回読み込まれた場合に、記録が二重にならないようにする目印です。 */
@@ -48,6 +48,46 @@
    */
   const watchedRoots = new Set();
 
+  /**
+   * 2 件目の同じものを押してもらう間（#241）の、1 件目で記録した手順の番号と要素の指定です。待っていない間は null です。
+   * @type {{ index: number, selectors: string[] }[] | null}
+   */
+  let picking = null;
+
+  /**
+   * 2 件目で押した要素から 1 件分を求め、Service Worker へ送ります（#241）。押した操作は記録せず、ページの処理も
+   * 起こしません。1 件目の要素はページの中を指定で探します。1 件目と同じものでない場合は、押し直しを案内します。
+   * @param {MouseEvent} event
+   * @param {Element} element
+   */
+  const pickSecond = (event, element) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    /** @type {{ index: number, element: Element }[]} */
+    const firsts = [];
+    for (const { index, selectors } of picking ?? []) {
+      for (const selector of selectors) {
+        let found;
+        try {
+          found = document.querySelectorAll(selector);
+        } catch {
+          continue;
+        }
+        if (found.length === 1) {
+          firsts.push({ index, element: found[0] });
+          break;
+        }
+      }
+    }
+    const result = rowsFromExamples(element, firsts);
+    if (!result) {
+      showNotice('1 件目で押したものと同じもの（注文番号の文字など）を、2 件目で押してください。');
+      return;
+    }
+    picking = null;
+    chrome.runtime.sendMessage({ kind: 'recording/secondPicked', result }).catch(() => {});
+  };
+
   /** @param {MouseEvent} event */
   const onClick = (event) => {
     // ページのスクリプトが発生させた操作（element.click() など）は記録しません（#14）。
@@ -56,6 +96,10 @@
     }
     const pressed = deepTarget(event);
     const element = pressed.closest(clickable) ?? pressed;
+    if (picking) {
+      pickSecond(event, element);
+      return;
+    }
     if (isTextEntry(element) || element === document.body || element === document.documentElement) {
       // 入力欄へのクリックは、入力の準備にすぎないため記録しません。値は change で記録します。
       return;
@@ -128,6 +172,76 @@
     }
   };
 
+  /**
+   * 最上位のページに埋め込まれた枠（iframe）の大きさと表示の状態を測ります（#230）。Service Worker が、許可がない枠の
+   * うち、画面に見える枠だけを知らせるために使います。判定は shared/frame-visibility.js で行います。
+   * 測った枠は、大きさの変化を見張ります。最初は隠れていて、操作の後に表示される決済の枠を取りこぼさないためです。
+   * @returns {object[]}
+   */
+  function measureFrames() {
+    return [...document.querySelectorAll('iframe')].map((frame) => {
+      watchFrame(frame);
+      const rect = frame.getBoundingClientRect();
+      const style = getComputedStyle(frame);
+      let origin = '';
+      try {
+        origin = new URL(frame.src, location.href).origin;
+      } catch {
+        // src が URL として読み取れない枠は、サイトがわからない枠として扱います。
+      }
+      return {
+        origin: origin === 'null' ? '' : origin,
+        width: rect.width,
+        height: rect.height,
+        display: style.display,
+        visibility: style.visibility,
+        opacity: Number(style.opacity),
+        right: rect.right + scrollX,
+        bottom: rect.bottom + scrollY,
+      };
+    });
+  }
+
+  /** 枠が見えるかの目安の大きさです。正確な判定は Service Worker が行い、ここでは変化の検出にだけ使います。 */
+  const frameSizeHint = 30;
+  /** @type {WeakMap<Element, boolean>} 見張っている枠と、前回の大きさが目安以上だったか */
+  const watchedFrames = new WeakMap();
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let framesChangedTimer;
+  // 最上位のページだけで見張ります。枠の中のページの枠（2 段以上の埋め込み）は対象外のためです。
+  const frameObserver =
+    window === window.top
+      ? new ResizeObserver((entries) => {
+          let changed = false;
+          for (const entry of entries) {
+            const large =
+              entry.contentRect.width >= frameSizeHint && entry.contentRect.height >= frameSizeHint;
+            if (watchedFrames.get(entry.target) !== large) {
+              watchedFrames.set(entry.target, large);
+              changed = true;
+            }
+          }
+          if (!changed) {
+            return;
+          }
+          // 表示の切り替えで続けて変わる場合に、まとめて 1 回だけ知らせます。
+          clearTimeout(framesChangedTimer);
+          framesChangedTimer = setTimeout(() => {
+            chrome.runtime.sendMessage({ kind: 'recording/framesChanged' }).catch(() => {});
+          }, 300);
+        })
+      : null;
+
+  /** @param {HTMLIFrameElement} frame */
+  function watchFrame(frame) {
+    if (!frameObserver || watchedFrames.has(frame)) {
+      return;
+    }
+    const rect = frame.getBoundingClientRect();
+    watchedFrames.set(frame, rect.width >= frameSizeHint && rect.height >= frameSizeHint);
+    frameObserver.observe(frame);
+  }
+
   // 取り込み（capture）の段階で受け取ります。ページが操作の伝わりを止めても記録できるようにするためです。
   document.addEventListener('click', onClick, true);
   document.addEventListener('change', onChange, true);
@@ -140,13 +254,30 @@
    * Service Worker からの知らせを受け取ります。
    * @param {any} message
    * @param {chrome.runtime.MessageSender} sender
+   * @param {(response: unknown) => void} sendResponse
    */
-  function onMessage(message, sender) {
+  function onMessage(message, sender, sendResponse) {
     if (sender.id !== chrome.runtime.id) {
+      return;
+    }
+    if (message?.kind === 'recorder/frameSizes') {
+      sendResponse(window === window.top ? measureFrames() : []);
       return;
     }
     if (message?.kind === 'recorder/notice' && typeof message.text === 'string') {
       showNotice(message.text);
+      return;
+    }
+    // 2 件目の同じものを押してもらう間は、クリックを記録しません（#241）。最上位のページだけで受け付けます。
+    if (message?.kind === 'recorder/pickSecond' && Array.isArray(message.candidates)) {
+      picking = window === window.top ? message.candidates : null;
+      if (picking) {
+        showNotice('2 件目の注文で、1 件目と同じもの（注文番号の文字など）を押してください。');
+      }
+      return;
+    }
+    if (message?.kind === 'recorder/pickCancel') {
+      picking = null;
       return;
     }
     if (message?.kind !== 'recorder/stop') {
@@ -160,6 +291,8 @@
       root.removeEventListener('focusin', onFocusIn, true);
     }
     watchedRoots.clear();
+    frameObserver?.disconnect();
+    clearTimeout(framesChangedTimer);
     overlay.remove();
     // 受け取りをやめます。残したまま同じページで記録を始め直すと、受け取りが増えるためです（#82）。
     chrome.runtime.onMessage.removeListener(onMessage);

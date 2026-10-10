@@ -154,6 +154,9 @@ export function blockDefinitions() {
         { type: 'field_label_serializable', name: 'TARGET', text: '' },
         { type: 'field_input', name: 'NAME', text: '' },
       ],
+      // 読み取った値が前回の実行から変わったときに知らせるか（extract の notifyOnChange、#251）です。
+      message1: '前回から変わったら通知で知らせる %1',
+      args1: [{ type: 'field_checkbox', name: 'NOTIFY', checked: false }],
       colour: BLOCK_COLOURS.output,
       ...statement,
     },
@@ -517,7 +520,7 @@ function stepFields(step) {
     case 'select':
       return { TARGET: step.target.label, LABELS: step.labels.join('、') };
     case 'extract':
-      return { TARGET: step.target.label, NAME: step.name };
+      return { TARGET: step.target.label, NAME: step.name, NOTIFY: step.notifyOnChange === true };
     case 'savePdf':
       return { PATH: step.path ?? '' };
     case 'wait':
@@ -662,6 +665,11 @@ export function blockToStep(block) {
       break;
     case 'extract':
       step.name = text('NAME');
+      setOrDelete(
+        step,
+        'notifyOnChange',
+        fields.NOTIFY === true || fields.NOTIFY === 'TRUE' ? true : undefined,
+      );
       break;
     case 'savePdf':
       setOrDelete(step, 'path', text('PATH') || undefined);
