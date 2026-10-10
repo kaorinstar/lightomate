@@ -73,7 +73,11 @@ export function describeStep(step) {
         ? `入力：${targetName(step.target)}（値は記録していません）`
         : `入力：${targetName(step.target)} ← ${step.value}`;
     case 'select':
-      return `選択：${targetName(step.target)} ← ${step.labels.join('、')}`;
+      // 値にパラメータの参照（{{名前}}）を含む場合は、記録時の表示文字列ではなく値を示します（#286）。
+      // 実行では、参照を含む値で記録時の表示文字列を探さないためです。
+      return step.values.some((value) => value.includes('{{'))
+        ? `選択：${targetName(step.target)} ← ${step.values.join('、')}`
+        : `選択：${targetName(step.target)} ← ${step.labels.join('、')}`;
     case 'pause':
       return `一時停止${step.note ? `：${step.note}` : ''}`;
     case 'savePdf':

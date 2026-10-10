@@ -27,6 +27,7 @@ import {
   sanitizeRowHint,
 } from '../shared/record-loop.js';
 import { toClickDownload, toLinkDownload } from '../shared/file-link.js';
+import { makeRecordedParam, referencedParams } from '../shared/record-param.js';
 import {
   guideAfterPicked,
   guideAfterRemoval,
@@ -69,7 +70,8 @@ import { withOpenPage } from '../shared/start-page.js';
  * @property {PagerHint[]} [pagerHints] steps と同じ順の、押した要素を繰り返しのページ送りに使う場合の指定（#182）。
  *   フロー定義には含めません
  * @property {import('../shared/params.js').Param[]} [params] 繰り返しにするときに加えたパラメータ（対象の月の
- *   条件の年月、#183）。記録を停止すると、フローの params になります
+ *   条件の年月、#183）と、記録した値を実行するたびに変える値にしたときに加えたパラメータ（#286）。記録を停止すると、
+ *   フローの params になります
  * @property {boolean} [picking] 2 件目の同じものを押してもらうのを待っているか（#241）。サイドパネルが、待っている間の
  *   表示と、押された後に繰り返しの欄を開くために使います
  * @property {string} [lastHref] 最後に記録した手順がリンクのクリックの場合の、そのリンク先（#185）。直後にファイルへ
@@ -201,13 +203,15 @@ export function stopRecording() {
       return { ok: true, flow: null, errors: [] };
     }
 
+    // 手順を削除して、どの手順も参照しなくなったパラメータは除きます（#286）。
+    const params = referencedParams(recording.steps, recording.params);
     /** @type {Flow} */
     const flow = {
       schemaVersion: SCHEMA_VERSION,
       name: `記録 ${new Date(recording.startedAt).toLocaleString('ja-JP')}`,
       origin: recording.origin,
       ...(recording.extraOrigins?.length ? { extraOrigins: recording.extraOrigins } : {}),
-      ...(recording.params?.length ? { params: recording.params } : {}),
+      ...(params.length ? { params } : {}),
       steps: recording.steps,
     };
     await chrome.storage.session.set({
@@ -247,6 +251,13 @@ export function removeRecordedStep(index, count) {
       );
       /** @type {Recording} */
       const next = { ...recording, steps, rowHints, pagerHints };
+      // 削除した手順だけが参照していたパラメータは除きます（#286）。
+      const params = referencedParams(steps, recording.params);
+      if (params.length > 0) {
+        next.params = params;
+      } else {
+        delete next.params;
+      }
       // 手順を削除した後の最後の手順は、控えた時刻のクリックとは限らないため、ダウンロードを結び付けません（#223）。
       delete next.lastClickAt;
       // 削除した手順を使って終えた案内の段階は、終えていないことにします（#246）。
@@ -274,8 +285,16 @@ export function removeRecordedStep(index, count) {
     } else {
       const hints = alignHints(lastFlow.steps, await getLastFlowHints());
       const pagers = alignHints(lastFlow.steps, await getLastFlowPagers());
+      const params = referencedParams(steps, lastFlow.params);
+      /** @type {Flow} */
+      const nextFlow = { ...lastFlow, steps };
+      if (params.length > 0) {
+        nextFlow.params = params;
+      } else {
+        delete nextFlow.params;
+      }
       await chrome.storage.session.set({
-        [LAST_FLOW_KEY]: { ...lastFlow, steps },
+        [LAST_FLOW_KEY]: nextFlow,
         [LAST_FLOW_HINTS_KEY]: withoutStep(hints, index, count),
         [LAST_FLOW_PAGERS_KEY]: withoutStep(pagers, index, count),
       });
@@ -443,6 +462,49 @@ export function attachRecordedPager(index, count) {
       });
     }
     return { ok: true };
+  });
+}
+
+/**
+ * 記録した選択か入力の値を、実行するたびに変える値（パラメータ）にします（#286）。
+ * 記録中の手順と、記録を停止した後の保存前の手順のどちらにも使えます。手順の番号は変わらないため、
+ * 行の候補とページ送りの指定はそのまま使います。
+ * @param {unknown} index 対象の手順の番号（0 から数えます）
+ * @param {unknown} count 表示していた手順の件数
+ * @param {unknown} defaultValue 日付の既定値（@first-of-previous-month など）。入力の手順では使いません
+ * @param {unknown} [part] 表示名と記録した値から決まらない場合の、日付の部分（year、month、day）
+ * @returns {Promise<{ ok: true, label: string } | { ok: false, error: string }>}
+ */
+export function makeRecordedValueParam(index, count, defaultValue, part) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    const lastFlow = recording ? undefined : await getLastFlow();
+    const steps = recording?.steps ?? lastFlow?.steps;
+    if (!steps) {
+      return { ok: false, error: '対象の手順がありません。' };
+    }
+    if (count !== steps.length) {
+      return {
+        ok: false,
+        error:
+          '手順の一覧が変わったため、変更しませんでした。一覧を確かめてから押し直してください。',
+      };
+    }
+    const params = (recording ? recording.params : lastFlow?.params) ?? [];
+    const result = makeRecordedParam(steps, params, index, { defaultValue, part });
+    if (!result.ok) {
+      return result;
+    }
+    if (recording) {
+      await chrome.storage.session.set({
+        [RECORDING_KEY]: { ...recording, steps: result.steps, params: result.params },
+      });
+    } else if (lastFlow) {
+      await chrome.storage.session.set({
+        [LAST_FLOW_KEY]: { ...lastFlow, steps: result.steps, params: result.params },
+      });
+    }
+    return { ok: true, label: result.label };
   });
 }
 
