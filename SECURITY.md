@@ -65,6 +65,10 @@ https://github.com/kaorinstar/lightomate/security/advisories/new
 - `Page.printToPDF`：PDF の保存の手順で、ページを PDF にするため
 - `Emulation.setEmulatedMedia`：`mode` が `screen` の PDF の保存の手順で、表示を画面用に切り替えるため（#73）。
   PDF を作り終えると元に戻します
+- `Input.dispatchMouseEvent`：ダウンロードを保存するクリックの手順（`click` の `download`）で、手順の要素の中央を
+  利用者の操作として押すため（#284）。ページが新しいタブを開いてファイルを渡す場合に、ページのスクリプトでの
+  クリックは Chrome のポップアップのブロックで止められるためです。押す前に、その位置にある要素が手順の要素で
+  あることを確かめます。ほかの要素が重なっている場合は使いません
 
 記録中は接続しません。実行を終えると、すぐに接続を切ります。`debugger` は任意の権限（`optional_permissions`）に
 できない権限のため、常に要求する権限としています（https://developer.chrome.com/docs/extensions/reference/api/permissions ）。
