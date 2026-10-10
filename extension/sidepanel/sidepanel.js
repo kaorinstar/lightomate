@@ -48,7 +48,7 @@ import { createLoopForm } from './loop-form.js';
 import { pagerLoops } from '../shared/record-loop.js';
 import {
   DATE_PARTS,
-  dateDefaultOptions,
+  valueOptions,
   DATE_PART_LABELS,
   paramTarget,
   valueParamNote,
@@ -593,15 +593,15 @@ async function removeStep(index, count, errorNotice) {
 }
 
 /**
- * 既定の日付を選ぶ欄を開いている手順です（#286）。手順の件数も控え、一覧が変わった場合は閉じた扱いにします。
+ * 値を選ぶ欄を開いている手順です（#286）。手順の件数も控え、一覧が変わった場合は閉じた扱いにします。
  * @type {{ index: number, count: number } | null}
  */
 let valueParamForm = null;
 
 /**
- * 手順を実行するたびに変える値にするボタンと、日付の場合は既定の日付を選ぶ欄を作ります（#286）。
+ * 手順を実行するたびに変える値にするボタンと、日付の場合はその欄の値（月なら前月か今月）を選ぶ欄を作ります（#286）。
  * 入力（文字）は、押すとすぐに変えます。選ぶものがないためです。
- * 既定の日付の選択肢には具体的な日付を添え、この欄に当てはめる値を下に示します。最初は、記録した値と一致する
+ * 選択肢にはその欄の部分の値だけを出し、この欄に当てはめる値を下に示します。最初は、記録した値と一致する
  * 選択肢を選んでおきます。
  * @param {import('../shared/flow.js').Step[]} steps 表示している手順
  * @param {Param[]} params 今のパラメータ
@@ -653,7 +653,6 @@ function valueParamControls(steps, params, index, target, locked, errorNotice) {
   const defaultLabel = document.createElement('label');
   defaultLabel.className = 'form-label mb-1';
   defaultLabel.htmlFor = `${id}-default`;
-  defaultLabel.textContent = '既定の日付（実行するときに変えられます）';
   const defaultSelect = document.createElement('select');
   defaultSelect.className = 'form-select form-select-sm';
   defaultSelect.id = `${id}-default`;
@@ -662,14 +661,15 @@ function valueParamControls(steps, params, index, target, locked, errorNotice) {
   preview.id = `${id}-preview`;
   defaultSelect.setAttribute('aria-describedby', preview.id);
   const now = new Date();
-  /** @type {import('../shared/record-param.js').DateDefaultOption[]} */
+  /** @type {import('../shared/record-param.js').ValueOption[]} */
   let options = [];
-  // 日付の選択肢と当てはめる値は、年・月・日のどれかで変わるため、部分を選び直すたびに作り直します。
+  // 選択肢と当てはめる値は、年・月・日のどれかで変わるため、部分を選び直すたびに作り直します。
   const fillOptions = () => {
     const part = /** @type {import('../shared/record-param.js').DatePart} */ (
       target.part ?? partSelect?.value ?? 'month'
     );
-    options = dateDefaultOptions(steps, params, index, part, now);
+    defaultLabel.textContent = `既定の${DATE_PART_LABELS[part]}（実行するときに変えられます）`;
+    options = valueOptions(steps, params, index, part, now);
     defaultSelect.replaceChildren(
       ...options.map((option) => new Option(option.label, option.value, false, option.selected)),
     );
@@ -695,7 +695,7 @@ function valueParamControls(steps, params, index, target, locked, errorNotice) {
     makeValueParam(
       index,
       count,
-      { defaultValue: defaultSelect.value, part: partSelect?.value },
+      { value: defaultSelect.value, part: partSelect?.value },
       errorNotice,
     ).catch((error) => showNotice(errorNotice, String(error), 'error'));
   });
@@ -713,7 +713,7 @@ function valueParamControls(steps, params, index, target, locked, errorNotice) {
  * 記録中、または保存前の手順の値を、実行するたびに変える値にします（#286）。
  * @param {number} index 手順の番号（0 から数えます）
  * @param {number} count 表示している手順の件数
- * @param {{ defaultValue?: string, part?: string }} choice 日付の既定値と部分
+ * @param {{ value?: string, part?: string }} choice 選んだ値と部分
  * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
  */
 async function makeValueParam(index, count, choice, errorNotice) {
@@ -732,6 +732,30 @@ async function makeValueParam(index, count, choice, errorNotice) {
   valueParamForm = null;
   await render();
   showToast(elements.toast, `「${response.label}」を、実行するときに入力する値にしました。`);
+}
+
+/**
+ * 実行するたびに変える値にした手順を、記録した値に戻します（#286）。戻した後は、選び直せます。
+ * @param {number} index 手順の番号（0 から数えます）
+ * @param {number} count 表示している手順の件数
+ * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
+ */
+async function revertValueParam(index, count, errorNotice) {
+  clearNotices();
+  const response = await chrome.runtime.sendMessage({
+    kind: 'recording/revertParam',
+    index,
+    count,
+  });
+  if (!response?.ok) {
+    showNotice(errorNotice, response?.error ?? '元の値に戻せません。', 'error');
+    await render();
+    return;
+  }
+  showToast(
+    elements.toast,
+    '記録した値に戻しました。選び直す場合は、もう一度ボタンを押してください。',
+  );
 }
 
 /**
@@ -1262,7 +1286,13 @@ function stepItems(steps, locked, errorNotice, recorded = {}) {
       const small = document.createElement('small');
       small.className = 'd-block lm-sub';
       small.textContent = note;
-      item.append(small);
+      const revert = button('元の値に戻す', 'btn btn-sm d-block mt-1', () => {
+        revertValueParam(index, steps.length, errorNotice).catch((error) =>
+          showNotice(errorNotice, String(error), 'error'),
+        );
+      });
+      revert.disabled = locked;
+      item.append(small, revert);
     }
     // 選択と入力の手順には、実行するたびに変える値にするボタンを置きます（#286）。
     const valueTarget = paramTarget(step);

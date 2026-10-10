@@ -439,7 +439,7 @@ test('日付のパラメータ：前月 1 日〜前月末日を月・日の選�
   }
 });
 
-test('記録した月・日の選択を、既定値を選ぶだけで前月 1 日〜前月末日にして照会する（#286）', async () => {
+test('記録した月・日の選択に、月は前月、日は 1 日と末日を選ぶだけで、前月 1 日〜前月末日にして照会する（#286）', async () => {
   const { extensionPage } = browser;
   const page = await browser.context.newPage();
   await page.goto(`${server.origin}/bank-period.html`);
@@ -478,19 +478,14 @@ test('記録した月・日の選択を、既定値を選ぶだけで前月 1 �
     ['navigate', 'select', 'select', 'select', 'select', 'click', 'navigate'],
   );
 
-  // サイドパネルのボタンと同じ依頼を送ります。開始の月・日に前月 1 日、終了の月・日に前月末日を選びます。
-  const choices = [
-    '@first-of-previous-month',
-    '@first-of-previous-month',
-    '@end-of-previous-month',
-    '@end-of-previous-month',
-  ];
-  for (const [offset, defaultValue] of choices.entries()) {
+  // サイドパネルのボタンと同じ依頼を送ります。開始の月に前月、開始の日に 1 日、終了の月に前月、終了の日に末日を選びます。
+  const choices = ['prev', 'first', 'prev', 'end'];
+  for (const [offset, value] of choices.entries()) {
     const made = await extensionPage.evaluate((message) => chrome.runtime.sendMessage(message), {
       kind: 'recording/makeParam',
       index: offset + 1,
       count: steps.length,
-      defaultValue,
+      value,
     });
     assert.equal(made.ok, true, made.error ?? '');
   }

@@ -27,7 +27,11 @@ import {
   sanitizeRowHint,
 } from '../shared/record-loop.js';
 import { toClickDownload, toLinkDownload } from '../shared/file-link.js';
-import { makeRecordedParam, referencedParams } from '../shared/record-param.js';
+import {
+  makeRecordedParam,
+  referencedParams,
+  revertRecordedParam,
+} from '../shared/record-param.js';
 import {
   guideAfterPicked,
   guideAfterRemoval,
@@ -471,11 +475,11 @@ export function attachRecordedPager(index, count) {
  * 行の候補とページ送りの指定はそのまま使います。
  * @param {unknown} index 対象の手順の番号（0 から数えます）
  * @param {unknown} count 表示していた手順の件数
- * @param {unknown} defaultValue 日付の既定値（@first-of-previous-month など）。入力の手順では使いません
+ * @param {unknown} value 選んだ値（月・年の欄は prev か current、日の欄は first、end、today）。入力の手順では使いません
  * @param {unknown} [part] 表示名と記録した値から決まらない場合の、日付の部分（year、month、day）
  * @returns {Promise<{ ok: true, label: string } | { ok: false, error: string }>}
  */
-export function makeRecordedValueParam(index, count, defaultValue, part) {
+export function makeRecordedValueParam(index, count, value, part) {
   return enqueue(async () => {
     const recording = await getRecording();
     const lastFlow = recording ? undefined : await getLastFlow();
@@ -491,7 +495,7 @@ export function makeRecordedValueParam(index, count, defaultValue, part) {
       };
     }
     const params = (recording ? recording.params : lastFlow?.params) ?? [];
-    const result = makeRecordedParam(steps, params, index, { defaultValue, part });
+    const result = makeRecordedParam(steps, params, index, { value, part });
     if (!result.ok) {
       return result;
     }
@@ -505,6 +509,51 @@ export function makeRecordedValueParam(index, count, defaultValue, part) {
       });
     }
     return { ok: true, label: result.label };
+  });
+}
+
+/**
+ * 実行するたびに変える値にした手順を、記録した値に戻します（#286）。
+ * @param {unknown} index 対象の手順の番号（0 から数えます）
+ * @param {unknown} count 表示していた手順の件数
+ * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
+ */
+export function revertRecordedValueParam(index, count) {
+  return enqueue(async () => {
+    const recording = await getRecording();
+    const lastFlow = recording ? undefined : await getLastFlow();
+    const steps = recording?.steps ?? lastFlow?.steps;
+    if (!steps) {
+      return { ok: false, error: '対象の手順がありません。' };
+    }
+    if (count !== steps.length) {
+      return {
+        ok: false,
+        error:
+          '手順の一覧が変わったため、変更しませんでした。一覧を確かめてから押し直してください。',
+      };
+    }
+    const params = (recording ? recording.params : lastFlow?.params) ?? [];
+    const result = revertRecordedParam(steps, params, index);
+    if (!result.ok) {
+      return result;
+    }
+    if (recording) {
+      /** @type {Recording} */
+      const next = { ...recording, steps: result.steps, params: result.params };
+      if (result.params.length === 0) {
+        delete next.params;
+      }
+      await chrome.storage.session.set({ [RECORDING_KEY]: next });
+    } else if (lastFlow) {
+      /** @type {Flow} */
+      const next = { ...lastFlow, steps: result.steps, params: result.params };
+      if (result.params.length === 0) {
+        delete next.params;
+      }
+      await chrome.storage.session.set({ [LAST_FLOW_KEY]: next });
+    }
+    return { ok: true };
   });
 }
 

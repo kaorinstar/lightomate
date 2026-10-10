@@ -4,10 +4,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  dateDefaultOptions,
   makeRecordedParam,
   paramTarget,
   referencedParams,
+  revertRecordedParam,
+  valueOptions,
   valueParamNote,
 } from '../extension/shared/record-param.js';
 import { describeStep } from '../extension/shared/describe.js';
@@ -55,12 +56,27 @@ function ok(result) {
   return /** @type {Extract<typeof result, { ok: true }>} */ (result);
 }
 
-test('表示名「開始の月」・値 09 の選択に前月 1 日を選ぶと、{{date1.mm}} になり、「開始の日付」の定義が加わる', () => {
-  const result = ok(
-    makeRecordedParam([select('開始の月', '09')], [], 0, {
-      defaultValue: '@first-of-previous-month',
-    }),
-  );
+/**
+ * 手順に順に値を選び、結果の手順とパラメータを返します。
+ * @param {Step[]} steps
+ * @param {{ index: number, value: string, part?: string }[]} picks
+ */
+function pickAll(steps, picks) {
+  /** @type {Param[]} */
+  let params = [];
+  for (const { index, value, part } of picks) {
+    const result = ok(makeRecordedParam(steps, params, index, { value, part }));
+    steps = result.steps;
+    params = result.params;
+  }
+  return { steps, params };
+}
+
+/** @param {Step[]} steps */
+const valuesOf = (steps) => steps.map((step) => step.type === 'select' && step.values[0]);
+
+test('表示名「開始の月」・値 09 の選択に前月を選ぶと、{{date1.mm}} になり、「開始の日付」の定義が加わる', () => {
+  const result = ok(makeRecordedParam([select('開始の月', '09')], [], 0, { value: 'prev' }));
   assert.deepEqual(result.steps[0].type === 'select' && result.steps[0].values, ['{{date1.mm}}']);
   // 記録した時点の表示文字列は残します。実行では、参照を含む値では表示文字列を探しません。
   assert.deepEqual(result.steps[0].type === 'select' && result.steps[0].labels, ['09']);
@@ -70,31 +86,27 @@ test('表示名「開始の月」・値 09 の選択に前月 1 日を選ぶと�
   assert.equal(result.label, '開始の日付');
 });
 
-test('同じ既定値を選んだ手順は同じ日付にまとめ、異なる既定値では新しい日付を加える', () => {
-  /** @type {Step[]} */
-  let steps = [
-    select('開始の月', '09'),
-    select('開始の日', '01'),
-    select('終了の月', '09'),
-    select('終了の日', '30'),
-  ];
-  /** @type {Param[]} */
-  let params = [];
-  const choices = [
-    '@first-of-previous-month',
-    '@first-of-previous-month',
-    '@end-of-previous-month',
-    '@end-of-previous-month',
-  ];
-  choices.forEach((defaultValue, index) => {
-    const result = ok(makeRecordedParam(steps, params, index, { defaultValue }));
-    steps = result.steps;
-    params = result.params;
-  });
-  assert.deepEqual(
-    steps.map((step) => step.type === 'select' && step.values[0]),
-    ['{{date1.mm}}', '{{date1.dd}}', '{{date2.mm}}', '{{date2.dd}}'],
+test('開始の月・日、終了の月・日の順に、前月・1 日・前月・末日を選ぶと、開始日と終了日になる', () => {
+  const { steps, params } = pickAll(
+    [
+      select('開始の月', '09'),
+      select('開始の日', '01'),
+      select('終了の月', '09'),
+      select('終了の日', '30'),
+    ],
+    [
+      { index: 0, value: 'prev' },
+      { index: 1, value: 'first' },
+      { index: 2, value: 'prev' },
+      { index: 3, value: 'end' },
+    ],
   );
+  assert.deepEqual(valuesOf(steps), [
+    '{{date1.mm}}',
+    '{{date1.dd}}',
+    '{{date2.mm}}',
+    '{{date2.dd}}',
+  ]);
   assert.deepEqual(params, [
     { name: 'date1', label: '開始の日付', type: 'date', default: '@first-of-previous-month' },
     { name: 'date2', label: '終了の日付', type: 'date', default: '@end-of-previous-month' },
@@ -111,35 +123,82 @@ test('同じ既定値を選んだ手順は同じ日付にまとめ、異なる�
   );
 });
 
-test('表示名が「月」「日」だけの場合は、既定値から「開始日」「終了日」を表示名にする', () => {
-  // 銀行の画面（e2e/pages/bank-period.html）は、選択の横に「月」「日」とだけ表示します。
-  let result = ok(
-    makeRecordedParam([select('月', '09'), select('月', '09')], [], 0, {
-      defaultValue: '@first-of-previous-month',
-    }),
+test('月を 2 つ選んでから日を 2 つ選んでも、月と日を順に組にする', () => {
+  // 表示名は「月」「日」だけです（e2e/pages/bank-period.html と同じ）。
+  const { steps, params } = pickAll(
+    [select('月', '09'), select('月', '09'), select('日', '01'), select('日', '30')],
+    [
+      { index: 0, value: 'prev' },
+      { index: 1, value: 'prev' },
+      { index: 2, value: 'first' },
+      { index: 3, value: 'end' },
+    ],
   );
-  result = ok(
-    makeRecordedParam(result.steps, result.params, 1, {
-      defaultValue: '@end-of-previous-month',
-    }),
-  );
+  assert.deepEqual(valuesOf(steps), [
+    '{{date1.mm}}',
+    '{{date2.mm}}',
+    '{{date1.dd}}',
+    '{{date2.dd}}',
+  ]);
   assert.deepEqual(
-    result.params.map((param) => param.label),
-    ['開始日', '終了日'],
+    params.map((param) => [param.label, param.default]),
+    [
+      ['開始日', '@first-of-previous-month'],
+      ['終了日', '@end-of-previous-month'],
+    ],
   );
 });
 
+test('日を先に選んでも、後から選んだ月を同じ側の日付にまとめる', () => {
+  const { steps, params } = pickAll(
+    [select('日', '01'), select('日', '30'), select('月', '09'), select('月', '09')],
+    [
+      { index: 0, value: 'first' },
+      { index: 1, value: 'end' },
+      { index: 2, value: 'prev' },
+      { index: 3, value: 'prev' },
+    ],
+  );
+  assert.deepEqual(valuesOf(steps), [
+    '{{date1.dd}}',
+    '{{date2.dd}}',
+    '{{date1.mm}}',
+    '{{date2.mm}}',
+  ]);
+  assert.deepEqual(
+    params.map((param) => param.default),
+    ['@first-of-previous-month', '@end-of-previous-month'],
+  );
+});
+
+test('今月の月と今日の日は、既定値が今日の日付にまとめる', () => {
+  const { params } = pickAll(
+    [select('月', '10'), select('日', '11')],
+    [
+      { index: 0, value: 'current' },
+      { index: 1, value: 'today' },
+    ],
+  );
+  assert.deepEqual(params, [{ name: 'date1', label: '日付', type: 'date', default: '@today' }]);
+});
+
+test('前月の月と組になる日に「今日」は選べない', () => {
+  const first = ok(
+    makeRecordedParam([select('月', '09'), select('日', '11')], [], 0, { value: 'prev' }),
+  );
+  const result = makeRecordedParam(first.steps, first.params, 1, { value: 'today' });
+  assert.equal(result.ok, false);
+});
+
 test('記録した値が 1 桁の場合は、先頭に 0 を付けない形（month、day）にする', () => {
-  const month = ok(makeRecordedParam([select('開始の月', '9')], [], 0, { defaultValue: '@today' }));
+  const month = ok(makeRecordedParam([select('開始の月', '9')], [], 0, { value: 'prev' }));
   assert.deepEqual(month.steps[0].type === 'select' && month.steps[0].values, ['{{date1.month}}']);
-  const day = ok(makeRecordedParam([select('日', '5')], [], 0, { defaultValue: '@today' }));
+  const day = ok(makeRecordedParam([select('日', '5')], [], 0, { value: 'first' }));
   assert.deepEqual(day.steps[0].type === 'select' && day.steps[0].values, ['{{date1.day}}']);
 });
 
 test('4 桁の年は {{名前.year}} にする', () => {
-  const result = ok(
-    makeRecordedParam([select('開始の年', '2026')], [], 0, { defaultValue: '@today' }),
-  );
+  const result = ok(makeRecordedParam([select('開始の年', '2026')], [], 0, { value: 'prev' }));
   assert.deepEqual(result.steps[0].type === 'select' && result.steps[0].values, ['{{date1.year}}']);
 });
 
@@ -151,9 +210,9 @@ test('value が数でない場合は、表示文字列が数なら対象にす�
 test('表示名と値から年・月・日が決まらない場合は、選択が必要と判定し、選ぶと変える', () => {
   const step = select('期間', '09');
   assert.deepEqual(paramTarget(step), { kind: 'date', part: null });
-  const missing = makeRecordedParam([step], [], 0, { defaultValue: '@today' });
+  const missing = makeRecordedParam([step], [], 0, { value: 'prev' });
   assert.equal(missing.ok, false);
-  const result = ok(makeRecordedParam([step], [], 0, { defaultValue: '@today', part: 'month' }));
+  const result = ok(makeRecordedParam([step], [], 0, { value: 'prev', part: 'month' }));
   assert.deepEqual(result.steps[0].type === 'select' && result.steps[0].values, ['{{date1.mm}}']);
 });
 
@@ -223,17 +282,15 @@ test('名前は、ほかのパラメータと読み取りの名前に重なら�
   ];
   const result = ok(
     makeRecordedParam(steps, [{ name: 'date2', label: '別の値', type: 'text' }], 1, {
-      defaultValue: '@today',
+      value: 'prev',
     }),
   );
   assert.equal(result.params[1].name, 'date3');
 });
 
-test('既定値の一覧にない値は受け付けない', () => {
-  const result = makeRecordedParam([select('開始の月', '09')], [], 0, {
-    defaultValue: '2026-09-01',
-  });
-  assert.equal(result.ok, false);
+test('選択肢にない値は受け付けない', () => {
+  assert.equal(makeRecordedParam([select('開始の月', '09')], [], 0, { value: 'end' }).ok, false);
+  assert.equal(makeRecordedParam([select('開始の日', '09')], [], 0, { value: 'prev' }).ok, false);
 });
 
 test('どの手順も参照しないパラメータは除く', () => {
@@ -267,53 +324,108 @@ test('参照を含む選択の手順は、記録時の表示文字列ではな�
   assert.equal(describeStep(select('月', '09')), '選択：月 ← 09');
 });
 
-test('既定の日付の選択肢に具体的な日付と当てはめる値を添え、記録した値と一致するものを選んでおく', () => {
+test('月の欄には月だけ、日の欄には日だけを選択肢に出し、記録した値と一致するものを選んでおく', () => {
   // 2026 年 10 月 10 日に、期間 9 月 1 日〜9 月 30 日を記録した場合です。
   const now = new Date(2026, 9, 10);
   /** @type {Step[]} */
   let steps = [select('月', '09'), select('日', '01'), select('月', '09'), select('日', '30')];
   /** @type {Param[]} */
   let params = [];
-  /** @type {string[]} */
-  const chosen = [];
+  /** @type {string[][]} */
+  const shown = [];
   for (const [index, part] of /** @type {const} */ (['month', 'day', 'month', 'day']).entries()) {
-    const options = dateDefaultOptions(steps, params, index, part, now);
+    const options = valueOptions(steps, params, index, part, now);
+    shown.push(
+      options.map((option) => `${option.selected ? '*' : ''}${option.label}→${option.fieldValue}`),
+    );
     const selected = options.find((option) => option.selected);
     assert.ok(selected);
-    chosen.push(`${selected.label}→${selected.fieldValue}`);
-    const result = ok(makeRecordedParam(steps, params, index, { defaultValue: selected.value }));
+    const result = ok(makeRecordedParam(steps, params, index, { value: selected.value }));
     steps = result.steps;
     params = result.params;
   }
-  assert.deepEqual(chosen, [
-    '前月 1 日（9 月 1 日）→09',
-    '前月 1 日（9 月 1 日）→01',
-    '前月末日（9 月 30 日）→09',
-    '前月末日（9 月 30 日）→30',
+  assert.deepEqual(shown, [
+    ['*前月（9 月）→09', '今月（10 月）→10'],
+    // 組になる日付が前月の側のため、「今日」は出しません。
+    ['*1 日→01', '末日（30 日）→30'],
+    ['*前月（9 月）→09', '今月（10 月）→10'],
+    ['1 日→01', '*末日（30 日）→30'],
+  ]);
+  assert.deepEqual(valuesOf(steps), [
+    '{{date1.mm}}',
+    '{{date1.dd}}',
+    '{{date2.mm}}',
+    '{{date2.dd}}',
   ]);
   assert.deepEqual(
-    steps.map((step) => step.type === 'select' && step.values[0]),
-    ['{{date1.mm}}', '{{date1.dd}}', '{{date2.mm}}', '{{date2.dd}}'],
+    params.map((param) => [param.label, param.default]),
+    [
+      ['開始日', '@first-of-previous-month'],
+      ['終了日', '@end-of-previous-month'],
+    ],
   );
 });
 
-test('記録した値と一致する既定の日付がない場合は、先頭を選んでおき、当てはめる値を示す', () => {
+test('組になる日付がない日の欄には、1 日・末日・今日を出す。一致しない場合は先頭を選んでおく', () => {
   const now = new Date(2026, 9, 10);
-  const options = dateDefaultOptions([select('日', '15')], [], 0, 'day', now);
+  const options = valueOptions([select('日', '15')], [], 0, 'day', now);
   assert.deepEqual(
     options.map((option) => [option.label, option.fieldValue, option.selected]),
     [
-      ['前月 1 日（9 月 1 日）', '01', true],
-      ['前月末日（9 月 30 日）', '30', false],
-      ['今月 1 日（10 月 1 日）', '01', false],
-      ['今日（10 月 10 日）', '10', false],
+      ['1 日', '01', true],
+      ['末日（30 日）', '30', false],
+      ['今日（10 日）', '10', false],
     ],
   );
 });
 
 test('1 桁で記録した月には、先頭に 0 を付けない値を示す', () => {
   const now = new Date(2026, 9, 10);
-  const options = dateDefaultOptions([select('月', '9')], [], 0, 'month', now);
+  const options = valueOptions([select('月', '9')], [], 0, 'month', now);
   assert.equal(options[0].fieldValue, '9');
   assert.equal(options[0].selected, true);
+});
+
+test('元の値に戻すと、記録した値になり、使わなくなった定義を除く。戻した後は選び直せる', () => {
+  let { steps, params } = pickAll(
+    [select('月', '09'), select('日', '01'), input('お名前', '山田')],
+    [
+      { index: 0, value: 'prev' },
+      { index: 1, value: 'first' },
+    ],
+  );
+  const text = ok(makeRecordedParam(steps, params, 2, {}));
+  steps = text.steps;
+  params = text.params;
+
+  // 日を戻しても、月が使っている日付は残します。
+  const day = revertRecordedParam(steps, params, 1);
+  assert.ok(day.ok);
+  assert.deepEqual(valuesOf(day.steps).slice(0, 2), ['{{date1.mm}}', '01']);
+  assert.deepEqual(
+    day.params.map((param) => param.name),
+    ['date1', 'text1'],
+  );
+  // 戻した日は、もう一度選べます。末日を選ぶと、月と組の日付の既定値が前月末日になります。
+  assert.ok(paramTarget(day.steps[1]));
+  const again = ok(makeRecordedParam(day.steps, day.params, 1, { value: 'end' }));
+  assert.deepEqual(
+    again.params.map((param) => [param.name, param.label, param.default]),
+    [
+      ['date1', '終了日', '@end-of-previous-month'],
+      ['text1', 'お名前', '山田'],
+    ],
+  );
+
+  // 入力は記録した文字に戻し、文字の定義を除きます。
+  const name = revertRecordedParam(again.steps, again.params, 2);
+  assert.ok(name.ok);
+  assert.equal(name.steps[2].type === 'input' && name.steps[2].value, '山田');
+  assert.deepEqual(
+    name.params.map((param) => param.name),
+    ['date1'],
+  );
+
+  // 変えていない手順は戻せません。
+  assert.equal(revertRecordedParam([select('月', '09')], [], 0).ok, false);
 });
