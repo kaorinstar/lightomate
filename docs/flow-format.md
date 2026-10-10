@@ -28,7 +28,7 @@ Lightomate が記録した操作は、この形式の JSON になります。検
 | 16 | 一致するリンクのファイルをすべて保存する指定（`click` の `download` の `all`）を加えました（#185）。版 1〜15 のフローは、変換せずにそのまま版 16 として読み込めます。版 15 以前のフローに `download.all` は書けません。 |
 | 17 | Shadow DOM（部品の中身を外から隠す仕組み）の中の要素の指定（`target` の `shadow`）を加えました（#20）。版 1〜16 のフローは、変換せずにそのまま版 17 として読み込めます。版 16 以前のフローに `shadow` は書けません。 |
 | 18 | iframe（ページの中に埋め込まれた別のページ）の中の要素の指定（`target` の `frame`）を加えました（#20）。版 1〜17 のフローは、変換せずにそのまま版 18 として読み込めます。版 17 以前のフローに `frame` は書けません。 |
-| 19 | 読み取った値が前回の実行から変わったときに知らせる指定（`extract` の `notifyOnChange`）を加えました（#251）。版 1〜18 のフローは、変換せずにそのまま版 19 として読み込めます。版 18 以前のフローに `notifyOnChange` は書けません。 |
+| 19 | 読み取った値が前回の実行から変わったときに知らせる指定（`extract` の `notifyOnChange`、#251）と、日付の種類のパラメータ（`params` の `type` が `date`、#219）を加えました。版 1〜18 のフローは、変換せずにそのまま版 19 として読み込めます。版 18 以前のフローに `notifyOnChange` と日付のパラメータは書けません。 |
 
 ## 全体
 
@@ -749,7 +749,8 @@ Chrome の翻訳で表示の文字が置き換わると、文字の条件の結�
 "params": [
   { "name": "keyword", "label": "検索語", "type": "text" },
   { "name": "size", "label": "サイズ", "type": "select", "options": ["S", "M", "L"], "default": "M" },
-  { "name": "target", "label": "対象月", "type": "month", "default": "@previous-month" }
+  { "name": "target", "label": "対象月", "type": "month", "default": "@previous-month" },
+  { "name": "from", "label": "開始日", "type": "date", "default": "@first-of-previous-month" }
 ]
 ```
 
@@ -757,9 +758,9 @@ Chrome の翻訳で表示の文字が置き換わると、文字の条件の結�
 |---|---|
 | `name` | 名前。英字または `_` で始め、英数字と `_` だけを使います。同じ名前は使えません。 |
 | `label` | 入力欄に表示する説明。 |
-| `type` | 種類。`text`（文字列）、`number`（数値）、`select`（選択肢）、`month`（年月）のいずれかです。 |
+| `type` | 種類。`text`（文字列）、`number`（数値）、`select`（選択肢）、`month`（年月）、`date`（日付）のいずれかです。`date` は版 19 で加えました（#219）。 |
 | `options` | 選択肢の一覧。`type` が `select` の場合に必須です。 |
-| `default` | 既定値。省略できます。年月では `@current-month`（今月）、`@previous-month`（前月）、`@month-before-last`（前々月、#163）も使えます。実行した日から計算します。 |
+| `default` | 既定値。省略できます。年月では `@current-month`（今月）、`@previous-month`（前月）、`@month-before-last`（前々月、#163）も使えます。日付では `@today`（今日）、`@first-of-current-month`（今月 1 日）、`@first-of-previous-month`（前月 1 日）、`@end-of-previous-month`（前月末日）も使えます（#219）。いずれも実行した日から計算します。 |
 
 入力欄を空にした場合は既定値を使います。既定値もない場合は実行できません。
 
@@ -779,6 +780,18 @@ Chrome の翻訳で表示の文字が置き換わると、文字の条件の結�
 | `{{target.year}}` | `2026` |
 | `{{target.month}}` | `8` |
 | `{{target.mm}}` | `08` |
+
+日付のパラメータでは、年月と同じ書き方に加えて、日の書き方も使えます。日付が 2026 年 8 月 6 日の場合の例です。
+値は `2026-08-06` の形式で、実在する日付だけを受け付けます。
+
+| 書き方 | 値 |
+|---|---|
+| `{{from}}` | `2026-08-06` |
+| `{{from.year}}` | `2026` |
+| `{{from.month}}` | `8` |
+| `{{from.mm}}` | `08` |
+| `{{from.day}}` | `6` |
+| `{{from.dd}}` | `06` |
 
 定義していない名前を参照すると、形式の誤りとして保存できません。`navigate` の `url` に値を当てはめた
 結果が、`origin` とは別のサイトになる場合は実行しません。

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>入出金明細照会（サンプル）</title>
+  </head>
+  <body>
+    <!--
+      期間を月と日のセレクトボックスで指定する、銀行の入出金明細の画面を再現したサンプルです（#217）。
+      実際のサイトで試せない場合に、利用者が日付のパラメータを確かめるために使います。
+      選択肢の値と name は、利用者から受け取った実際の画面の HTML と同じです。
+    -->
+    <h1>入出金明細照会（サンプル）</h1>
+    <p>これは Lightomate の動作確認用のサンプルページです。実在の銀行とは関係ありません。</p>
+    <form id="inquiry-form">
+      <ul>
+        <li>
+          <input type="radio" id="radio001" name="BRB0010" value="1" checked />
+          <label for="radio001">最近 1 か月</label>
+        </li>
+        <li>
+          <input type="radio" id="radio008" name="BRB0010" value="14" />
+          <label for="radio008">期間を指定する</label>
+          <select id="pulldown002" name="BLB0090" class="period"></select>
+          <label for="pulldown002">月</label>
+          <select id="pulldown003" name="BLB0100" class="period"></select>
+          <label for="pulldown003">日</label>
+          <span>～</span>
+          <select id="pulldown004" name="BLB0110" class="period"></select>
+          <label for="pulldown004">月</label>
+          <select id="pulldown005" name="BLB0120" class="period"></select>
+          <label for="pulldown005">日</label>
+        </li>
+      </ul>
+      <p id="error" role="alert" style="color: #c00"></p>
+      <button type="submit" id="inquiry">照会する</button>
+    </form>
+    <script src="bank.js"></script>
+  </body>
+</html>

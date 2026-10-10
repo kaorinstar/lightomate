@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>入出金明細（サンプル）</title>
+  </head>
+  <body>
+    <!-- 照会の結果の画面です（#217）。照会した期間を表示し、期間を名前に含むファイルをダウンロードします。 -->
+    <h1>入出金明細（サンプル）</h1>
+    <p>照会期間：<strong id="period"></strong></p>
+    <table border="1">
+      <thead>
+        <tr>
+          <th>日付</th>
+          <th>摘要</th>
+          <th>お支払金額</th>
+          <th>お預り金額</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p>
+      <button type="button" name="BSM0120" id="download">通帳形式ダウンロード</button>
+    </p>
+    <p><a href="bank-period.html">照会の画面に戻る</a></p>
+    <script src="bank.js"></script>
+  </body>
+</html>

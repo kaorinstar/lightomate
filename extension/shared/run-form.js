@@ -128,7 +128,7 @@ export function buildRunFields(
     } else {
       control = document.createElement('input');
       control.className = 'form-control';
-      control.type = param.type === 'month' ? 'month' : 'text';
+      control.type = param.type === 'month' || param.type === 'date' ? param.type : 'text';
       if (param.type === 'number') {
         control.inputMode = 'decimal';
       }

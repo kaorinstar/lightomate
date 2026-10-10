@@ -69,7 +69,7 @@ test('パラメータの定義の誤りを報告する', () => {
   assert.equal(validateParams('size').length, 1);
   assert.equal(validateParams([{ name: '1st', label: 'x', type: 'text' }]).length, 1);
   assert.equal(validateParams([params[1], params[1]]).length, 1);
-  assert.equal(validateParams([{ name: 'a', label: 'x', type: 'date' }]).length, 1);
+  assert.equal(validateParams([{ name: 'a', label: 'x', type: 'datetime' }]).length, 1);
   assert.equal(validateParams([{ name: 'a', label: 'x', type: 'select' }]).length, 1);
   assert.equal(validateParams([{ ...params[2], default: 'last-month' }]).length, 1);
 });
@@ -118,4 +118,77 @@ test('前々月の既定値は、実行した日の 2 か月前の年月にし�
   assert.equal(defaultValue(param, new Date(2026, 1, 28)), '2025-12');
   assert.equal(defaultValue(param, new Date(2026, 0, 31)), '2025-11');
   assert.deepEqual(validateParams([param]), []);
+});
+
+/** @type {import('../extension/shared/params.js').Param} */
+const from = { name: 'from', label: '開始日', type: 'date' };
+
+test('日付のパラメータを検証し、形式の誤りと実在しない日付を誤りとする（#219）', () => {
+  assert.deepEqual(validateParams([{ ...from, default: '2026-08-06' }]), []);
+  assert.deepEqual(validateParams([{ ...from, default: '@end-of-previous-month' }]), []);
+  // 年月の既定値は、日付では使えません。
+  assert.equal(validateParams([{ ...from, default: '@previous-month' }]).length, 1);
+  const now = new Date(2026, 8, 25);
+  for (const value of [
+    '2026-8-6',
+    '2026/08/06',
+    '2026-08',
+    '2026-02-30',
+    '2026-04-31',
+    '2026-13-01',
+  ]) {
+    assert.deepEqual(
+      paramFieldErrors([from], { from: value }, now),
+      { from: '日付は 2026-08-06 の形式で、実在する日付を指定してください。' },
+      value,
+    );
+  }
+  assert.deepEqual(paramFieldErrors([from], { from: '2028-02-29' }, now), {});
+});
+
+test('日付のパラメータの .year、.month、.mm、.day、.dd を当てはめる（#219）', () => {
+  const { values, errors } = resolveParams([from], { from: '2026-08-06' }, new Date());
+  assert.deepEqual(errors, []);
+  assert.equal(
+    renderTemplate(
+      '{{from}} {{from.year}} {{from.month}} {{from.mm}} {{from.day}} {{from.dd}}',
+      values,
+    ),
+    '2026-08-06 2026 8 08 6 06',
+  );
+  assert.deepEqual(
+    validateReferences('{{from.year}}{{from.mm}}{{from.day}}{{from.dd}}', [from]),
+    [],
+  );
+  // .day と .dd は日付のパラメータでだけ使えます。
+  assert.equal(validateReferences('{{target.dd}}', params).length, 1);
+  assert.equal(validateReferences('{{size.day}}', params).length, 1);
+  assert.equal(validateReferences('{{from.hour}}', [from]).length, 1);
+});
+
+test('日付の既定値を、実行した日から計算する（#219）', () => {
+  /**
+   * @param {string} value 既定値
+   * @param {Date} now
+   */
+  const at = (value, now) => defaultValue({ ...from, default: value }, now);
+  const now = new Date(2026, 9, 6, 23, 30);
+  assert.equal(at('@today', now), '2026-10-06');
+  assert.equal(at('@first-of-current-month', now), '2026-10-01');
+  assert.equal(at('@first-of-previous-month', now), '2026-09-01');
+  assert.equal(at('@end-of-previous-month', now), '2026-09-30');
+  // 1 月に実行した場合は、前年の 12 月です。
+  const january = new Date(2027, 0, 15);
+  assert.equal(at('@first-of-previous-month', january), '2026-12-01');
+  assert.equal(at('@end-of-previous-month', january), '2026-12-31');
+  // 閏年と、そうでない年の 2 月の末日です。
+  assert.equal(at('@end-of-previous-month', new Date(2028, 2, 31)), '2028-02-29');
+  assert.equal(at('@end-of-previous-month', new Date(2026, 2, 1)), '2026-02-28');
+  // 実行時の値も、入力が空の場合は既定値から計算します。
+  const { values } = resolveParams(
+    [{ ...from, default: '@end-of-previous-month' }],
+    { from: '' },
+    january,
+  );
+  assert.equal(values['from.dd'], '31');
 });

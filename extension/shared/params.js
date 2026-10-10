@@ -2,10 +2,11 @@
 //
 // 手順の値の中に {{名前}} と書くと、実行時に入力した値に置き換えます。
 // 年月の種類のパラメータでは、{{名前.year}}（年）、{{名前.month}}（月、先頭にゼロを付けない）、
-// {{名前.mm}}（月、2 桁）も使えます。
+// {{名前.mm}}（月、2 桁）も使えます。日付の種類のパラメータでは、さらに {{名前.day}}（日、先頭にゼロを
+// 付けない）と {{名前.dd}}（日、2 桁）も使えます（#219）。
 
 /** パラメータの種類です。 */
-export const PARAM_TYPES = /** @type {const} */ (['text', 'number', 'select', 'month']);
+export const PARAM_TYPES = /** @type {const} */ (['text', 'number', 'select', 'month', 'date']);
 
 /** 年月の種類で使える、実行した日から決まる既定値です。 */
 export const RELATIVE_MONTHS = /** @type {const} */ ([
@@ -21,11 +22,37 @@ const RELATIVE_MONTH_OFFSETS = {
   '@month-before-last': -2,
 };
 
+/**
+ * 日付の種類で使える、実行した日から決まる既定値です（#219）。
+ * 前月 1 日〜前月末日は、領収書などを前月分まとめて取得する場合の期間です。
+ */
+export const RELATIVE_DATES = /** @type {const} */ ([
+  '@today',
+  '@first-of-current-month',
+  '@first-of-previous-month',
+  '@end-of-previous-month',
+]);
+
+/**
+ * 日付の既定値ごとに、実行した日から日付を計算する関数です。
+ * new Date の日に 0 を渡すと、前の月の末日になります。
+ * @type {Record<string, (now: Date) => Date>}
+ */
+const RELATIVE_DATE_RULES = {
+  '@today': (now) => new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+  '@first-of-current-month': (now) => new Date(now.getFullYear(), now.getMonth(), 1),
+  '@first-of-previous-month': (now) => new Date(now.getFullYear(), now.getMonth() - 1, 1),
+  '@end-of-previous-month': (now) => new Date(now.getFullYear(), now.getMonth(), 0),
+};
+
 /** パラメータ名に使える文字です。英字または _ で始め、英数字と _ だけを使います。 */
 export const PARAM_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** 年月の値の形式です（例：2026-08）。 */
 const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
+
+/** 日付の値の形式です（例：2026-08-06）。存在しない日付（2 月 30 日など）は isDate で除きます。 */
+const DATE_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
 /** 数値の形式です。 */
 const NUMBER_PATTERN = /^-?\d+(\.\d+)?$/;
@@ -35,9 +62,11 @@ const NUMBER_PATTERN = /^-?\d+(\.\d+)?$/;
  * @typedef {object} Param
  * @property {string} name 名前。手順の中では {{名前}} と書きます。
  * @property {string} label 入力フォームに表示する説明
- * @property {'text' | 'number' | 'select' | 'month'} type 種類
+ * @property {'text' | 'number' | 'select' | 'month' | 'date'} type 種類
  * @property {string} [default] 既定値。年月では「@current-month」（今月）、「@previous-month」（前月）、
- *   「@month-before-last」（前々月、#163）も使えます。
+ *   「@month-before-last」（前々月、#163）も使えます。日付では「@today」（今日）、「@first-of-current-month」
+ *   （今月 1 日）、「@first-of-previous-month」（前月 1 日）、「@end-of-previous-month」（前月末日）も使えます
+ *   （#219）。
  * @property {string[]} [options] 選択肢（種類が select の場合に必須）
  */
 
@@ -155,16 +184,24 @@ export function validateReferences(text, params) {
     const param = params.find((candidate) => candidate.name === name);
     if (!param) {
       errors.push(`定義されていないパラメータ「${name}」を参照しています。`);
-    } else if (part !== undefined && (param.type !== 'month' || !MONTH_PARTS.includes(part))) {
+    } else if (part !== undefined && !(PARTS[param.type] ?? []).includes(part)) {
       errors.push(
-        `「${name}.${part}」は使えません。.year、.month、.mm は年月のパラメータでだけ使えます。`,
+        `「${name}.${part}」は使えません。.year、.month、.mm は年月と日付のパラメータで、.day、.dd は日付の` +
+          'パラメータでだけ使えます。',
       );
     }
   }
   return errors;
 }
 
-const MONTH_PARTS = ['year', 'month', 'mm'];
+/**
+ * 種類ごとの、{{名前.部分}} で使える部分です。
+ * @type {Record<string, string[]>}
+ */
+const PARTS = {
+  month: ['year', 'month', 'mm'],
+  date: ['year', 'month', 'mm', 'day', 'dd'],
+};
 
 /**
  * 入力された値を検証し、手順に当てはめる値を作ります。
@@ -188,11 +225,20 @@ export function resolveParams(params, input, now) {
     }
 
     values[param.name] = value;
-    const month = MONTH_PATTERN.exec(value);
-    if (param.type === 'month' && month) {
-      values[`${param.name}.year`] = month[1];
-      values[`${param.name}.month`] = String(Number(month[2]));
-      values[`${param.name}.mm`] = month[2];
+    const parts =
+      param.type === 'month'
+        ? MONTH_PATTERN.exec(value)
+        : param.type === 'date'
+          ? DATE_PATTERN.exec(value)
+          : null;
+    if (parts) {
+      values[`${param.name}.year`] = parts[1];
+      values[`${param.name}.month`] = String(Number(parts[2]));
+      values[`${param.name}.mm`] = parts[2];
+      if (parts[3] !== undefined) {
+        values[`${param.name}.day`] = String(Number(parts[3]));
+        values[`${param.name}.dd`] = parts[3];
+      }
     }
   }
   return { values, errors };
@@ -249,14 +295,38 @@ export function defaultValue(param, now) {
     const date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
   }
+  const rule = RELATIVE_DATE_RULES[param.default ?? ''];
+  if (param.type === 'date' && rule) {
+    const date = rule(now);
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-');
+  }
   return param.default ?? '';
+}
+
+/**
+ * 日付の値（例：2026-08-06）が、形式に合い、実在する日付かを返します。
+ * @param {string} value
+ * @returns {boolean}
+ */
+function isDate(value) {
+  const match = DATE_PATTERN.exec(value);
+  if (!match) {
+    return false;
+  }
+  const [year, month, day] = match.slice(1).map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.getMonth() === month - 1 && date.getDate() === day;
 }
 
 /**
  * 値が種類に合っているかを確認します。
  * @param {{ type: string, options?: unknown }} param
  * @param {string} value
- * @param {boolean} isDefault 既定値の検証か。既定値では @previous-month などを受け付けます。
+ * @param {boolean} isDefault 既定値の検証か。既定値では @previous-month、@today などを受け付けます。
  * @returns {string | null} 誤りの説明。正しい場合は null
  */
 function checkValue(param, value, isDefault) {
@@ -272,6 +342,11 @@ function checkValue(param, value, isDefault) {
         return null;
       }
       return MONTH_PATTERN.test(value) ? null : '年月は 2026-08 の形式で指定してください。';
+    case 'date':
+      if (isDefault && /** @type {readonly string[]} */ (RELATIVE_DATES).includes(value)) {
+        return null;
+      }
+      return isDate(value) ? null : '日付は 2026-08-06 の形式で、実在する日付を指定してください。';
     default:
       return null;
   }

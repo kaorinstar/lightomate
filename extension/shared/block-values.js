@@ -87,7 +87,7 @@ export function insertableValues(state, blockId, kind, params) {
   for (const param of params) {
     const label = param.label || param.name;
     values.push({ text: `{{${param.name}}}`, label, group: 'param' });
-    if (param.type === 'month') {
+    if (param.type === 'month' || param.type === 'date') {
       values.push(
         { text: `{{${param.name}.year}}`, label: `${label}の年（4 桁）`, group: 'param' },
         {
@@ -96,6 +96,16 @@ export function insertableValues(state, blockId, kind, params) {
           group: 'param',
         },
         { text: `{{${param.name}.mm}}`, label: `${label}の月（2 桁）`, group: 'param' },
+      );
+    }
+    if (param.type === 'date') {
+      values.push(
+        {
+          text: `{{${param.name}.day}}`,
+          label: `${label}の日（先頭に 0 を付けない）`,
+          group: 'param',
+        },
+        { text: `{{${param.name}.dd}}`, label: `${label}の日（2 桁）`, group: 'param' },
       );
     }
   }
