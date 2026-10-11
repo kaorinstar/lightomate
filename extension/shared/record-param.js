@@ -1,20 +1,24 @@
 // 記録した選択と入力の値を、実行するたびに変える値（パラメータ）にします（#286）。
 //
-// 利用者が選ぶのは、その欄の既定値だけです。月の欄では「前月」「今月」、日の欄では「1 日」「末日」「今日」を選びます。
-// パラメータの名前、表示名、種類、月と日をどの日付にまとめるか、年・月・日のどれかは、記録した手順から決めます。
-// 管理画面で値の定義を作り、JSON の値を {{名前.部分}} に書き換える作業を、記録中のボタン 1 つで行うためです。
+// 利用者が選ぶのは、その欄の既定値だけです。月の欄では「前月」「今月」「選んだ月」、日の欄では「1 日」「末日」
+// 「今日と同じ日」「選んだ日」を選びます（#288）。パラメータの名前、表示名、種類、月と日をどの日付にまとめるか、
+// 年・月・日のどれかは、記録した手順から決めます。管理画面で値の定義を作り、JSON の値を {{名前.部分}} に書き換える
+// 作業を、記録中のボタン 1 つで行うためです。
 //
-// 日付のパラメータの既定値（前月 1 日、前月末日、今月 1 日、今日）は、月の側（前月か今月か）と日の側（1 日、
-// 末日、今日）の組み合わせです。前月 1 日と前月末日は、年と月が同じです。そこで、月の欄は「前月の日付」か
-// 「今月の日付」かだけを決め、日の欄で既定値を確定します。
-// - 月（年）の欄：同じ側の日付のうち、まだ月（年）を使っていない最初のものにまとめます。なければ加えます。
-// - 日の欄：まだ日を使っていない最初の日付にまとめ、その日付の既定値を、側と選んだ日の組み合わせにします。
-//   なければ加えます。
+// 日付のパラメータの既定値は、月（前月、今月、決まった年月）と日（1 日、末日、今日と同じ日、決まった日）の
+// 組み合わせです（params.js の parseDateDefault）。月・年・日の欄は、その部分をまだ使っていない最初の日付に
+// まとめ、その日付の既定値の、その部分を選んだ値にします。なければ日付を加えます。月と日をどちらの順に選んでも
+// 組になります。
 // 年・月・日の判定には要素の表示名を使います。翻訳で表示名が変わっても、誤りは「判定できずに利用者に選んで
 // もらう」側か、記録した値との食い違いで選択を求める側に寄せます（CLAUDE.md）。
 
 import { flattenSteps } from './control-flow.js';
-import { defaultValue as resolveDefault, findReferences } from './params.js';
+import {
+  defaultValue as resolveDefault,
+  findReferences,
+  formatDateDefault,
+  parseDateDefault,
+} from './params.js';
 
 /** @typedef {import('./flow.js').Step} Step */
 /** @typedef {import('./params.js').Param} Param */
@@ -27,38 +31,10 @@ export const DATE_PARTS = /** @type {const} */ (['year', 'month', 'day']);
 /** 日付の部分の、画面に出す名前です。 */
 export const DATE_PART_LABELS = { year: '年', month: '月', day: '日' };
 
-/**
- * 日付の側です。prev は前月の日付（前月 1 日、前月末日）、current は今月の日付（今月 1 日、今日）です。
- * @typedef {'prev' | 'current'} DateSide
- */
+/** @typedef {import('./params.js').DateDefaultSpec} DateDefaultSpec */
 
-/**
- * 日の欄で選ぶ値です。first は 1 日、end は末日、today は今日です。
- * @typedef {'first' | 'end' | 'today'} DayChoice
- */
-
-/**
- * 側と日の組み合わせごとの、日付のパラメータの既定値です。前月の今日と、今月の末日は、既定値にありません。
- * @type {Record<DateSide, Partial<Record<DayChoice, string>>>}
- */
-const DEFAULTS = {
-  prev: { first: '@first-of-previous-month', end: '@end-of-previous-month' },
-  current: { first: '@first-of-current-month', today: '@today' },
-};
-
-/**
- * 既定値から側を返します。日付の既定値でない場合は null です。
- * @param {string | undefined} value
- * @returns {DateSide | null}
- */
-function sideOf(value) {
-  for (const side of /** @type {DateSide[]} */ (['prev', 'current'])) {
-    if (Object.values(DEFAULTS[side]).includes(value ?? '')) {
-      return side;
-    }
-  }
-  return null;
-}
+/** 新しく加える日付の、まだ選んでいない部分の既定値です。月は前月、日は 1 日です。 */
+const NEW_DATE_SPEC = { month: 'previous-month', day: 'first' };
 
 /**
  * 実行するたびに変える値にできる手順の種類です。
@@ -200,14 +176,16 @@ function freeName(prefix, params, steps) {
 
 /**
  * 日付の表示名を決めます。要素の表示名から末尾の「年」「月」「日」を除いて「の日付」を付けます
- * （例：「開始の月」→「開始の日付」）。残る文字がない場合（表示名が「月」だけなど）は、既定値から
- * 「開始日」「終了日」「日付」とします。ほかのパラメータと重なる場合は、末尾に番号を付けます。
+ * （例：「開始の月」→「開始の日付」）。残る文字がない場合（表示名が「月」だけなど）は、既定値の日が 1 日なら
+ * 「開始日」、末日なら「終了日」とします。それ以外は、日付が 2 つ以上ある場合は最初を「開始日」、最後を「終了日」、
+ * 1 つだけなら「日付」とします。ほかのパラメータと重なる場合は、末尾に番号を付けます。
  * @param {string} label 要素の表示名
- * @param {string} defaultValue 選んだ既定値
- * @param {Param[]} params
+ * @param {DateDefaultSpec} spec 既定値
+ * @param {{ index: number, count: number }} order 日付のパラメータの中での順番と数
+ * @param {Param[]} params 名前を付け終えたパラメータ
  * @returns {string}
  */
-function dateLabel(label, defaultValue, params) {
+function dateLabel(label, spec, order, params) {
   const rest = label
     .trim()
     .replace(/(\s*の?\s*[年月日])+$/, '')
@@ -215,12 +193,16 @@ function dateLabel(label, defaultValue, params) {
   let base;
   if (rest) {
     base = /日付$/.test(rest) ? rest : `${rest}の日付`;
-  } else if (defaultValue === '@end-of-previous-month') {
-    base = '終了日';
-  } else if (defaultValue === '@today') {
-    base = '日付';
-  } else {
+  } else if (spec.day === 'first') {
     base = '開始日';
+  } else if (spec.day === 'end') {
+    base = '終了日';
+  } else if (order.count >= 2 && order.index === 0) {
+    base = '開始日';
+  } else if (order.count >= 2 && order.index === order.count - 1) {
+    base = '終了日';
+  } else {
+    base = '日付';
   }
   const labels = new Set(params.map((param) => param.label));
   if (!labels.has(base)) {
@@ -262,58 +244,75 @@ const PART_OF_REFERENCE = /** @type {Record<string, DatePart>} */ ({
 });
 
 /**
- * 日付のパラメータのうち、手順がまだその部分を使っていないものを返します。並びはパラメータの順です。
+ * 手順がその日付のその部分を使っているかを返します。
  * @param {Step[]} steps
- * @param {Param[]} params
+ * @param {string} name 日付のパラメータの名前
  * @param {DatePart} part
- * @returns {Param[]}
+ * @returns {boolean}
  */
-function datesWithout(steps, params, part) {
-  const used = findReferences(JSON.stringify(steps));
-  return params.filter(
-    (param) =>
-      param.type === 'date' &&
-      sideOf(param.default) !== null &&
-      !used.some(
-        (item) => item.name === param.name && item.part && PART_OF_REFERENCE[item.part] === part,
-      ),
+function usesPart(steps, name, part) {
+  return findReferences(JSON.stringify(steps)).some(
+    (item) => item.name === name && item.part && PART_OF_REFERENCE[item.part] === part,
   );
 }
 
 /**
- * 日の欄をまとめる日付です。まだ日を使っていない最初の日付で、ない場合は null です。
+ * 欄をまとめる日付です。既定値を月と日に分けられる日付のうち、手順がまだその部分を使っていない最初のものです。
+ * ない場合は null です。
  * @param {Step[]} steps
  * @param {Param[]} params
+ * @param {DatePart} part
  * @returns {Param | null}
  */
-function dayPartner(steps, params) {
-  return datesWithout(steps, params, 'day')[0] ?? null;
+function partnerOf(steps, params, part) {
+  return (
+    params.find(
+      (param) =>
+        param.type === 'date' &&
+        parseDateDefault(param.default) !== null &&
+        !usesPart(steps, param.name, part),
+    ) ?? null
+  );
+}
+
+/**
+ * 「選んだ月」の年です。同じ日付の年の欄を記録していれば、その記録した値を使い、なければ今日の年にします。
+ * @param {Step[]} steps
+ * @param {string | undefined} name 日付のパラメータの名前
+ * @param {Date} now
+ * @returns {string}
+ */
+function fixedYear(steps, name, now) {
+  for (const { step } of flattenSteps(steps)) {
+    if (
+      step.type === 'select' &&
+      name &&
+      step.values.some((value) => value.includes(`{{${name}.year}}`)) &&
+      /^\d{4}$/.test(step.labels[0] ?? '')
+    ) {
+      return step.labels[0];
+    }
+  }
+  return String(now.getFullYear());
 }
 
 /**
  * 欄の選ぶ欄に出す選択肢です。
  * @typedef {object} ValueOption
- * @property {string} value 送る値（月・年の欄は prev か current、日の欄は first、end、today）
+ * @property {string} value 送る値（月・年の欄は previous-month、current-month、fixed、keep。日の欄は first、end、
+ *   today、fixed）
  * @property {string} label 画面に出す名前（例：前月（9 月）、末日（30 日））
  * @property {string} fieldValue 今日実行した場合に、この欄に当てはめる値（例：09）
  * @property {boolean} selected 最初に選んでおく選択肢か
  */
 
 /**
- * 日付を計算します。
- * @param {string} value 既定値
- * @param {Date} now
- * @returns {string[]} 年、月、日（どれも先頭に 0 を付けた文字）
- */
-function dateOf(value, now) {
-  return resolveDefault({ name: 'x', label: 'x', type: 'date', default: value }, now).split('-');
-}
-
-/**
- * 欄の選択肢を、この欄に当てはめる値とともに返します（#286）。
+ * 欄の選択肢を、この欄に当てはめる値とともに返します（#286、#288）。
  * 月の欄には月だけ、日の欄には日だけを出します。日付全体（前月 1 日など）を出すと、月の欄で日を選ぶように見えるためです。
- * 日の欄では、まとめる日付が前月の側なら「1 日」「末日」、今月の側なら「1 日」「今日」だけを出します。
- * 最初は、記録した値と当てはめる値が一致する選択肢を選んでおきます。ない場合は先頭です。
+ * 月と日はどの組み合わせでも選べます。年の欄は、まとめる日付の月をすでに選んでいる場合は、その月に合わせた
+ * 年だけを出します。年と月は同じ側（前月か今月か）でなければ、日付を表せないためです。
+ * 最初は、記録した値と当てはめる値が一致する選択肢を、並びの先頭から探して選んでおきます。「選んだ月」
+ * 「選んだ日」は並びの最後のため、前月・今月などが一致しない場合に選ばれます。
  * @param {Step[]} steps
  * @param {Param[]} params
  * @param {number} index 対象の手順の番号
@@ -323,48 +322,71 @@ function dateOf(value, now) {
  */
 export function valueOptions(steps, params, index, part, now) {
   const step = steps[index];
-  const recorded = step?.type === 'select' ? numericValue(step) : null;
-  const reference = referencePart(part, recorded ?? '00');
-  /** @param {string[]} date */
-  const pick = ([year, month, day]) =>
-    ({ year, mm: month, month: String(Number(month)), dd: day, day: String(Number(day)) })[
-      reference
-    ] ?? '';
+  const recorded = (step?.type === 'select' ? numericValue(step) : null) ?? '';
+  const reference = referencePart(part, recorded || '00');
+  const partner = partnerOf(steps, params, part);
+  const spec = parseDateDefault(partner?.default) ?? NEW_DATE_SPEC;
+  /** @param {DateDefaultSpec} next */
+  const fieldValue = (next) => {
+    const [year, month, day] = resolveDefault(
+      { name: 'x', label: 'x', type: 'date', default: formatDateDefault(next) },
+      now,
+    ).split('-');
+    return (
+      { year, mm: month, month: String(Number(month)), dd: day, day: String(Number(day)) }[
+        reference
+      ] ?? ''
+    );
+  };
 
   /** @type {{ value: string, label: string, fieldValue: string }[]} */
   let options;
   if (part === 'day') {
-    const partner = dayPartner(steps, params);
-    const side = sideOf(partner?.default);
-    /** @type {[DayChoice, string][]} */
-    const days = [
-      ['first', '1 日'],
-      ['end', '末日'],
-      ['today', '今日'],
-    ];
-    options = days
-      .filter(([day]) => !side || DEFAULTS[side][day])
-      .map(([day, name]) => {
-        const value = DEFAULTS[side ?? (day === 'today' ? 'current' : 'prev')][day] ?? '';
-        const fieldValue = pick(dateOf(value, now));
-        return {
-          value: day,
-          label: day === 'first' ? name : `${name}（${Number(fieldValue)} 日）`,
-          fieldValue,
-        };
-      });
+    options = [
+      { value: 'first', name: '1 日' },
+      { value: 'end', name: '末日' },
+      { value: 'today', name: '今日と同じ日' },
+    ].map(({ value, name }) => {
+      const shown = fieldValue({ ...spec, day: value });
+      return {
+        value,
+        label: value === 'first' ? name : `${name}（${Number(shown)} 日）`,
+        fieldValue: shown,
+      };
+    });
+    options.push({
+      value: 'fixed',
+      label: `選んだ日（${Number(recorded)} 日のまま）`,
+      fieldValue: fieldValue({ ...spec, day: String(Number(recorded)) }),
+    });
+  } else if (part === 'month') {
+    options = [
+      { value: 'previous-month', name: '前月' },
+      { value: 'current-month', name: '今月' },
+    ].map(({ value, name }) => {
+      const shown = fieldValue({ ...spec, month: value });
+      return { value, label: `${name}（${Number(shown)} 月）`, fieldValue: shown };
+    });
+    const fixed = `${fixedYear(steps, partner?.name, now)}-${String(Number(recorded)).padStart(2, '0')}`;
+    options.push({
+      value: 'fixed',
+      label: `選んだ月（${Number(recorded)} 月のまま）`,
+      fieldValue: fieldValue({ ...spec, month: fixed }),
+    });
+  } else if (partner && usesPart(steps, partner.name, 'month')) {
+    const shown = fieldValue(spec);
+    options = [{ value: 'keep', label: `月の欄に合わせた年（${shown} 年）`, fieldValue: shown }];
   } else {
-    options = /** @type {[DateSide, string][]} */ ([
-      ['prev', part === 'year' ? '前月の年' : '前月'],
-      ['current', part === 'year' ? '今年' : '今月'],
-    ]).map(([side, name]) => {
-      const fieldValue = pick(dateOf(DEFAULTS[side].first ?? '', now));
-      const shown = part === 'year' ? `${fieldValue} 年` : `${Number(fieldValue)} 月`;
-      return { value: side, label: `${name}（${shown}）`, fieldValue };
+    options = [
+      { value: 'previous-month', name: '前月の年' },
+      { value: 'current-month', name: '今年' },
+    ].map(({ value, name }) => {
+      const shown = fieldValue({ ...spec, month: value });
+      return { value, label: `${name}（${shown} 年）`, fieldValue: shown };
     });
   }
   const match = options.find(
-    (option) => recorded !== null && Number(option.fieldValue) === Number(recorded),
+    (option) => recorded !== '' && Number(option.fieldValue) === Number(recorded),
   );
   const chosen = match ?? options[0];
   return options.map((option) => ({ ...option, selected: option === chosen }));
@@ -387,12 +409,18 @@ function relabelDates(steps, params) {
         }))
       : [],
   );
+  const dates = params.filter(
+    (param) =>
+      param.type === 'date' && /^date\d+$/.test(param.name) && parseDateDefault(param.default),
+  );
   /** @type {Param[]} */
   const done = [];
   for (const param of params) {
-    if (param.type === 'date' && /^date\d+$/.test(param.name) && param.default) {
+    const spec = dates.includes(param) ? parseDateDefault(param.default) : null;
+    if (spec) {
       const label = refs.find((ref) => ref.name === param.name)?.label ?? '';
-      done.push({ ...param, label: dateLabel(label, param.default, done) });
+      const order = { index: dates.indexOf(param), count: dates.length };
+      done.push({ ...param, label: dateLabel(label, spec, order, done) });
     } else {
       done.push(param);
     }
@@ -407,11 +435,12 @@ function relabelDates(steps, params) {
  * @param {Step[]} steps 記録した手順（入れ子の外側の一覧）
  * @param {Param[]} params 今のパラメータ
  * @param {unknown} index 対象の手順の番号（0 から数えます）
- * @param {{ value?: unknown, part?: unknown }} choice 選んだ値（月・年の欄は prev か current、日の欄は first、end、
- *   today）と、表示名から決まらない場合の部分
+ * @param {{ value?: unknown, part?: unknown }} choice 選んだ値（valueOptions の value）と、表示名から決まらない
+ *   場合の部分
+ * @param {Date} [now] 今日。「選んだ月」の年を、年の欄の記録から決められない場合に使います
  * @returns {{ ok: true, steps: Step[], params: Param[], label: string } | { ok: false, error: string }}
  */
-export function makeRecordedParam(steps, params, index, choice) {
+export function makeRecordedParam(steps, params, index, choice, now = new Date()) {
   if (typeof index !== 'number' || !Number.isInteger(index) || !steps[index]) {
     return { ok: false, error: '対象の手順が見つかりません。' };
   }
@@ -444,39 +473,38 @@ export function makeRecordedParam(steps, params, index, choice) {
     return { ok: false, error: '年・月・日のどれかを選んでください。' };
   }
   const value = /** @type {string} */ (numericValue(step));
-
-  /** @type {Param | null} */
-  let date;
-  /** @type {string} */
-  let nextDefault;
+  const partner = partnerOf(steps, params, part);
+  const spec = { ...(parseDateDefault(partner?.default) ?? NEW_DATE_SPEC) };
+  const picked = choice.value;
+  const relative = picked === 'previous-month' || picked === 'current-month';
   if (part === 'day') {
-    const day = /** @type {DayChoice} */ (choice.value);
-    if (!['first', 'end', 'today'].includes(day)) {
+    if (picked === 'first' || picked === 'end' || picked === 'today') {
+      spec.day = picked;
+    } else if (picked === 'fixed') {
+      spec.day = String(Number(value));
+    } else {
       return { ok: false, error: '日を選んでください。' };
     }
-    date = dayPartner(steps, params);
-    const side = sideOf(date?.default) ?? (day === 'today' ? 'current' : 'prev');
-    const combined = DEFAULTS[side][day];
-    if (!combined) {
-      return { ok: false, error: '選んだ日は、この日付には使えません。選び直してください。' };
+  } else if (part === 'month') {
+    if (relative) {
+      spec.month = /** @type {string} */ (picked);
+    } else if (picked === 'fixed') {
+      spec.month = `${fixedYear(steps, partner?.name, now)}-${String(Number(value)).padStart(2, '0')}`;
+    } else {
+      return { ok: false, error: '月を選んでください。' };
     }
-    nextDefault = combined;
+  } else if (picked === 'keep' && partner && usesPart(steps, partner.name, 'month')) {
+    // 年は、まとめる日付の月に合わせます。
+  } else if (relative && !(partner && usesPart(steps, partner.name, 'month'))) {
+    spec.month = /** @type {string} */ (picked);
   } else {
-    const side = /** @type {DateSide} */ (choice.value);
-    if (side !== 'prev' && side !== 'current') {
-      return {
-        ok: false,
-        error: part === 'year' ? '年を選んでください。' : '月を選んでください。',
-      };
-    }
-    date =
-      datesWithout(steps, params, part).find((param) => sideOf(param.default) === side) ?? null;
-    nextDefault = date?.default ?? /** @type {string} */ (DEFAULTS[side].first);
+    return { ok: false, error: '年を選び直してください。' };
   }
 
-  const name = date?.name ?? freeName('date', params, steps);
+  const name = partner?.name ?? freeName('date', params, steps);
+  const nextDefault = formatDateDefault(spec);
   /** @type {Param[]} */
-  const added = date
+  const added = partner
     ? params.map((param) => (param.name === name ? { ...param, default: nextDefault } : param))
     : [...params, { name, label: name, type: 'date', default: nextDefault }];
   const next = steps.slice();

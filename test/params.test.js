@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import {
   defaultValue,
   findReferences,
+  formatDateDefault,
+  isCombinedDateDefault,
+  parseDateDefault,
   paramFieldErrors,
   renderTemplate,
   resolveParams,
@@ -191,4 +194,85 @@ test('日付の既定値を、実行した日から計算する（#219）', () =
     january,
   );
   assert.equal(values['from.dd'], '31');
+});
+
+test('月と日を組み合わせた日付の既定値を、実行した日から計算する（#288）', () => {
+  const now = new Date(2026, 9, 11);
+  /** @param {string} value */
+  const at = (value) =>
+    defaultValue({ name: 'd', label: '日付', type: 'date', default: value }, now);
+  assert.equal(at('@previous-month:today'), '2026-09-11');
+  assert.equal(at('@previous-month:15'), '2026-09-15');
+  assert.equal(at('@previous-month:end'), '2026-09-30');
+  assert.equal(at('@current-month:end'), '2026-10-31');
+  assert.equal(at('@current-month:first'), '2026-10-01');
+  assert.equal(at('@2026-09:end'), '2026-09-30');
+  assert.equal(at('@2025-02:today'), '2025-02-11');
+  // その月にない日は、その月の末日にします。
+  assert.equal(at('@previous-month:31'), '2026-09-30');
+  assert.equal(at('@2026-02:30'), '2026-02-28');
+  assert.equal(
+    defaultValue(
+      { name: 'd', label: '日付', type: 'date', default: '@previous-month:today' },
+      new Date(2026, 2, 31),
+    ),
+    '2026-02-28',
+  );
+  // 1 月の前月は、前の年の 12 月です。
+  assert.equal(
+    defaultValue(
+      { name: 'd', label: '日付', type: 'date', default: '@previous-month:end' },
+      new Date(2027, 0, 5),
+    ),
+    '2026-12-31',
+  );
+});
+
+test('月と日を組み合わせた既定値の検証と、既存の書き方との変換（#288）', () => {
+  /** @param {string} value */
+  const errors = (value) =>
+    validateParams([{ name: 'd', label: '日付', type: 'date', default: value }]);
+  for (const value of [
+    '@previous-month:today',
+    '@current-month:31',
+    '@2026-09:end',
+    '@2026-12:1',
+  ]) {
+    assert.deepEqual(errors(value), [], value);
+    assert.equal(isCombinedDateDefault(value), true, value);
+  }
+  for (const value of [
+    '@previous-month:32',
+    '@previous-month:0',
+    '@previous-month:01',
+    '@next-month:first',
+    '@2026-13:first',
+    '@previous-month',
+    'previous-month:today',
+  ]) {
+    assert.equal(errors(value).length, 1, value);
+  }
+  // 年月の種類には使えません。
+  assert.equal(
+    validateParams([{ name: 'm', label: '年月', type: 'month', default: '@previous-month:today' }])
+      .length,
+    1,
+  );
+  assert.deepEqual(parseDateDefault('@end-of-previous-month'), {
+    month: 'previous-month',
+    day: 'end',
+  });
+  assert.deepEqual(parseDateDefault('@2026-09:15'), { month: '2026-09', day: '15' });
+  assert.equal(parseDateDefault('2026-09-01'), null);
+  assert.equal(isCombinedDateDefault('@today'), false);
+  // 既存の 4 つで表せる組み合わせは、既存の書き方にします。
+  assert.equal(
+    formatDateDefault({ month: 'previous-month', day: 'first' }),
+    '@first-of-previous-month',
+  );
+  assert.equal(formatDateDefault({ month: 'current-month', day: 'today' }), '@today');
+  assert.equal(
+    formatDateDefault({ month: 'previous-month', day: 'today' }),
+    '@previous-month:today',
+  );
 });

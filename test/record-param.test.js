@@ -76,7 +76,9 @@ function pickAll(steps, picks) {
 const valuesOf = (steps) => steps.map((step) => step.type === 'select' && step.values[0]);
 
 test('表示名「開始の月」・値 09 の選択に前月を選ぶと、{{date1.mm}} になり、「開始の日付」の定義が加わる', () => {
-  const result = ok(makeRecordedParam([select('開始の月', '09')], [], 0, { value: 'prev' }));
+  const result = ok(
+    makeRecordedParam([select('開始の月', '09')], [], 0, { value: 'previous-month' }),
+  );
   assert.deepEqual(result.steps[0].type === 'select' && result.steps[0].values, ['{{date1.mm}}']);
   // 記録した時点の表示文字列は残します。実行では、参照を含む値では表示文字列を探しません。
   assert.deepEqual(result.steps[0].type === 'select' && result.steps[0].labels, ['09']);
@@ -95,9 +97,9 @@ test('開始の月・日、終了の月・日の順に、前月・1 日・前月
       select('終了の日', '30'),
     ],
     [
-      { index: 0, value: 'prev' },
+      { index: 0, value: 'previous-month' },
       { index: 1, value: 'first' },
-      { index: 2, value: 'prev' },
+      { index: 2, value: 'previous-month' },
       { index: 3, value: 'end' },
     ],
   );
@@ -128,8 +130,8 @@ test('月を 2 つ選んでから日を 2 つ選んでも、月と日を順に�
   const { steps, params } = pickAll(
     [select('月', '09'), select('月', '09'), select('日', '01'), select('日', '30')],
     [
-      { index: 0, value: 'prev' },
-      { index: 1, value: 'prev' },
+      { index: 0, value: 'previous-month' },
+      { index: 1, value: 'previous-month' },
       { index: 2, value: 'first' },
       { index: 3, value: 'end' },
     ],
@@ -155,8 +157,8 @@ test('日を先に選んでも、後から選んだ月を同じ側の日付に�
     [
       { index: 0, value: 'first' },
       { index: 1, value: 'end' },
-      { index: 2, value: 'prev' },
-      { index: 3, value: 'prev' },
+      { index: 2, value: 'previous-month' },
+      { index: 3, value: 'previous-month' },
     ],
   );
   assert.deepEqual(valuesOf(steps), [
@@ -175,30 +177,73 @@ test('今月の月と今日の日は、既定値が今日の日付にまとめ�
   const { params } = pickAll(
     [select('月', '10'), select('日', '11')],
     [
-      { index: 0, value: 'current' },
+      { index: 0, value: 'current-month' },
       { index: 1, value: 'today' },
     ],
   );
   assert.deepEqual(params, [{ name: 'date1', label: '日付', type: 'date', default: '@today' }]);
 });
 
-test('前月の月と組になる日に「今日」は選べない', () => {
-  const first = ok(
-    makeRecordedParam([select('月', '09'), select('日', '11')], [], 0, { value: 'prev' }),
+test('月と日は自由に組み合わせられる：前月の今日、今月の末日、選んだ月・選んだ日（#288）', () => {
+  const now = new Date(2026, 9, 11);
+  /**
+   * @param {string} month
+   * @param {string} day
+   */
+  const pair = (month, day) => {
+    const first = ok(
+      makeRecordedParam([select('月', '09'), select('日', '15')], [], 0, { value: month }, now),
+    );
+    return ok(makeRecordedParam(first.steps, first.params, 1, { value: day }, now)).params[0]
+      .default;
+  };
+  assert.equal(pair('previous-month', 'today'), '@previous-month:today');
+  assert.equal(pair('current-month', 'end'), '@current-month:end');
+  assert.equal(pair('previous-month', 'fixed'), '@previous-month:15');
+  assert.equal(pair('fixed', 'fixed'), '@2026-09:15');
+  assert.equal(pair('fixed', 'end'), '@2026-09:end');
+  // 既存の 4 つで表せる組み合わせは、既存の書き方にします（版 19 の拡張機能でも読めるようにするため）。
+  assert.equal(pair('previous-month', 'first'), '@first-of-previous-month');
+  assert.equal(pair('current-month', 'today'), '@today');
+});
+
+test('「選んだ月」の年は、同じ日付の年の欄の記録した値を使う', () => {
+  const now = new Date(2026, 9, 11);
+  const { params } = pickAll(
+    [select('年', '2025'), select('月', '12')],
+    [
+      { index: 0, value: 'previous-month' },
+      { index: 1, value: 'fixed' },
+    ],
   );
-  const result = makeRecordedParam(first.steps, first.params, 1, { value: 'today' });
-  assert.equal(result.ok, false);
+  assert.equal(params[0].default, '@2025-12:first');
+  // 月を先に選んだ年の欄は、月に合わせた年だけを出します。
+  const options = valueOptions(
+    [select('月', '{{date1.mm}}', '09'), select('年', '2026')],
+    [{ name: 'date1', label: '開始日', type: 'date', default: '@previous-month:today' }],
+    1,
+    'year',
+    now,
+  );
+  assert.deepEqual(
+    options.map((option) => [option.value, option.label]),
+    [['keep', '月の欄に合わせた年（2026 年）']],
+  );
 });
 
 test('記録した値が 1 桁の場合は、先頭に 0 を付けない形（month、day）にする', () => {
-  const month = ok(makeRecordedParam([select('開始の月', '9')], [], 0, { value: 'prev' }));
+  const month = ok(
+    makeRecordedParam([select('開始の月', '9')], [], 0, { value: 'previous-month' }),
+  );
   assert.deepEqual(month.steps[0].type === 'select' && month.steps[0].values, ['{{date1.month}}']);
   const day = ok(makeRecordedParam([select('日', '5')], [], 0, { value: 'first' }));
   assert.deepEqual(day.steps[0].type === 'select' && day.steps[0].values, ['{{date1.day}}']);
 });
 
 test('4 桁の年は {{名前.year}} にする', () => {
-  const result = ok(makeRecordedParam([select('開始の年', '2026')], [], 0, { value: 'prev' }));
+  const result = ok(
+    makeRecordedParam([select('開始の年', '2026')], [], 0, { value: 'previous-month' }),
+  );
   assert.deepEqual(result.steps[0].type === 'select' && result.steps[0].values, ['{{date1.year}}']);
 });
 
@@ -210,9 +255,9 @@ test('value が数でない場合は、表示文字列が数なら対象にす�
 test('表示名と値から年・月・日が決まらない場合は、選択が必要と判定し、選ぶと変える', () => {
   const step = select('期間', '09');
   assert.deepEqual(paramTarget(step), { kind: 'date', part: null });
-  const missing = makeRecordedParam([step], [], 0, { value: 'prev' });
+  const missing = makeRecordedParam([step], [], 0, { value: 'previous-month' });
   assert.equal(missing.ok, false);
-  const result = ok(makeRecordedParam([step], [], 0, { value: 'prev', part: 'month' }));
+  const result = ok(makeRecordedParam([step], [], 0, { value: 'previous-month', part: 'month' }));
   assert.deepEqual(result.steps[0].type === 'select' && result.steps[0].values, ['{{date1.mm}}']);
 });
 
@@ -282,7 +327,7 @@ test('名前は、ほかのパラメータと読み取りの名前に重なら�
   ];
   const result = ok(
     makeRecordedParam(steps, [{ name: 'date2', label: '別の値', type: 'text' }], 1, {
-      value: 'prev',
+      value: 'previous-month',
     }),
   );
   assert.equal(result.params[1].name, 'date3');
@@ -290,7 +335,10 @@ test('名前は、ほかのパラメータと読み取りの名前に重なら�
 
 test('選択肢にない値は受け付けない', () => {
   assert.equal(makeRecordedParam([select('開始の月', '09')], [], 0, { value: 'end' }).ok, false);
-  assert.equal(makeRecordedParam([select('開始の日', '09')], [], 0, { value: 'prev' }).ok, false);
+  assert.equal(
+    makeRecordedParam([select('開始の日', '09')], [], 0, { value: 'previous-month' }).ok,
+    false,
+  );
 });
 
 test('どの手順も参照しないパラメータは除く', () => {
@@ -345,11 +393,10 @@ test('月の欄には月だけ、日の欄には日だけを選択肢に出し�
     params = result.params;
   }
   assert.deepEqual(shown, [
-    ['*前月（9 月）→09', '今月（10 月）→10'],
-    // 組になる日付が前月の側のため、「今日」は出しません。
-    ['*1 日→01', '末日（30 日）→30'],
-    ['*前月（9 月）→09', '今月（10 月）→10'],
-    ['1 日→01', '*末日（30 日）→30'],
+    ['*前月（9 月）→09', '今月（10 月）→10', '選んだ月（9 月のまま）→09'],
+    ['*1 日→01', '末日（30 日）→30', '今日と同じ日（10 日）→10', '選んだ日（1 日のまま）→01'],
+    ['*前月（9 月）→09', '今月（10 月）→10', '選んだ月（9 月のまま）→09'],
+    ['1 日→01', '*末日（30 日）→30', '今日と同じ日（10 日）→10', '選んだ日（30 日のまま）→30'],
   ]);
   assert.deepEqual(valuesOf(steps), [
     '{{date1.mm}}',
@@ -366,17 +413,27 @@ test('月の欄には月だけ、日の欄には日だけを選択肢に出し�
   );
 });
 
-test('組になる日付がない日の欄には、1 日・末日・今日を出す。一致しない場合は先頭を選んでおく', () => {
+test('前月・今月・1 日・末日・今日と一致しない値は、「選んだ日」を選んでおく', () => {
   const now = new Date(2026, 9, 10);
   const options = valueOptions([select('日', '15')], [], 0, 'day', now);
   assert.deepEqual(
     options.map((option) => [option.label, option.fieldValue, option.selected]),
     [
-      ['1 日', '01', true],
+      ['1 日', '01', false],
       ['末日（30 日）', '30', false],
-      ['今日（10 日）', '10', false],
+      ['今日と同じ日（10 日）', '10', false],
+      ['選んだ日（15 日のまま）', '15', true],
     ],
   );
+  // 組になる月が今月なら、末日は今月の末日です。
+  const current = valueOptions(
+    [select('月', '{{date1.mm}}', '10'), select('日', '15')],
+    [{ name: 'date1', label: '開始日', type: 'date', default: '@first-of-current-month' }],
+    1,
+    'day',
+    now,
+  );
+  assert.equal(current[1].label, '末日（31 日）');
 });
 
 test('1 桁で記録した月には、先頭に 0 を付けない値を示す', () => {
@@ -390,7 +447,7 @@ test('元の値に戻すと、記録した値になり、使わなくなった�
   let { steps, params } = pickAll(
     [select('月', '09'), select('日', '01'), input('お名前', '山田')],
     [
-      { index: 0, value: 'prev' },
+      { index: 0, value: 'previous-month' },
       { index: 1, value: 'first' },
     ],
   );

@@ -6,6 +6,7 @@
 
 import {
   PARAM_NAME_PATTERN,
+  isCombinedDateDefault,
   validateParams,
   validateReferences,
   withPlaceholders,
@@ -24,7 +25,7 @@ import { TRANSLATED_MIN_SCHEMA_VERSION } from './translation.js';
 import { DIALOG_MIN_SCHEMA_VERSION, DIALOG_STEP_TYPES, validateDialog } from './dialog.js';
 
 /** 現在のフロー定義の形式の版番号です。形式を変えるときに 1 増やします。 */
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 20;
 
 /**
  * 読み込める版番号です。版 2 は、版 1 に一時停止の手順（pause）を加えたものです。
@@ -54,10 +55,12 @@ export const SCHEMA_VERSION = 19;
  * 版 18 は、版 17 に、iframe の中の要素の指定（target の frame）を加えたものです（#20）。
  * 版 19 は、版 18 に、読み取った値が前回の実行から変わったときに知らせる指定（extract の notifyOnChange、#251）と、
  * 日付の種類のパラメータ（params の type が date、#219）を加えたものです。
+ * 版 20 は、版 19 に、日付のパラメータの既定値で月と日を組み合わせる書き方（@previous-month:today など）を
+ * 加えたものです（#288）。
  * 古い版のフローは、変換せずにそのまま新しい版として扱えます。
  */
 export const SUPPORTED_SCHEMA_VERSIONS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
 ];
 
 /**
@@ -117,6 +120,9 @@ const FRAME_MIN_SCHEMA_VERSION = 18;
 
 /** 日付の種類のパラメータを使える最も古い版です（#219）。 */
 export const DATE_PARAM_MIN_SCHEMA_VERSION = 19;
+
+/** 日付のパラメータの既定値で、月と日を組み合わせる書き方を使える最も古い版です（#288）。 */
+export const COMBINED_DATE_MIN_SCHEMA_VERSION = 20;
 
 /**
  * target の shadow に並べられる部品の数（Shadow DOM の段数）の上限です（#20）。
@@ -419,7 +425,7 @@ export function withInterval(flow, interval) {
 /**
  * パラメータの定義を入れ替えたフローを返します。元のフローは変更しません。
  * 定義が空の場合は params を削除します。日付のパラメータを含む場合、版 19 より古いフローは版 19 にします。
- * 日付の種類は版 19 で加えたためです（#219）。
+ * 日付の種類は版 19 で加えたためです（#219）。月と日を組み合わせた既定値を含む場合は、版 20 にします（#288）。
  * @param {Flow} flow
  * @param {import('./params.js').Param[]} params
  * @returns {Flow}
@@ -432,9 +438,11 @@ export function withParams(flow, params) {
   }
   return {
     ...rest,
-    schemaVersion: params.some((param) => param.type === 'date')
-      ? Math.max(flow.schemaVersion, DATE_PARAM_MIN_SCHEMA_VERSION)
-      : flow.schemaVersion,
+    schemaVersion: params.some((param) => isCombinedDateDefault(param.default))
+      ? Math.max(flow.schemaVersion, COMBINED_DATE_MIN_SCHEMA_VERSION)
+      : params.some((param) => param.type === 'date')
+        ? Math.max(flow.schemaVersion, DATE_PARAM_MIN_SCHEMA_VERSION)
+        : flow.schemaVersion,
     params,
   };
 }
@@ -605,6 +613,16 @@ export function validateFlow(value) {
   ) {
     errors.push(
       `日付のパラメータは、schemaVersion が ${DATE_PARAM_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
+    );
+  }
+  if (
+    Array.isArray(value.params) &&
+    value.params.some((param) => isRecord(param) && isCombinedDateDefault(param.default)) &&
+    typeof value.schemaVersion === 'number' &&
+    value.schemaVersion < COMBINED_DATE_MIN_SCHEMA_VERSION
+  ) {
+    errors.push(
+      `月と日を組み合わせた日付の既定値は、schemaVersion が ${COMBINED_DATE_MIN_SCHEMA_VERSION} 以上のフローでだけ使えます。`,
     );
   }
 

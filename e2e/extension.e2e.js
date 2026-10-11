@@ -439,7 +439,13 @@ test('日付のパラメータ：前月 1 日〜前月末日を月・日の選�
   }
 });
 
-test('記録した月・日の選択に、月は前月、日は 1 日と末日を選ぶだけで、前月 1 日〜前月末日にして照会する（#286）', async () => {
+/**
+ * 銀行のサンプル（bank-period.html）で 4 つの選択を記録し、サイドパネルのボタンと同じ依頼で、月・日の欄に値を選んで
+ * 保存したフローを返します（#286、#288）。
+ * @param {string[]} choices 開始の月、開始の日、終了の月、終了の日の順に選ぶ値
+ * @returns {Promise<Flow>}
+ */
+async function recordBankPeriod(choices) {
   const { extensionPage } = browser;
   const page = await browser.context.newPage();
   await page.goto(`${server.origin}/bank-period.html`);
@@ -478,8 +484,6 @@ test('記録した月・日の選択に、月は前月、日は 1 日と末日�
     ['navigate', 'select', 'select', 'select', 'select', 'click', 'navigate'],
   );
 
-  // サイドパネルのボタンと同じ依頼を送ります。開始の月に前月、開始の日に 1 日、終了の月に前月、終了の日に末日を選びます。
-  const choices = ['prev', 'first', 'prev', 'end'];
   for (const [offset, value] of choices.entries()) {
     const made = await extensionPage.evaluate((message) => chrome.runtime.sendMessage(message), {
       kind: 'recording/makeParam',
@@ -494,8 +498,36 @@ test('記録した月・日の選択に、月は前月、日は 1 日と末日�
   );
   assert.equal(stopped.ok, true);
   assert.deepEqual(stopped.errors, []);
-  /** @type {Flow} */
-  const flow = stopped.flow;
+  await page.close();
+  return stopped.flow;
+}
+
+/**
+ * フローを実行し、銀行のサンプルの結果のページに表示された照会の期間が、開始日〜終了日であることを確かめます。
+ * @param {Flow} flow
+ * @param {Date} from
+ * @param {Date} to
+ */
+async function assertBankPeriod(flow, from, to) {
+  const entry = await runFlow(browser.extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const [result] = pagesAt('/bank-result.html');
+  assert.ok(result, '照会の結果のページが開いていません。');
+  /** @param {Date} date */
+  const shown = (date) =>
+    `${String(date.getMonth() + 1).padStart(2, '0')}月${String(date.getDate()).padStart(2, '0')}日`;
+  const period = (await result.locator('#period').textContent()) ?? '';
+  assert.ok(
+    period.includes(shown(from)) && period.includes(shown(to)),
+    `照会した期間が ${shown(from)}〜${shown(to)} ではありません：${period}`,
+  );
+  for (const opened of [...pagesAt('/bank-period.html'), ...pagesAt('/bank-result.html')]) {
+    await opened.close();
+  }
+}
+
+test('記録した月・日の選択に、月は前月、日は 1 日と末日を選ぶだけで、前月 1 日〜前月末日にして照会する（#286）', async () => {
+  const flow = await recordBankPeriod(['previous-month', 'first', 'previous-month', 'end']);
   assert.deepEqual(flow.params, [
     { name: 'date1', label: '開始日', type: 'date', default: '@first-of-previous-month' },
     { name: 'date2', label: '終了日', type: 'date', default: '@end-of-previous-month' },
@@ -504,27 +536,29 @@ test('記録した月・日の選択に、月は前月、日は 1 日と末日�
     flow.steps.slice(1, 5).map((step) => step.type === 'select' && step.values[0]),
     ['{{date1.mm}}', '{{date1.dd}}', '{{date2.mm}}', '{{date2.dd}}'],
   );
-  await page.close();
-
-  const entry = await runFlow(extensionPage, flow);
-  assert.equal(entry.status, 'done', entry.reason ?? '');
-  const [result] = pagesAt('/bank-result.html');
-  assert.ok(result, '照会の結果のページが開いていません。');
   const now = new Date();
-  /** @param {Date} date */
-  const shown = (date) =>
-    `${String(date.getMonth() + 1).padStart(2, '0')}月${String(date.getDate()).padStart(2, '0')}日`;
-  const first = shown(new Date(now.getFullYear(), now.getMonth() - 1, 1));
-  const last = shown(new Date(now.getFullYear(), now.getMonth(), 0));
-  const period = (await result.locator('#period').textContent()) ?? '';
-  assert.ok(
-    period.includes(first) && period.includes(last),
-    `照会した期間が前月 1 日〜前月末日ではありません：${period}`,
+  await assertBankPeriod(
+    flow,
+    new Date(now.getFullYear(), now.getMonth() - 1, 1),
+    new Date(now.getFullYear(), now.getMonth(), 0),
   );
-  await result.close();
-  for (const opened of [...pagesAt('/bank-period.html'), ...pagesAt('/bank-result.html')]) {
-    await opened.close();
-  }
+});
+
+test('月と日を自由に組み合わせ、開始日を前月の今日と同じ日、終了日を今日にして照会する（#288）', async () => {
+  const flow = await recordBankPeriod(['previous-month', 'today', 'current-month', 'today']);
+  assert.equal(flow.schemaVersion, 20);
+  assert.deepEqual(flow.params, [
+    { name: 'date1', label: '開始日', type: 'date', default: '@previous-month:today' },
+    { name: 'date2', label: '終了日', type: 'date', default: '@today' },
+  ]);
+  const now = new Date();
+  // 前月にない日（3 月 31 日の実行の 2 月 31 日など）は、前月の末日にします。
+  const lastOfPrevious = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+  await assertBankPeriod(
+    flow,
+    new Date(now.getFullYear(), now.getMonth() - 1, Math.min(now.getDate(), lastOfPrevious)),
+    now,
+  );
 });
 
 test('翻訳の案内：翻訳で変わらない指定（id）の要素が見つからない場合は、翻訳をやめる案内を付けない（#206）', async () => {
