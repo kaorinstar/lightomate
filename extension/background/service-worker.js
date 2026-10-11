@@ -152,10 +152,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!fromExtensionPage) {
         return false;
       }
-      makeRecordedValueParam(message.index, message.count, message.value, message.part).then(
-        sendResponse,
-        (error) => sendResponse({ ok: false, error: String(error) }),
-      );
+      makeRecordedValueParam(
+        message.index,
+        message.count,
+        message.value,
+        message.part,
+        message.month,
+        message.day,
+      ).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error) }));
       return true;
 
     case 'recording/revertParam':
