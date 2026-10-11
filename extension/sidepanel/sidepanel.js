@@ -49,6 +49,8 @@ import { pagerLoops } from '../shared/record-loop.js';
 import {
   DATE_PARTS,
   valueOptions,
+  wholeOptions,
+  wholePreview,
   DATE_PART_LABELS,
   paramTarget,
   valueParamNote,
@@ -439,7 +441,12 @@ elements.saveFlow.addEventListener('click', async () => {
     showNotice(elements.saveNotice, `保存できませんでした。\n${result.errors.join('\n')}`, 'error');
     return;
   }
-  await chrome.storage.session.remove(['lastFlow', 'lastFlowRowHints', 'lastFlowPagerHints']);
+  await chrome.storage.session.remove([
+    'lastFlow',
+    'lastFlowRowHints',
+    'lastFlowPagerHints',
+    'lastFlowParamOriginals',
+  ]);
   showSaved(result.id, name, result.name);
 });
 
@@ -633,6 +640,10 @@ function valueParamControls(steps, params, index, target, locked, errorNotice) {
   const form = document.createElement('div');
   form.className = 'lm-value-param mt-1';
   const id = `value-param-${index}`;
+  if (target.kind === 'whole') {
+    form.append(...wholeDateFields(steps[index], index, count, id, locked, errorNotice));
+    return [toggle, form];
+  }
 
   /** @type {HTMLSelectElement | null} */
   let partSelect = null;
@@ -710,10 +721,84 @@ function valueParamControls(steps, params, index, target, locked, errorNotice) {
 }
 
 /**
+ * 1 つの欄に日付を入れた入力欄（2026/09/01 など、#289）の、月と日を選ぶ欄と［決める］［キャンセル］を作ります。
+ * 欄の下には、今日実行した場合に入る文字を、記録した形のまま示します。
+ * @param {import('../shared/flow.js').Step} step
+ * @param {number} index 手順の番号（0 から数えます）
+ * @param {number} count 表示している手順の件数
+ * @param {string} id 欄の id の頭
+ * @param {boolean} locked 変更できない状態（フローの実行中）か
+ * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
+ * @returns {HTMLElement[]}
+ */
+function wholeDateFields(step, index, count, id, locked, errorNotice) {
+  const now = new Date();
+  const options = wholeOptions(step, now);
+  if (!options) {
+    return [];
+  }
+  const preview = document.createElement('small');
+  preview.className = 'd-block lm-sub mt-1';
+  preview.id = `${id}-preview`;
+  /**
+   * @param {string} text 項目名
+   * @param {string} suffix id の末尾
+   * @param {import('../shared/record-param.js').ValueOption[]} list
+   * @returns {[HTMLLabelElement, HTMLSelectElement]}
+   */
+  const field = (text, suffix, list) => {
+    const label = document.createElement('label');
+    label.className = 'form-label mb-1 mt-1';
+    label.htmlFor = `${id}-${suffix}`;
+    label.textContent = text;
+    const select = document.createElement('select');
+    select.className = 'form-select form-select-sm';
+    select.id = `${id}-${suffix}`;
+    select.setAttribute('aria-describedby', preview.id);
+    select.append(
+      ...list.map((option) => new Option(option.label, option.value, false, option.selected)),
+    );
+    return [label, select];
+  };
+  const [monthLabel, monthSelect] = field(
+    '既定の月（実行するときに変えられます）',
+    'month',
+    options.month,
+  );
+  const [dayLabel, daySelect] = field('既定の日（実行するときに変えられます）', 'day', options.day);
+  const updatePreview = () => {
+    const text = wholePreview(step, { month: monthSelect.value, day: daySelect.value }, now);
+    preview.textContent = text ? `今日実行すると、この欄は「${text}」になります。` : '';
+  };
+  updatePreview();
+  monthSelect.addEventListener('change', updatePreview);
+  daySelect.addEventListener('change', updatePreview);
+
+  const buttons = document.createElement('div');
+  buttons.className = 'lm-buttons mt-2';
+  const apply = button('決める', 'btn btn-sm btn-primary', () => {
+    makeValueParam(
+      index,
+      count,
+      { month: monthSelect.value, day: daySelect.value },
+      errorNotice,
+    ).catch((error) => showNotice(errorNotice, String(error), 'error'));
+  });
+  apply.disabled = locked;
+  const cancel = button('キャンセル', 'btn btn-sm', () => {
+    valueParamForm = null;
+    render().catch((error) => showNotice(errorNotice, String(error), 'error'));
+  });
+  buttons.append(apply, cancel);
+  return [monthLabel, monthSelect, dayLabel, daySelect, preview, buttons];
+}
+
+/**
  * 記録中、または保存前の手順の値を、実行するたびに変える値にします（#286）。
  * @param {number} index 手順の番号（0 から数えます）
  * @param {number} count 表示している手順の件数
- * @param {{ value?: string, part?: string }} choice 選んだ値と部分
+ * @param {{ value?: string, part?: string, month?: string, day?: string }} choice 選んだ値と部分。1 つの欄に
+ *   日付を入れた入力欄では、月と日の選んだ値です（#289）
  * @param {HTMLElement} errorNotice 失敗したときに知らせを出す場所
  */
 async function makeValueParam(index, count, choice, errorNotice) {

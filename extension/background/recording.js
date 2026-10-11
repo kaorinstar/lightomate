@@ -82,6 +82,9 @@ import { withOpenPage } from '../shared/start-page.js';
  *   移動したときに、同じ種類のリンクを探す指定を作るために使います。フロー定義には含めません
  * @property {number} [lastClickAt] 最後に記録した手順がクリックの場合の、記録した時刻（Date.now() の値、#223）。直後に
  *   始まったダウンロードを、そのクリックに結び付けるために使います。フロー定義には含めません
+ * @property {Record<string, string>} [paramOriginals] 入力の手順を実行するたびに変える値にしたときの、変える前の文字
+ *   （#289）。キーは変えた後の値（{{date1.year}}/{{date1.mm}}/{{date1.dd}} など）です。［元の値に戻す］で使います。
+ *   フロー定義には含めません
  * @property {GuideState} [guide] 案内付きの記録（#246）の、目的と今の段階。フロー定義には含めません
  * @property {string} [notice] 記録中の区画に出す知らせ（最初のページを開く手順を加えたこと、#277）。次の操作を
  *   記録すると消えます
@@ -104,6 +107,8 @@ const LAST_FLOW_KEY = 'lastFlow';
 const LAST_FLOW_HINTS_KEY = 'lastFlowRowHints';
 /** 保存前の手順と同じ順の、ページ送りに使う場合の指定です（#182）。 */
 const LAST_FLOW_PAGERS_KEY = 'lastFlowPagerHints';
+/** 保存前の手順の、入力を実行するたびに変える値にする前の文字です（#289）。 */
+const LAST_FLOW_ORIGINALS_KEY = 'lastFlowParamOriginals';
 
 /** 手順の削除を、表示が古いために断ったときの理由です。 */
 const STALE_STEPS_ERROR =
@@ -183,6 +188,7 @@ export function startRecording(tabId) {
       LAST_FLOW_KEY,
       LAST_FLOW_HINTS_KEY,
       LAST_FLOW_PAGERS_KEY,
+      LAST_FLOW_ORIGINALS_KEY,
       DECLINED_SITES_KEY,
     ]);
     await attach(recording);
@@ -222,6 +228,7 @@ export function stopRecording() {
       [LAST_FLOW_KEY]: flow,
       [LAST_FLOW_HINTS_KEY]: alignHints(recording.steps, recording.rowHints),
       [LAST_FLOW_PAGERS_KEY]: alignHints(recording.steps, recording.pagerHints),
+      [LAST_FLOW_ORIGINALS_KEY]: recording.paramOriginals ?? {},
     });
     await chrome.storage.session.remove([RECORDING_KEY, RECORDING_PAGE_KEY, DECLINED_SITES_KEY]);
     await detach(recording.tabId);
@@ -285,6 +292,7 @@ export function removeRecordedStep(index, count) {
         LAST_FLOW_KEY,
         LAST_FLOW_HINTS_KEY,
         LAST_FLOW_PAGERS_KEY,
+        LAST_FLOW_ORIGINALS_KEY,
       ]);
     } else {
       const hints = alignHints(lastFlow.steps, await getLastFlowHints());
@@ -324,6 +332,7 @@ export function resetRecording() {
       LAST_FLOW_KEY,
       LAST_FLOW_HINTS_KEY,
       LAST_FLOW_PAGERS_KEY,
+      LAST_FLOW_ORIGINALS_KEY,
       RECORDING_PAGE_KEY,
       DECLINED_SITES_KEY,
     ]);
@@ -477,9 +486,11 @@ export function attachRecordedPager(index, count) {
  * @param {unknown} count 表示していた手順の件数
  * @param {unknown} value 選んだ値（月・年の欄は prev か current、日の欄は first、end、today）。入力の手順では使いません
  * @param {unknown} [part] 表示名と記録した値から決まらない場合の、日付の部分（year、month、day）
+ * @param {unknown} [month] 1 つの欄に日付を入れた入力欄で選んだ月（#289）
+ * @param {unknown} [day] 1 つの欄に日付を入れた入力欄で選んだ日（#289）
  * @returns {Promise<{ ok: true, label: string } | { ok: false, error: string }>}
  */
-export function makeRecordedValueParam(index, count, value, part) {
+export function makeRecordedValueParam(index, count, value, part, month, day) {
   return enqueue(async () => {
     const recording = await getRecording();
     const lastFlow = recording ? undefined : await getLastFlow();
@@ -495,17 +506,31 @@ export function makeRecordedValueParam(index, count, value, part) {
       };
     }
     const params = (recording ? recording.params : lastFlow?.params) ?? [];
-    const result = makeRecordedParam(steps, params, index, { value, part });
+    const result = makeRecordedParam(steps, params, index, { value, part, month, day });
     if (!result.ok) {
       return result;
     }
+    // 入力の手順は、記録した文字が手順に残らないため、［元の値に戻す］のために控えます（#289）。
+    const before = steps[/** @type {number} */ (index)];
+    const after = result.steps[/** @type {number} */ (index)];
+    const originals = recording ? recording.paramOriginals : await getLastFlowOriginals();
+    const nextOriginals =
+      before.type === 'input' && after.type === 'input' && after.value !== undefined
+        ? { ...originals, [after.value]: before.value ?? '' }
+        : originals;
     if (recording) {
       await chrome.storage.session.set({
-        [RECORDING_KEY]: { ...recording, steps: result.steps, params: result.params },
+        [RECORDING_KEY]: {
+          ...recording,
+          steps: result.steps,
+          params: result.params,
+          ...(nextOriginals ? { paramOriginals: nextOriginals } : {}),
+        },
       });
     } else if (lastFlow) {
       await chrome.storage.session.set({
         [LAST_FLOW_KEY]: { ...lastFlow, steps: result.steps, params: result.params },
+        [LAST_FLOW_ORIGINALS_KEY]: nextOriginals ?? {},
       });
     }
     return { ok: true, label: result.label };
@@ -534,7 +559,11 @@ export function revertRecordedValueParam(index, count) {
       };
     }
     const params = (recording ? recording.params : lastFlow?.params) ?? [];
-    const result = revertRecordedParam(steps, params, index);
+    const originals = (recording ? recording.paramOriginals : await getLastFlowOriginals()) ?? {};
+    const step = typeof index === 'number' ? steps[index] : undefined;
+    const original =
+      step?.type === 'input' && step.value !== undefined ? originals[step.value] : undefined;
+    const result = revertRecordedParam(steps, params, index, original);
     if (!result.ok) {
       return result;
     }
@@ -797,6 +826,25 @@ function alignHints(steps, hints) {
   return steps.map((_, index) => list[index] ?? null);
 }
 
+/**
+ * キーの順を並べ替えた JSON の文字です。chrome.storage から読み出した値はキーの順が変わるため、比べる前にそろえます。
+ * @param {unknown} value
+ * @returns {string}
+ */
+function canonicalJson(value) {
+  return JSON.stringify(value, (_, item) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
+      : item,
+  );
+}
+
+/** @returns {Promise<Record<string, string> | undefined>} */
+async function getLastFlowOriginals() {
+  const stored = await chrome.storage.session.get(LAST_FLOW_ORIGINALS_KEY);
+  return /** @type {Record<string, string> | undefined} */ (stored[LAST_FLOW_ORIGINALS_KEY]);
+}
+
 /** @returns {Promise<PagerHint[] | undefined>} */
 async function getLastFlowPagers() {
   const stored = await chrome.storage.session.get(LAST_FLOW_PAGERS_KEY);
@@ -1007,6 +1055,20 @@ export function addStep(step, sender, texts, matchedSelector, keys, rows, pager,
         recording.lastClickAt = Date.now();
       } else {
         delete recording.lastClickAt;
+      }
+      // 同じ入力欄への続けての入力は、最後の値だけを残します（#289）。日付の入力欄（type="date"）では、年の
+      // 数字を打つたびに change が起き、途中の値（0002-09-01 など）が手順になるためです。実行でも、続けて
+      // 入れた値のうち最後の値だけが残ります。
+      const last = recording.steps.at(-1);
+      if (
+        recorded.type === 'input' &&
+        last?.type === 'input' &&
+        canonicalJson(last.target) === canonicalJson(recorded.target)
+      ) {
+        const replaced = recording.steps.length - 1;
+        recording.rowHints.splice(replaced, 1);
+        recording.pagerHints.splice(replaced, 1);
+        recording.steps.pop();
       }
       recording.steps.push(recorded);
       // 案内付きの記録（#246）では、記録した手順で次の段階へ進むかを決めます。

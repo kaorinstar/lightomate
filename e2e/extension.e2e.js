@@ -561,6 +561,131 @@ test('月と日を自由に組み合わせ、開始日を前月の今日と同�
   );
 });
 
+test('日付の欄の 7 つの形で、記録した値を前月 1 日にして、記録した形のまま入れる（#289）', async () => {
+  const { extensionPage } = browser;
+  const page = await browser.context.newPage();
+  await page.goto(`${server.origin}/date-patterns.html`);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, `${server.origin}/date-patterns.html`);
+  const started = await extensionPage.evaluate(
+    (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+    tabId,
+  );
+  assert.deepEqual(started, { ok: true });
+
+  // 記録は利用者の操作だけを対象とするため、キーボードで入力します。
+  /** @type {[string, string][]} */
+  const texts = [
+    ['#ymd-text', '2026/09/01'],
+    ['#ymd-date', '09012026'],
+    ['#md-text', '09/01'],
+    ['#y-text', '2026'],
+    ['#m-text', '09'],
+    ['#d-text', '01'],
+    ['#m2-text', '9'],
+    ['#d2-text', '1'],
+  ];
+  for (const [selector, value] of texts) {
+    await page.focus(selector);
+    await page.keyboard.type(value);
+    await page.keyboard.press('Tab');
+  }
+  for (const selector of ['#y-select', '#m-select', '#d-select', '#m2-select', '#d2-select']) {
+    await page.focus(selector);
+    await page.keyboard.press('ArrowDown');
+  }
+  await Promise.all([page.waitForURL(/\/done\.html/), page.click('#send')]);
+  /** @returns {Promise<Step[]>} */
+  const recordedSteps = () =>
+    extensionPage.evaluate(async () => {
+      const { recording } = await chrome.storage.session.get('recording');
+      return /** @type {{ steps: Step[] }} */ (recording).steps;
+    });
+  const steps = await waitUntil(recordedSteps, (list) => list.length >= 16);
+  const fields = steps.slice(1, 14);
+  assert.deepEqual(
+    fields.map((step) =>
+      step.type === 'input' ? step.value : step.type === 'select' ? step.values[0] : step.type,
+    ),
+    [
+      '2026/09/01',
+      '2026-09-01',
+      '09/01',
+      '2026',
+      '09',
+      '01',
+      '9',
+      '1',
+      '2025',
+      '02',
+      '02',
+      '02',
+      '02',
+    ],
+  );
+
+  // サイドパネルのボタンと同じ依頼を送ります。どの欄も、月は前月、日は 1 日にします。
+  /** @type {Record<string, unknown>[]} */
+  const choices = [
+    { month: 'previous-month', day: 'first' },
+    { month: 'previous-month', day: 'first' },
+    { month: 'previous-month', day: 'first' },
+    { value: 'previous-month' },
+    { value: 'previous-month' },
+    { value: 'first' },
+    { value: 'previous-month' },
+    { value: 'first' },
+    { value: 'previous-month' },
+    { value: 'previous-month' },
+    { value: 'first' },
+    { value: 'previous-month' },
+    { value: 'first' },
+  ];
+  for (const [offset, choice] of choices.entries()) {
+    const made = await extensionPage.evaluate((message) => chrome.runtime.sendMessage(message), {
+      kind: 'recording/makeParam',
+      index: offset + 1,
+      count: steps.length,
+      ...choice,
+    });
+    assert.equal(made.ok, true, `${offset + 1}: ${made.error ?? ''}`);
+  }
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.equal(stopped.ok, true);
+  assert.deepEqual(stopped.errors, []);
+  await page.close();
+
+  const entry = await runFlow(extensionPage, stopped.flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const [done] = pagesAt('/done.html');
+  assert.ok(done, '送信後のページが開いていません。');
+  const query = new URL(done.url()).searchParams;
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const year = String(first.getFullYear());
+  const mm = String(first.getMonth() + 1).padStart(2, '0');
+  assert.deepEqual(Object.fromEntries(query), {
+    ymdText: `${year}/${mm}/01`,
+    ymdDate: `${year}-${mm}-01`,
+    mdText: `${mm}/01`,
+    yText: year,
+    mText: mm,
+    dText: '01',
+    m2Text: String(first.getMonth() + 1),
+    d2Text: '1',
+    ySelect: year,
+    mSelect: mm,
+    dSelect: '01',
+    m2Select: mm,
+    d2Select: '01',
+  });
+  await done.close();
+});
+
 test('翻訳の案内：翻訳で変わらない指定（id）の要素が見つからない場合は、翻訳をやめる案内を付けない（#206）', async () => {
   const { extensionPage } = browser;
   /**
