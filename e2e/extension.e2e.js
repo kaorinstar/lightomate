@@ -439,6 +439,94 @@ test('日付のパラメータ：前月 1 日〜前月末日を月・日の選�
   }
 });
 
+test('記録した月・日の選択に、月は前月、日は 1 日と末日を選ぶだけで、前月 1 日〜前月末日にして照会する（#286）', async () => {
+  const { extensionPage } = browser;
+  const page = await browser.context.newPage();
+  await page.goto(`${server.origin}/bank-period.html`);
+  const tabId = await extensionPage.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    return tab.id;
+  }, `${server.origin}/bank-period.html`);
+  const started = await extensionPage.evaluate(
+    (tabId) => chrome.runtime.sendMessage({ kind: 'recording/start', tabId }),
+    tabId,
+  );
+  assert.deepEqual(started, { ok: true });
+
+  // 記録は利用者の操作だけを対象とするため、キーボードで選びます。最後の選択肢が選ばれている場合（31 日など）は
+  // 下へ動かせないため、上へ動かします。
+  for (const name of ['BLB0090', 'BLB0100', 'BLB0110', 'BLB0120']) {
+    const locator = page.locator(`select[name="${name}"]`);
+    const atEnd = await locator.evaluate(
+      (element) =>
+        /** @type {HTMLSelectElement} */ (element).selectedIndex ===
+        /** @type {HTMLSelectElement} */ (element).options.length - 1,
+    );
+    await locator.focus();
+    await page.keyboard.press(atEnd ? 'ArrowUp' : 'ArrowDown');
+  }
+  await Promise.all([page.waitForURL(/\/bank-result\.html/), page.click('#inquiry')]);
+  /** @returns {Promise<Step[]>} */
+  const recordedSteps = () =>
+    extensionPage.evaluate(async () => {
+      const { recording } = await chrome.storage.session.get('recording');
+      return /** @type {{ steps: Step[] }} */ (recording).steps;
+    });
+  const steps = await waitUntil(recordedSteps, (list) => list.length >= 7);
+  assert.deepEqual(
+    steps.map((step) => step.type),
+    ['navigate', 'select', 'select', 'select', 'select', 'click', 'navigate'],
+  );
+
+  // サイドパネルのボタンと同じ依頼を送ります。開始の月に前月、開始の日に 1 日、終了の月に前月、終了の日に末日を選びます。
+  const choices = ['prev', 'first', 'prev', 'end'];
+  for (const [offset, value] of choices.entries()) {
+    const made = await extensionPage.evaluate((message) => chrome.runtime.sendMessage(message), {
+      kind: 'recording/makeParam',
+      index: offset + 1,
+      count: steps.length,
+      value,
+    });
+    assert.equal(made.ok, true, made.error ?? '');
+  }
+  const stopped = await extensionPage.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: 'recording/stop' }),
+  );
+  assert.equal(stopped.ok, true);
+  assert.deepEqual(stopped.errors, []);
+  /** @type {Flow} */
+  const flow = stopped.flow;
+  assert.deepEqual(flow.params, [
+    { name: 'date1', label: '開始日', type: 'date', default: '@first-of-previous-month' },
+    { name: 'date2', label: '終了日', type: 'date', default: '@end-of-previous-month' },
+  ]);
+  assert.deepEqual(
+    flow.steps.slice(1, 5).map((step) => step.type === 'select' && step.values[0]),
+    ['{{date1.mm}}', '{{date1.dd}}', '{{date2.mm}}', '{{date2.dd}}'],
+  );
+  await page.close();
+
+  const entry = await runFlow(extensionPage, flow);
+  assert.equal(entry.status, 'done', entry.reason ?? '');
+  const [result] = pagesAt('/bank-result.html');
+  assert.ok(result, '照会の結果のページが開いていません。');
+  const now = new Date();
+  /** @param {Date} date */
+  const shown = (date) =>
+    `${String(date.getMonth() + 1).padStart(2, '0')}月${String(date.getDate()).padStart(2, '0')}日`;
+  const first = shown(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  const last = shown(new Date(now.getFullYear(), now.getMonth(), 0));
+  const period = (await result.locator('#period').textContent()) ?? '';
+  assert.ok(
+    period.includes(first) && period.includes(last),
+    `照会した期間が前月 1 日〜前月末日ではありません：${period}`,
+  );
+  await result.close();
+  for (const opened of [...pagesAt('/bank-period.html'), ...pagesAt('/bank-result.html')]) {
+    await opened.close();
+  }
+});
+
 test('翻訳の案内：翻訳で変わらない指定（id）の要素が見つからない場合は、翻訳をやめる案内を付けない（#206）', async () => {
   const { extensionPage } = browser;
   /**
