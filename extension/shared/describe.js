@@ -8,6 +8,7 @@ import {
 } from './control-flow.js';
 import { describeCondition } from './condition.js';
 import { DEFAULT_SAVE_PATH } from './save-path.js';
+import { isCombinedDateDefault, parseDateDefault } from './params.js';
 
 /** @typedef {import('./flow.js').Step} Step */
 /** @typedef {import('./flow.js').Target} Target */
@@ -391,6 +392,35 @@ const RELATIVE_DEFAULT_LABELS = {
 };
 
 /**
+ * 月と日を組み合わせた日付の既定値（#288）を、画面に出す名前にします。例：「前月の今日と同じ日」「2026 年 9 月の末日」。
+ * 組み合わせの既定値でない場合は null です。
+ * @param {string | undefined} value
+ * @returns {string | null}
+ */
+export function combinedDateLabel(value) {
+  if (!isCombinedDateDefault(value)) {
+    return null;
+  }
+  const spec = /** @type {import('./params.js').DateDefaultSpec} */ (parseDateDefault(value));
+  const [year, month] = spec.month.split('-');
+  const monthLabel =
+    spec.month === 'previous-month'
+      ? '前月'
+      : spec.month === 'current-month'
+        ? '今月'
+        : `${year} 年 ${Number(month)} 月`;
+  const dayLabel =
+    spec.day === 'first'
+      ? '1 日'
+      : spec.day === 'end'
+        ? '末日'
+        : spec.day === 'today'
+          ? '今日と同じ日'
+          : `${spec.day} 日`;
+  return `${monthLabel}の${dayLabel}`;
+}
+
+/**
  * 実行時に入力するパラメータを、表の 1 行に出す項目にします（#9）。
  * @param {import('./params.js').Param} param
  * @returns {{ label: string, reference: string, type: string, defaultValue: string }}
@@ -402,7 +432,9 @@ export function paramColumns(param) {
   const defaultValue =
     param.default === undefined || param.default === ''
       ? 'なし'
-      : (RELATIVE_DEFAULT_LABELS[param.default] ?? param.default);
+      : (RELATIVE_DEFAULT_LABELS[param.default] ??
+        combinedDateLabel(param.default) ??
+        param.default);
   return {
     label: param.label,
     reference: `{{${param.name}}}`,

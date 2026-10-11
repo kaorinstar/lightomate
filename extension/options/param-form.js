@@ -3,6 +3,7 @@
 // （docs/design-guidelines.md の「配置と余白」）。入力の値と定義の変換は shared/param-edit.js にあります。
 
 import { PARAM_TYPES } from '../shared/params.js';
+import { combinedDateLabel } from '../shared/describe.js';
 import { showFieldError } from '../shared/ui.js';
 
 /** @typedef {import('../shared/param-edit.js').ParamRow} ParamRow */
@@ -32,6 +33,19 @@ const DATE_DEFAULTS = [
   ['@first-of-previous-month', '前月 1 日'],
   ['@end-of-previous-month', '前月末日'],
 ];
+
+/**
+ * 日付の既定値の選択肢です。今の既定値が一覧にない場合（月と日を組み合わせた既定値、#288、決まった日付など）は、
+ * その値を選択肢に加えます。加えないと、選ぶ欄が「なし」になり、保存すると既定値が消えるためです。
+ * @param {string} value 今の既定値
+ * @returns {string[][]}
+ */
+function dateDefaults(value) {
+  if (!value || DATE_DEFAULTS.some(([option]) => option === value)) {
+    return DATE_DEFAULTS;
+  }
+  return [...DATE_DEFAULTS, [value, combinedDateLabel(value) ?? value]];
+}
 
 let serial = 0;
 
@@ -126,7 +140,7 @@ export function paramFieldset(row, index) {
         type.value === 'month'
           ? select('default', MONTH_DEFAULTS, value)
           : type.value === 'date'
-            ? select('default', DATE_DEFAULTS, value)
+            ? select('default', dateDefaults(value), value)
             : textInput('default', value),
       ),
     );

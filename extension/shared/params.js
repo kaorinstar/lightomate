@@ -34,16 +34,97 @@ export const RELATIVE_DATES = /** @type {const} */ ([
 ]);
 
 /**
- * 日付の既定値ごとに、実行した日から日付を計算する関数です。
- * new Date の日に 0 を渡すと、前の月の末日になります。
- * @type {Record<string, (now: Date) => Date>}
+ * 月と日を組み合わせた日付の既定値の形式です（#288）。「@<月>:<日>」と書きます。
+ * 月は previous-month（前月）、current-month（今月）、YYYY-MM（決まった年月）、日は first（1 日）、end（末日）、
+ * today（今日と同じ日）、1〜31（決まった日）です。例：前月の今日は @previous-month:today。
  */
-const RELATIVE_DATE_RULES = {
-  '@today': (now) => new Date(now.getFullYear(), now.getMonth(), now.getDate()),
-  '@first-of-current-month': (now) => new Date(now.getFullYear(), now.getMonth(), 1),
-  '@first-of-previous-month': (now) => new Date(now.getFullYear(), now.getMonth() - 1, 1),
-  '@end-of-previous-month': (now) => new Date(now.getFullYear(), now.getMonth(), 0),
+const COMBINED_DATE_PATTERN =
+  /^@(previous-month|current-month|\d{4}-(?:0[1-9]|1[0-2])):(first|end|today|[1-9]|[12]\d|3[01])$/;
+
+/**
+ * 日付の既定値を、月と日に分けたものです（#288）。
+ * @typedef {object} DateDefaultSpec
+ * @property {string} month previous-month、current-month、または YYYY-MM
+ * @property {string} day first、end、today、または 1〜31 の数字
+ */
+
+/**
+ * 既存の 4 つの既定値を、月と日に分けたものです。
+ * @type {Record<string, DateDefaultSpec>}
+ */
+const RELATIVE_DATE_SPECS = {
+  '@today': { month: 'current-month', day: 'today' },
+  '@first-of-current-month': { month: 'current-month', day: 'first' },
+  '@first-of-previous-month': { month: 'previous-month', day: 'first' },
+  '@end-of-previous-month': { month: 'previous-month', day: 'end' },
 };
+
+/**
+ * 月と日を組み合わせた既定値（@<月>:<日>）かを返します（#288）。既存の 4 つの既定値は含みません。
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function isCombinedDateDefault(value) {
+  return typeof value === 'string' && COMBINED_DATE_PATTERN.test(value);
+}
+
+/**
+ * 日付の既定値を、月と日に分けます（#288）。実行した日から決まる既定値でない場合（決まった日付など）は null です。
+ * @param {string | undefined} value
+ * @returns {DateDefaultSpec | null}
+ */
+export function parseDateDefault(value) {
+  const relative = RELATIVE_DATE_SPECS[value ?? ''];
+  if (relative) {
+    return { ...relative };
+  }
+  const match = COMBINED_DATE_PATTERN.exec(value ?? '');
+  return match ? { month: match[1], day: match[2] } : null;
+}
+
+/**
+ * 月と日から、日付の既定値を作ります（#288）。既存の 4 つの既定値で表せる組み合わせは、既存の書き方にします。
+ * 版 19 の拡張機能でも読めるようにするためです。
+ * @param {DateDefaultSpec} spec
+ * @returns {string}
+ */
+export function formatDateDefault(spec) {
+  for (const [value, relative] of Object.entries(RELATIVE_DATE_SPECS)) {
+    if (relative.month === spec.month && relative.day === spec.day) {
+      return value;
+    }
+  }
+  return `@${spec.month}:${spec.day}`;
+}
+
+/**
+ * 月と日の既定値から、日付を計算します。日がその月にない場合（前月の 31 日など）は、その月の末日にします。
+ * @param {DateDefaultSpec} spec
+ * @param {Date} now 実行した日時
+ * @returns {Date}
+ */
+function dateFromSpec(spec, now) {
+  let year = now.getFullYear();
+  let month = now.getMonth();
+  if (spec.month === 'previous-month') {
+    month -= 1;
+  } else if (spec.month !== 'current-month') {
+    [year, month] = spec.month.split('-').map(Number);
+    month -= 1;
+  }
+  // new Date の日に 0 を渡すと、前の月の末日になります。年と月のずれ（-1 月など）もここで直します。
+  const last = new Date(year, month + 1, 0);
+  const days = last.getDate();
+  const day =
+    spec.day === 'first'
+      ? 1
+      : spec.day === 'end'
+        ? days
+        : spec.day === 'today'
+          ? Math.min(now.getDate(), days)
+          : Math.min(Number(spec.day), days);
+  return new Date(last.getFullYear(), last.getMonth(), day);
+}
 
 /** パラメータ名に使える文字です。英字または _ で始め、英数字と _ だけを使います。 */
 export const PARAM_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -66,7 +147,7 @@ const NUMBER_PATTERN = /^-?\d+(\.\d+)?$/;
  * @property {string} [default] 既定値。年月では「@current-month」（今月）、「@previous-month」（前月）、
  *   「@month-before-last」（前々月、#163）も使えます。日付では「@today」（今日）、「@first-of-current-month」
  *   （今月 1 日）、「@first-of-previous-month」（前月 1 日）、「@end-of-previous-month」（前月末日）も使えます
- *   （#219）。
+ *   （#219）。月と日を組み合わせた「@previous-month:today」（前月の今日）などの形も使えます（#288）。
  * @property {string[]} [options] 選択肢（種類が select の場合に必須）
  */
 
@@ -295,9 +376,9 @@ export function defaultValue(param, now) {
     const date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
   }
-  const rule = RELATIVE_DATE_RULES[param.default ?? ''];
-  if (param.type === 'date' && rule) {
-    const date = rule(now);
+  const spec = param.type === 'date' ? parseDateDefault(param.default) : null;
+  if (spec) {
+    const date = dateFromSpec(spec, now);
     return [
       date.getFullYear(),
       String(date.getMonth() + 1).padStart(2, '0'),
@@ -343,7 +424,7 @@ function checkValue(param, value, isDefault) {
       }
       return MONTH_PATTERN.test(value) ? null : '年月は 2026-08 の形式で指定してください。';
     case 'date':
-      if (isDefault && /** @type {readonly string[]} */ (RELATIVE_DATES).includes(value)) {
+      if (isDefault && parseDateDefault(value)) {
         return null;
       }
       return isDate(value) ? null : '日付は 2026-08-06 の形式で、実在する日付を指定してください。';

@@ -56,9 +56,9 @@ test('版番号が異なる場合は誤りを報告する', () => {
   assert.equal(validateFlow({ ...validFlow, schemaVersion: String(SCHEMA_VERSION) }).length, 1);
 });
 
-test('版 1〜18 のフローは、そのまま版 19 として検証を通る', () => {
-  assert.equal(SCHEMA_VERSION, 19);
-  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) {
+test('版 1〜19 のフローは、そのまま版 20 として検証を通る', () => {
+  assert.equal(SCHEMA_VERSION, 20);
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) {
     assert.deepEqual(validateFlow({ ...validFlow, schemaVersion }), []);
   }
 });
@@ -1507,4 +1507,24 @@ test('日付のパラメータは版 19 以上のフローでだけ使え、with
   const texts = [{ name: 'q', label: '検索語', type: 'text' }];
   assert.equal(withParams(old, texts).schemaVersion, 18);
   assert.equal('params' in withParams({ ...old, params: texts }, []), false);
+});
+
+test('月と日を組み合わせた日付の既定値は版 20 以上のフローでだけ使え、withParams で加えると版 20 にする（#288）', () => {
+  /** @type {import('../extension/shared/params.js').Param[]} */
+  const dates = [{ name: 'from', label: '開始日', type: 'date', default: '@previous-month:today' }];
+  const old = /** @type {import('../extension/shared/flow.js').Flow} */ ({
+    ...validFlow,
+    schemaVersion: 19,
+  });
+  assert.deepEqual(validateFlow({ ...old, params: dates }), [
+    '月と日を組み合わせた日付の既定値は、schemaVersion が 20 以上のフローでだけ使えます。',
+  ]);
+  const changed = withParams(old, dates);
+  assert.equal(changed.schemaVersion, 20);
+  assert.deepEqual(validateFlow(changed), []);
+  // 既存の 4 つの既定値だけなら、版 19 のままです。
+  assert.equal(
+    withParams(old, [{ ...dates[0], default: '@first-of-previous-month' }]).schemaVersion,
+    19,
+  );
 });
