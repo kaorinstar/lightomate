@@ -238,6 +238,9 @@ LIGHTOMATE_CHROMIUM=/opt/pw-browsers/chromium npm run test:e2e
   Claude Code のセッションには既定で `claude/...` のブランチが割り当てられます。**この名前は
   規約の対象外です。** 変更内容ではなくセッションを表す名前だからです。その旨を伝え、push する前に
   規約に沿ったブランチへ作業を移します。
+- git は `git -C <パス>` の形で実行します。`cd` で別のディレクトリへ移ってから git を実行しません。
+  移った先の git の仕組み（hooks）が動くおそれがあるため、Claude Code が毎回確認を求めます
+  （https://code.claude.com/docs/en/permissions の「Read-only commands」）。
 
 ## 複数のセッションが並行しているときの作業
 
