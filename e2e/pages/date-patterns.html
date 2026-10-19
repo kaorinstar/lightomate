@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>日付の欄のパターン（サンプル）</title>
+  </head>
+  <body>
+    <!--
+      日付の欄の形ごとに、記録した値を実行するたびに変える値にできるかを確かめるためのページです（#289）。
+      送信すると、done.html の URL に各欄の値が入ります。
+    -->
+    <h1>日付の欄のパターン（サンプル）</h1>
+    <form id="patterns" action="done.html" method="get">
+      <fieldset>
+        <legend>年月日が 1 つの文字の欄</legend>
+        <label for="ymd-text">期間</label>
+        <input type="text" id="ymd-text" name="ymdText" />
+      </fieldset>
+      <fieldset>
+        <legend>年月日が 1 つの日付の欄</legend>
+        <label for="ymd-date">期間</label>
+        <input type="date" id="ymd-date" name="ymdDate" />
+      </fieldset>
+      <fieldset>
+        <legend>月日が 1 つの文字の欄</legend>
+        <label for="md-text">期間</label>
+        <input type="text" id="md-text" name="mdText" />
+      </fieldset>
+      <fieldset>
+        <legend>年・月・日が別々の文字の欄</legend>
+        <input type="text" id="y-text" name="yText" size="4" /><label for="y-text">年</label>
+        <input type="text" id="m-text" name="mText" size="2" /><label for="m-text">月</label>
+        <input type="text" id="d-text" name="dText" size="2" /><label for="d-text">日</label>
+      </fieldset>
+      <fieldset>
+        <legend>月・日が別々の文字の欄</legend>
+        <input type="text" id="m2-text" name="m2Text" size="2" /><label for="m2-text">月</label>
+        <input type="text" id="d2-text" name="d2Text" size="2" /><label for="d2-text">日</label>
+      </fieldset>
+      <fieldset>
+        <legend>年・月・日が別々の選択の欄</legend>
+        <select id="y-select" name="ySelect" class="year"></select
+        ><label for="y-select">年</label>
+        <select id="m-select" name="mSelect" class="month"></select
+        ><label for="m-select">月</label>
+        <select id="d-select" name="dSelect" class="day"></select
+        ><label for="d-select">日</label>
+      </fieldset>
+      <fieldset>
+        <legend>月・日が別々の選択の欄</legend>
+        <select id="m2-select" name="m2Select" class="month"></select
+        ><label for="m2-select">月</label>
+        <select id="d2-select" name="d2Select" class="day"></select
+        ><label for="d2-select">日</label>
+      </fieldset>
+      <button type="submit" id="send">送信する</button>
+    </form>
+    <script src="date-patterns.js"></script>
+  </body>
+</html>

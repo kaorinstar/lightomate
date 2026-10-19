@@ -9,6 +9,9 @@ import {
   referencedParams,
   revertRecordedParam,
   valueOptions,
+  wholeDateTokens,
+  wholeOptions,
+  wholePreview,
   valueParamNote,
 } from '../extension/shared/record-param.js';
 import { describeStep } from '../extension/shared/describe.js';
@@ -219,9 +222,9 @@ test('「選んだ月」の年は、同じ日付の年の欄の記録した値�
   assert.equal(params[0].default, '@2025-12:first');
   // 月を先に選んだ年の欄は、月に合わせた年だけを出します。
   const options = valueOptions(
-    [select('月', '{{date1.mm}}', '09'), select('年', '2026')],
+    [select('年', '2026'), select('月', '{{date1.mm}}', '09')],
     [{ name: 'date1', label: '開始日', type: 'date', default: '@previous-month:today' }],
-    1,
+    0,
     'year',
     now,
   );
@@ -229,6 +232,21 @@ test('「選んだ月」の年は、同じ日付の年の欄の記録した値�
     options.map((option) => [option.value, option.label]),
     [['keep', '月の欄に合わせた年（2026 年）']],
   );
+  // 月・日だけの欄の後にある年の欄は、その日付とまとめず、新しい日付にします（#289）。
+  const after = ok(
+    makeRecordedParam(
+      [
+        select('月', '{{date1.mm}}', '09'),
+        select('日', '{{date1.dd}}', '01'),
+        select('年', '2026'),
+      ],
+      [{ name: 'date1', label: '開始日', type: 'date', default: '@first-of-previous-month' }],
+      2,
+      { value: 'previous-month' },
+      now,
+    ),
+  );
+  assert.equal(after.steps[2].type === 'select' && after.steps[2].values[0], '{{date2.year}}');
 });
 
 test('記録した値が 1 桁の場合は、先頭に 0 を付けない形（month、day）にする', () => {
@@ -485,4 +503,153 @@ test('元の値に戻すと、記録した値になり、使わなくなった�
 
   // 変えていない手順は戻せません。
   assert.equal(revertRecordedParam([select('月', '09')], [], 0).ok, false);
+});
+
+/**
+ * 文字の入力欄の手順を作ります（表示名と値）。
+ * @param {string} label
+ * @param {string} value
+ * @returns {Step}
+ */
+function field(label, value) {
+  return {
+    type: 'input',
+    target: { selectors: [`input[name="${label}"]`], tag: 'input', label },
+    value,
+  };
+}
+
+test('1 つの欄の日付を、記録した形を保った参照にする（#289）', () => {
+  const now = new Date(2026, 9, 11);
+  /** @type {[string, string][]} */
+  const cases = [
+    ['2026/09/01', '{{date1.year}}/{{date1.mm}}/{{date1.dd}}'],
+    ['2026/9/1', '{{date1.year}}/{{date1.month}}/{{date1.day}}'],
+    ['2026-09-01', '{{date1.year}}-{{date1.mm}}-{{date1.dd}}'],
+    ['2026.09.01', '{{date1.year}}.{{date1.mm}}.{{date1.dd}}'],
+    ['2026年9月1日', '{{date1.year}}年{{date1.month}}月{{date1.day}}日'],
+    ['20260901', '{{date1.year}}{{date1.mm}}{{date1.dd}}'],
+    ['09/01', '{{date1.mm}}/{{date1.dd}}'],
+    ['9月1日', '{{date1.month}}月{{date1.day}}日'],
+  ];
+  for (const [value, expected] of cases) {
+    const step = field('期間', value);
+    assert.equal(paramTarget(step)?.kind, 'whole', value);
+    const result = ok(
+      makeRecordedParam([step], [], 0, { month: 'previous-month', day: 'first' }, now),
+    );
+    assert.equal(result.steps[0].type === 'input' && result.steps[0].value, expected, value);
+    assert.deepEqual(
+      validateFlow({
+        schemaVersion: SCHEMA_VERSION,
+        name: '期間',
+        origin: 'https://example.com',
+        params: result.params,
+        steps: result.steps,
+      }),
+      [],
+      value,
+    );
+  }
+});
+
+test('日付として読めない入力と、表示名に年・月・日がない数の欄は、文字の値にする（#289）', () => {
+  for (const value of [
+    'abc',
+    '25/09',
+    '2026/13/01',
+    '2026/09/32',
+    '01/09/2026',
+    '26/09/01',
+    '0901',
+  ]) {
+    assert.equal(wholeDateTokens(value), null, value);
+    assert.deepEqual(paramTarget(field('期間', value)), { kind: 'text' }, value);
+  }
+  assert.deepEqual(paramTarget(field('数量', '5')), { kind: 'text' });
+  assert.deepEqual(paramTarget(field('開始の月', '9')), { kind: 'date', part: 'month' });
+  assert.deepEqual(paramTarget(field('年', '2026')), { kind: 'date', part: 'year' });
+});
+
+test('年・月・日が別々の入力欄は、選択の欄と同じく 1 つの日付にまとめる（#289）', () => {
+  const now = new Date(2026, 9, 11);
+  let steps = [field('年', '2026'), field('月', '09'), field('日', '01')];
+  /** @type {Param[]} */
+  let params = [];
+  for (const [index, value] of /** @type {const} */ ([
+    'previous-month',
+    'previous-month',
+    'first',
+  ]).entries()) {
+    const result = ok(makeRecordedParam(steps, params, index, { value }, now));
+    steps = result.steps;
+    params = result.params;
+  }
+  assert.deepEqual(
+    steps.map((step) => step.type === 'input' && step.value),
+    ['{{date1.year}}', '{{date1.mm}}', '{{date1.dd}}'],
+  );
+  assert.equal(params.length, 1);
+  assert.equal(params[0].default, '@first-of-previous-month');
+});
+
+test('1 つの欄の日付は、別々の欄とまとめない（#289）', () => {
+  const now = new Date(2026, 9, 11);
+  const whole = ok(
+    makeRecordedParam(
+      [field('期間', '09/01'), field('年', '2026')],
+      [],
+      0,
+      {
+        month: 'previous-month',
+        day: 'first',
+      },
+      now,
+    ),
+  );
+  // 月日の欄の日付は年を使っていませんが、年の欄は新しい日付にします。
+  const year = ok(
+    makeRecordedParam(whole.steps, whole.params, 1, { value: 'previous-month' }, now),
+  );
+  assert.equal(year.steps[1].type === 'input' && year.steps[1].value, '{{date2.year}}');
+  assert.equal(
+    valueParamNote(whole.steps[0], whole.params),
+    `実行するときに入力：${whole.params[0].label}`,
+  );
+});
+
+test('1 つの欄の日付の選択肢と、今日実行した場合に入る文字（#289）', () => {
+  const now = new Date(2026, 9, 11);
+  const step = field('期間', '2026/09/30');
+  const options = wholeOptions(step, now);
+  assert.ok(options);
+  assert.equal(options.month.find((option) => option.selected)?.value, 'previous-month');
+  assert.equal(options.day.find((option) => option.selected)?.value, 'end');
+  assert.equal(options.month[2].label, '選んだ月（2026 年 9 月のまま）');
+  assert.equal(wholePreview(step, { month: 'previous-month', day: 'today' }, now), '2026/09/11');
+  assert.equal(
+    wholePreview(field('期間', '9/1'), { month: 'current-month', day: 'first' }, now),
+    '10/1',
+  );
+  // 選んだ月は、記録した年の月です。
+  const fixed = ok(makeRecordedParam([step], [], 0, { month: 'fixed', day: 'fixed' }, now));
+  assert.equal(fixed.params[0].default, '@2026-09:30');
+});
+
+test('入力欄の日付は、控えた元の文字で戻す。控えがない場合は戻さない（#289）', () => {
+  const now = new Date(2026, 9, 11);
+  const made = ok(
+    makeRecordedParam(
+      [field('期間', '2026/09/01')],
+      [],
+      0,
+      { month: 'previous-month', day: 'first' },
+      now,
+    ),
+  );
+  const reverted = revertRecordedParam(made.steps, made.params, 0, '2026/09/01');
+  assert.ok(reverted.ok);
+  assert.equal(reverted.steps[0].type === 'input' && reverted.steps[0].value, '2026/09/01');
+  assert.deepEqual(reverted.params, []);
+  assert.equal(revertRecordedParam(made.steps, made.params, 0).ok, false);
 });
