@@ -241,6 +241,7 @@ LIGHTOMATE_CHROMIUM=/opt/pw-browsers/chromium npm run test:e2e
 - git は `git -C <パス>` の形で実行します。`cd` で別のディレクトリへ移ってから git を実行しません。
   移った先の git の仕組み（hooks）が動くおそれがあるため、Claude Code が毎回確認を求めます
   （https://code.claude.com/docs/en/permissions の「Read-only commands」）。
+  PreToolUse フック `.claude/hooks/block-cd-git.mjs` が、`cd` と git を並べたコマンドを実行前に止めます。
 
 ## 複数のセッションが並行しているときの作業
 
