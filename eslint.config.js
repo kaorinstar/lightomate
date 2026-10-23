@@ -80,6 +80,11 @@ export default [
     languageOptions: { globals: globals.node },
   },
   {
+    // Claude Code のフックとそのテストは Node.js で動きます。
+    files: ['.claude/hooks/**/*.mjs'],
+    languageOptions: { globals: globals.node },
+  },
+  {
     // 自動の動作確認（#21）は Node.js で動き、page.evaluate に渡す関数だけが拡張機能の画面で動きます。
     files: ['e2e/**/*.js'],
     languageOptions: { globals: { ...globals.node, chrome: 'readonly' } },
